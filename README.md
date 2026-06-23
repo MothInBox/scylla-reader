@@ -64,7 +64,7 @@ Then in home.nix add to your home packages
 ```nix
 { config, pkgs, inputs, ... }: {
   home.packages = [
-    inputs.scylla-reader.packages.${pkgs.system}.default
+    scylla-reader.packages.${pkgs.system}.default
   ];
 }
 ```
