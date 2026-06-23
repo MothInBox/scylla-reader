@@ -12,6 +12,7 @@ The project  contains multiple crates:
 * **`scylla-plugin-api/`**: Definitioins for plugin developers.
 * **`plugin-template/`**: A baseline implementation used for learning to make new scrapers with Extism.
 
+
 ## Installation
 
 ### Option A: Using Nix (Recommended)
@@ -92,15 +93,33 @@ cargo install --path scylla-reader
 cd plugin-template
 make
 ```
-The template plugin can then run by this command seqeunce in the TUI
+## FAQ
+### Where can I get plugins?
+As of right now, develop your own or find one someone else has developed!
+
+see the template plugin to get an idea on how to develop your own! 
 ```
 i (open add book window)
 type "template" 
 ctrl + s (submit all)i
 ```
 
-## Where can I get plugins?
-As of right now, develop your own or find one someone else has developed!
-``
+
 > [!WARNING]
-> Be aware that plugins could be running anything on your machine. Verify the plugin yourself or go with trusted sources.`
+> Be aware that plugins could be running anything on your machine. Verify the plugin yourself or go with trusted sources.
+
+### Where is data stored?
+
+#### .local/share/scylla-reader
+contains:
+ - library.db (database for library persistence)
+
+#### .config/scylla-reader
+contains:
+ - template.txt (files containing cookies for the plugin / domain)
+ - plugins:
+    - plugin-template.wasm (the .wasm code for plugins)
+
+> [!NOTE]
+> could contain more than just template 
+> (e.g. royalroad.txt and plugin-royalroad.wasm)
