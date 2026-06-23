@@ -64,7 +64,6 @@ Then in home.nix add to your home packages
 ```nix
 { config, pkgs, inputs, ... }: {
   home.packages = [
-    # Installs the pre-compiled binary matching your system's architecture
     inputs.scylla-reader.packages.${pkgs.system}.default
   ];
 }
