@@ -69,7 +69,7 @@ Then in home.nix add to your home packages
 }
 ```
 
-### Option B: Using Cargo
+### Option B: Using Cargo (UNTESTED)
 
 ### Prerequisites
 must have the Rust stable toolchain installed on your system along with native development headers for ssl and curl.
