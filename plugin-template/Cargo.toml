@@ -1,0 +1,16 @@
+[package]
+name = "plugin_template"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# This tells cargo to compile the project as a dynamic library targetable by WebAssembly
+crate-type = ["cdylib"]
+
+[dependencies]
+# The primary Plugin Development Kit for Extism
+extism-pdk = "1"
+
+# Your shared plugin API contract 
+# (Point this path to wherever your scylla_plugin_api crate lives on your local machine)
+scylla-plugin-api = { path = "../scylla-plugin-api" }
