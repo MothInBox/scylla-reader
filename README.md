@@ -126,7 +126,10 @@ contains:
 
 
 ## Roadmap
+### Features to Add
  - Ability to set current chapter from library page
  - Multiple "Reading Sessions" (imaybe youve completed a book but want to re-read and keep that progress, give them names too)
  - More customisation through settings
  - Persistent Settings
+### Bugs to fix
+ - If you move chapters too quick it gets stuck on that chapter, and does some very strange stuff. Try hold next chapter for a bit.
