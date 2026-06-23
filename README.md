@@ -96,5 +96,10 @@ The template plugin can then run by this command seqeunce in the TUI
 ```
 i (open add book window)
 type "template" 
-ctrl + s (submit all)
-```
+ctrl + s (submit all)i
+
+## Where can I get plugins?
+As of right now, develop your own or find one someone else has developed!
+``
+> [!WARNING]
+> Be aware that plugins could be running anything on your machine. Verify the plugin yourself or go with trusted sources.`
