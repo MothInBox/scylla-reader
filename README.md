@@ -123,3 +123,10 @@ contains:
 > [!NOTE]
 > could contain more than just template 
 > (e.g. royalroad.txt and plugin-royalroad.wasm)
+
+
+## Roadmap
+ - Ability to set current chapter from library page
+ - Multiple "Reading Sessions" (imaybe youve completed a book but want to re-read and keep that progress, give them names too)
+ - More customisation through settings
+ - Persistent Settings
