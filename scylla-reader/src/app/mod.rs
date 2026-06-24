@@ -1,8 +1,11 @@
 pub mod page;
 pub use page::Page;
 
-use crate::library::Library;
+use crate::library::{self, Library};
+use crate::models::Book;
+use crate::models::Chapter;
 use crate::settings::Settings;
+use std::fmt;
 
 pub struct ReaderState {
     pub content: Vec<String>,
@@ -61,9 +64,15 @@ impl ReaderState {
 
     pub fn total_pages_for(&self, area_width: u16, area_height: u16) -> usize {
         let lpp = Self::lines_per_page(area_height);
-        if lpp == 0 { return 1; }
+        if lpp == 0 {
+            return 1;
+        }
         let width = area_width as usize;
-        let visual_lines: usize = self.content.iter().map(|l| Self::wrap_line_count(l, width)).sum();
+        let visual_lines: usize = self
+            .content
+            .iter()
+            .map(|l| Self::wrap_line_count(l, width))
+            .sum();
         let pages = (visual_lines + lpp - 1) / lpp;
         if pages == 0 { 1 } else { pages }
     }
@@ -74,7 +83,9 @@ impl ReaderState {
 
     pub fn page_lines_wrapped(&self, area_width: u16, area_height: u16) -> Vec<String> {
         let lpp = Self::lines_per_page(area_height);
-        if lpp == 0 { return vec![]; }
+        if lpp == 0 {
+            return vec![];
+        }
         let width = area_width as usize;
         let mut vlines: Vec<String> = Vec::new();
         for line in &self.content {
@@ -85,7 +96,9 @@ impl ReaderState {
                 vlines.extend(parts);
             }
         }
-        if vlines.is_empty() { vlines.push(String::new()); }
+        if vlines.is_empty() {
+            vlines.push(String::new());
+        }
         let total_pages = (vlines.len() + lpp - 1) / lpp;
         let page_idx = std::cmp::min(self.page, total_pages.saturating_sub(1));
         let start = page_idx * lpp;
@@ -94,8 +107,12 @@ impl ReaderState {
     }
 
     fn wrap_line_count(line: &str, width: usize) -> usize {
-        if width == 0 { return 1; }
-        if line.trim().is_empty() { return 1; }
+        if width == 0 {
+            return 1;
+        }
+        if line.trim().is_empty() {
+            return 1;
+        }
         let mut count = 0usize;
         let mut cur = 0usize;
         for word in line.split_whitespace() {
@@ -109,13 +126,19 @@ impl ReaderState {
                 cur = wlen;
             }
         }
-        if cur > 0 { count += 1; }
+        if cur > 0 {
+            count += 1;
+        }
         count
     }
 
     fn wrap_line(line: &str, width: usize) -> Vec<String> {
-        if width == 0 { return vec![line.to_string()]; }
-        if line.trim().is_empty() { return vec![String::new()]; }
+        if width == 0 {
+            return vec![line.to_string()];
+        }
+        if line.trim().is_empty() {
+            return vec![String::new()];
+        }
         let mut parts: Vec<String> = Vec::new();
         let mut cur = String::new();
         let mut cur_len = 0usize;
@@ -134,7 +157,9 @@ impl ReaderState {
                 cur_len = wlen;
             }
         }
-        if !cur.is_empty() { parts.push(cur); }
+        if !cur.is_empty() {
+            parts.push(cur);
+        }
         parts
     }
 
@@ -159,11 +184,54 @@ impl ReaderState {
     }
 }
 
+pub enum WinInput {
+    RawText(String),
+    ChapterItem(Chapter),
+}
+impl WinInput {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            WinInput::RawText(s) => s.is_empty(),
+            WinInput::ChapterItem(c) => c.title.is_empty(),
+        }
+    }
+
+    pub fn pop(&mut self) -> Option<char> {
+        match self {
+            WinInput::RawText(s) => s.pop(),
+            WinInput::ChapterItem(_) => None, // Chapters are usually immutable in UI input fields
+        }
+    }
+
+    pub fn push(&mut self, c: char) {
+        match self {
+            WinInput::RawText(s) => s.push(c),
+            WinInput::ChapterItem(_) => {} // Ignore typing characters if it's a structural Chapter
+        }
+    }
+
+    pub fn trim_to_string(&self) -> String {
+        match self {
+            WinInput::RawText(s) => s.trim().to_string(),
+            WinInput::ChapterItem(c) => c.title.trim().to_string(),
+        }
+    }
+}
+impl fmt::Display for WinInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WinInput::RawText(s) => write!(f, "{}", s),
+            WinInput::ChapterItem(c) => write!(f, "{}", c.title), // Assuming it has .title
+        }
+    }
+}
+
 pub struct AppState {
     pub library: Library,
     pub current_page: Page,
-    pub url_inputs: Vec<String>,
-    pub url_cursor: usize,
+    pub win_inputs: Vec<WinInput>,
+    pub win_cursor: usize,
+    pub win_scroll_offset: usize,
     pub settings: Settings,
     pub reader: ReaderState,
 }
@@ -173,42 +241,50 @@ impl AppState {
         Self {
             library: Library::new(),
             current_page: Page::Library,
-            url_inputs: vec![String::new()],
-            url_cursor: 0,
+            win_inputs: vec![WinInput::RawText(String::new())],
+            win_cursor: 0,
+            win_scroll_offset: 0,
             settings: Settings::new(),
             reader: ReaderState::new(),
         }
     }
 
-    pub fn reset_url_input(&mut self) {
-        self.url_inputs = vec![String::new()];
-        self.url_cursor = 0;
+    pub fn reset_win_input(&mut self) {
+        self.win_inputs = vec![WinInput::RawText(String::new())];
+        self.win_cursor = 0;
+        self.win_scroll_offset = 0;
+    }
+    pub fn current_line_mut(&mut self) -> &mut WinInput {
+        &mut self.win_inputs[self.win_cursor]
     }
 
-    pub fn current_line_mut(&mut self) -> &mut String {
-        &mut self.url_inputs[self.url_cursor]
-    }
-
-    pub fn valid_urls(&self) -> Vec<String> {
-        self.url_inputs.iter()
-            .map(|s| s.trim().to_string())
+    pub fn valid_win_input(&self) -> Vec<WinInput> {
+        self.win_inputs
+            .iter()
+            .map(|s| s.trim_to_string())
             .filter(|s| !s.is_empty())
+            .map(WinInput::RawText)
             .collect()
     }
 
-pub fn open_reader_chapter(
-    &mut self,
-    chapter_title: String,
-    content: String,
-    chapter_idx: usize,
-) {
-    let book_title = self.library.selected_book()
-        .map(|b| b.title.clone())
-        .unwrap_or_default();
-    let book_url = self.library.selected_book()
-        .map(|b| b.url.clone())
-        .unwrap_or_default();
-    self.reader.load(book_title, book_url, chapter_title, content, chapter_idx);
-    self.current_page = Page::Reader;
-}
+    pub fn open_reader_chapter(
+        &mut self,
+        chapter_title: String,
+        content: String,
+        chapter_idx: usize,
+    ) {
+        let book_title = self
+            .library
+            .selected_book()
+            .map(|b| b.title.clone())
+            .unwrap_or_default();
+        let book_url = self
+            .library
+            .selected_book()
+            .map(|b| b.url.clone())
+            .unwrap_or_default();
+        self.reader
+            .load(book_title, book_url, chapter_title, content, chapter_idx);
+        self.current_page = Page::Reader;
+    }
 }

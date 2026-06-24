@@ -3,5 +3,6 @@ pub enum Page {
     Library,
     Settings,
     AddingBook,
+    BookChapterJump,
     Reader,
 }

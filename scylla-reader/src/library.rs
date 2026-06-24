@@ -1,8 +1,6 @@
-use image::DynamicImage;
 use crate::models::{Book, BookStatus, Progress};
+use image::DynamicImage;
 use ratatui_image::protocol::StatefulProtocol;
-
-
 
 #[derive(PartialEq, Clone)]
 pub enum LibraryFilter {
@@ -43,7 +41,9 @@ impl Library {
     }
 
     pub fn visible_indices(&self) -> Vec<usize> {
-        self.books.iter().enumerate()
+        self.books
+            .iter()
+            .enumerate()
             .filter(|(_, b)| match &self.filter {
                 LibraryFilter::All => true,
                 LibraryFilter::ByStatus(s) => &b.status == s,
@@ -55,7 +55,9 @@ impl Library {
 
     pub fn selected_book(&self) -> Option<&Book> {
         let indices = self.visible_indices();
-        indices.get(self.selected_index).and_then(|&i| self.books.get(i))
+        indices
+            .get(self.selected_index)
+            .and_then(|&i| self.books.get(i))
     }
 
     pub fn selected_book_mut(&mut self) -> Option<&mut Book> {
@@ -69,7 +71,10 @@ impl Library {
             title,
             url,
             status: BookStatus::Reading,
-            progress: Progress { current: 0, total: total_pages },
+            progress: Progress {
+                current: 0,
+                total: total_pages,
+            },
             tags: Vec::new(),
             cover_url: None,
             description: None,
@@ -97,9 +102,15 @@ impl Library {
     pub fn cycle_filter(&mut self) {
         self.filter = match &self.filter {
             LibraryFilter::All => LibraryFilter::ByStatus(BookStatus::Reading),
-            LibraryFilter::ByStatus(BookStatus::Reading) => LibraryFilter::ByStatus(BookStatus::Paused),
-            LibraryFilter::ByStatus(BookStatus::Paused) => LibraryFilter::ByStatus(BookStatus::Dropped),
-            LibraryFilter::ByStatus(BookStatus::Dropped) => LibraryFilter::ByStatus(BookStatus::Completed),
+            LibraryFilter::ByStatus(BookStatus::Reading) => {
+                LibraryFilter::ByStatus(BookStatus::Paused)
+            }
+            LibraryFilter::ByStatus(BookStatus::Paused) => {
+                LibraryFilter::ByStatus(BookStatus::Dropped)
+            }
+            LibraryFilter::ByStatus(BookStatus::Dropped) => {
+                LibraryFilter::ByStatus(BookStatus::Completed)
+            }
             LibraryFilter::ByStatus(BookStatus::Completed) => LibraryFilter::All,
             LibraryFilter::ByTag(_) => LibraryFilter::All,
         };
@@ -124,13 +135,22 @@ impl Library {
         }
     }
 
-    pub fn all_tags(&self) -> Vec<String> {
-        let mut tags: Vec<String> = self.books.iter()
-            .flat_map(|b| b.tags.iter().cloned())
-            .collect();
-        tags.sort();
-        tags.dedup();
-        tags
+    pub fn set_chapter(
+        &mut self,
+        booktochange: Option<&mut Book>,
+        new_chapter: &u32,
+    ) -> Result<(), ()> {
+        // Extract the mutable reference safely once
+        if let Some(book) = booktochange {
+            if book.progress.total >= *new_chapter {
+                book.progress.current = *new_chapter;
+                Ok(())
+            } else {
+                Err(())
+            }
+        } else {
+            Err(())
+        }
     }
 }
 
