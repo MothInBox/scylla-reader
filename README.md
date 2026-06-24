@@ -130,3 +130,4 @@ contains:
  - Multiple "Reading Sessions" (imaybe youve completed a book but want to re-read and keep that progress, give them names too)
  - More customisation through settings
  - Persistent Settings
+Add all to dev branch then polish for main.
