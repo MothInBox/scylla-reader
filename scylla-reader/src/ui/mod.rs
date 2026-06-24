@@ -55,11 +55,11 @@ fn draw_input_widget(frame: &mut Frame, area: Rect, state: &AppState) {
         .split(area);
 
     let display: String = state
-        .url_inputs
+        .win_inputs
         .iter()
         .enumerate()
         .map(|(i, line)| {
-            if i == state.url_cursor {
+            if i == state.win_cursor {
                 format!("> {}", line)
             } else {
                 format!("  {}", line)
@@ -71,8 +71,8 @@ fn draw_input_widget(frame: &mut Frame, area: Rect, state: &AppState) {
     let block = Block::default()
         .title(format!(
             " Add Books ({} URL{}) ",
-            state.url_inputs.len(),
-            if state.url_inputs.len() == 1 { "" } else { "s" }
+            state.win_inputs.len(),
+            if state.win_inputs.len() == 1 { "" } else { "s" }
         ))
         .borders(Borders::ALL);
 
@@ -93,11 +93,11 @@ fn draw_jump_widget(frame: &mut Frame, area: Rect, state: &AppState) {
         .split(area);
 
     let display: String = state
-        .url_inputs
+        .win_inputs
         .iter()
         .enumerate()
         .map(|(i, line)| {
-            if i == state.url_cursor {
+            if i == state.win_cursor {
                 format!("> {}", line)
             } else {
                 format!("  {}", line)

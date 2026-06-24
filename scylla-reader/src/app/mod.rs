@@ -185,8 +185,8 @@ impl ReaderState {
 pub struct AppState {
     pub library: Library,
     pub current_page: Page,
-    pub url_inputs: Vec<String>,
-    pub url_cursor: usize,
+    pub win_inputs: Vec<String>,
+    pub win_cursor: usize,
     pub settings: Settings,
     pub reader: ReaderState,
 }
@@ -196,24 +196,24 @@ impl AppState {
         Self {
             library: Library::new(),
             current_page: Page::Library,
-            url_inputs: vec![String::new()],
-            url_cursor: 0,
+            win_inputs: vec![String::new()],
+            win_cursor: 0,
             settings: Settings::new(),
             reader: ReaderState::new(),
         }
     }
 
     pub fn reset_url_input(&mut self) {
-        self.url_inputs = vec![String::new()];
-        self.url_cursor = 0;
+        self.win_inputs = vec![String::new()];
+        self.win_cursor = 0;
     }
 
     pub fn current_line_mut(&mut self) -> &mut String {
-        &mut self.url_inputs[self.url_cursor]
+        &mut self.win_inputs[self.win_cursor]
     }
 
     pub fn valid_urls(&self) -> Vec<String> {
-        self.url_inputs
+        self.win_inputs
             .iter()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())

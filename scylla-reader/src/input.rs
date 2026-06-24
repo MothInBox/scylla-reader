@@ -43,39 +43,39 @@ fn handle_adding_book(
             true
         }
 
-        // Enter — add new line below cursor
+        // Enter — add new line below win_cursor
         (_, KeyCode::Enter) => {
-            let cursor = state.url_cursor;
-            state.url_inputs.insert(cursor + 1, String::new());
-            state.url_cursor += 1;
+            let win_cursor = state.win_cursor;
+            state.win_inputs.insert(win_cursor + 1, String::new());
+            state.win_cursor += 1;
             true
         }
 
         // Backspace — delete char, or if line empty delete the line
         (_, KeyCode::Backspace) => {
-            let cursor = state.url_cursor;
-            let line_empty = state.url_inputs[cursor].is_empty();
-            if line_empty && state.url_inputs.len() > 1 {
-                state.url_inputs.remove(cursor);
-                if state.url_cursor > 0 {
-                    state.url_cursor -= 1;
+            let win_cursor = state.win_cursor;
+            let line_empty = state.win_inputs[win_cursor].is_empty();
+            if line_empty && state.win_inputs.len() > 1 {
+                state.win_inputs.remove(win_cursor);
+                if state.win_cursor > 0 {
+                    state.win_cursor -= 1;
                 }
             } else {
-                state.url_inputs[cursor].pop();
+                state.win_inputs[win_cursor].pop();
             }
             true
         }
 
         // Up/Down — move between lines
         (_, KeyCode::Up) => {
-            if state.url_cursor > 0 {
-                state.url_cursor -= 1;
+            if state.win_cursor > 0 {
+                state.win_cursor -= 1;
             }
             true
         }
         (_, KeyCode::Down) => {
-            if state.url_cursor < state.url_inputs.len() - 1 {
-                state.url_cursor += 1;
+            if state.win_cursor < state.win_inputs.len() - 1 {
+                state.win_cursor += 1;
             }
             true
         }
