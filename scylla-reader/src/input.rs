@@ -1,7 +1,7 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::{AppState, Page};
 use crate::messenger::AppCommand;
 use crate::settings::{SettingsField, SettingsPage};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::prelude::Rect;
 
 pub fn handle_input(
@@ -104,39 +104,55 @@ fn handle_library(
     let total_books = state.library.books.len();
     match key.code {
         KeyCode::Char('q') => false,
-        KeyCode::Tab => { state.current_page = Page::Settings; true }
-        KeyCode::Char('i') => { state.current_page = Page::AddingBook; true }
-        KeyCode::Char('d') => { state.library.remove_selected(); true }
-        KeyCode::Char(' ') => { state.library.cycle_selected_status(); true }
-        KeyCode::Char('f') => { state.library.cycle_filter(); true }
-KeyCode::Enter => {
-    // Open first unread chapter or chapter at current progress
-    if let Some(book) = state.library.selected_book() {
-        if book.chapters.is_empty() {
-            // No chapters yet — show description
-            let book_title = book.title.clone();
-            let desc = book.description.clone()
-                .unwrap_or_else(|| "No content available.".to_string());
-            crate::settings::log_debug(&format!("No chapters for: {}", book_title));
-            state.open_reader_chapter(
-                "Description".to_string(),
-                desc,
-                0,
-            );
-        } else {
-            let idx = (book.progress.current as usize).min(book.chapters.len() - 1);
-            let chapter_url = book.chapters[idx].url.clone();
-            state.reader.loading = true;
-            state.current_page = Page::Reader;
-            if let Err(e) = cmd_tx.send(AppCommand::FetchChapter(chapter_url, idx)) {
-                crate::settings::log_debug(&format!("Failed to queue chapter: {}", e));
-            }
+        KeyCode::Tab => {
+            state.current_page = Page::Settings;
+            true
         }
-    }
-    true
-}
+        KeyCode::Char('i') => {
+            state.current_page = Page::AddingBook;
+            true
+        }
+        KeyCode::Char('d') => {
+            state.library.remove_selected();
+            true
+        }
+        KeyCode::Char(' ') => {
+            state.library.cycle_selected_status();
+            true
+        }
+        KeyCode::Char('f') => {
+            state.library.cycle_filter();
+            true
+        }
+        KeyCode::Enter => {
+            // Open first unread chapter or chapter at current progress
+            if let Some(book) = state.library.selected_book() {
+                if book.chapters.is_empty() {
+                    // No chapters yet — show description
+                    let book_title = book.title.clone();
+                    let desc = book
+                        .description
+                        .clone()
+                        .unwrap_or_else(|| "No content available.".to_string());
+                    crate::settings::log_debug(&format!("No chapters for: {}", book_title));
+                    state.open_reader_chapter("Description".to_string(), desc, 0);
+                } else {
+                    let idx = (book.progress.current as usize).min(book.chapters.len() - 1);
+                    let chapter_url = book.chapters[idx].url.clone();
+                    state.reader.loading = true;
+                    state.current_page = Page::Reader;
+                    if let Err(e) = cmd_tx.send(AppCommand::FetchChapter(chapter_url, idx)) {
+                        crate::settings::log_debug(&format!("Failed to queue chapter: {}", e));
+                    }
+                }
+            }
+            true
+        }
         KeyCode::Char('u') => {
-            let urls: Vec<String> = state.library.books.iter()
+            let urls: Vec<String> = state
+                .library
+                .books
+                .iter()
                 .map(|b| b.url.clone())
                 .filter(|u| !u.is_empty())
                 .collect();
@@ -157,15 +173,13 @@ KeyCode::Enter => {
         }
         KeyCode::Up => {
             if total_books > 0 {
-                state.library.selected_index =
-                    state.library.selected_index.saturating_sub(1);
+                state.library.selected_index = state.library.selected_index.saturating_sub(1);
             }
             true
         }
         _ => true,
     }
 }
-
 
 fn handle_settings(state: &mut AppState, key: KeyEvent) -> bool {
     match state.settings.settings_page.clone() {
@@ -183,13 +197,11 @@ fn handle_settings_main(state: &mut AppState, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Down => {
-            state.settings.selected_field =
-                (state.settings.selected_field + 1).min(num_fields - 1);
+            state.settings.selected_field = (state.settings.selected_field + 1).min(num_fields - 1);
             true
         }
         KeyCode::Up => {
-            state.settings.selected_field =
-                state.settings.selected_field.saturating_sub(1);
+            state.settings.selected_field = state.settings.selected_field.saturating_sub(1);
             true
         }
         KeyCode::Enter => {
@@ -243,12 +255,15 @@ fn handle_cookie_list(state: &mut AppState, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Up => {
-            state.settings.selected_cookie =
-                state.settings.selected_cookie.saturating_sub(1);
+            state.settings.selected_cookie = state.settings.selected_cookie.saturating_sub(1);
             true
         }
         KeyCode::Enter => {
-            if let Some(store) = state.settings.cookie_stores.get(state.settings.selected_cookie) {
+            if let Some(store) = state
+                .settings
+                .cookie_stores
+                .get(state.settings.selected_cookie)
+            {
                 state.settings.cookie_edit_buffer = store.load_raw();
                 state.settings.settings_page = SettingsPage::CookieEdit;
             }
@@ -271,8 +286,14 @@ fn handle_cookie_edit(state: &mut AppState, key: KeyEvent) -> bool {
             state.settings.settings_page = SettingsPage::CookieList;
             true
         }
-        KeyCode::Char(c) => { state.settings.cookie_edit_buffer.push(c); true }
-        KeyCode::Backspace => { state.settings.cookie_edit_buffer.pop(); true }
+        KeyCode::Char(c) => {
+            state.settings.cookie_edit_buffer.push(c);
+            true
+        }
+        KeyCode::Backspace => {
+            state.settings.cookie_edit_buffer.pop();
+            true
+        }
         _ => true,
     }
 }
@@ -289,24 +310,28 @@ fn handle_reader(
     // Chapter navigation works in both modes
     match (key.modifiers, key.code) {
         (_, KeyCode::Char(c)) if c == '>' => {
-            if let Some(book) = state.library.selected_book() {
-                let next_idx = state.reader.current_chapter_idx + 1;
-                if let Some(ch) = book.chapters.get(next_idx) {
-                    let url = ch.url.clone();
-                    state.reader.loading = true;
-                    let _ = cmd_tx.send(AppCommand::FetchChapter(url, next_idx));
+            if state.reader.loading == false {
+                if let Some(book) = state.library.selected_book() {
+                    let next_idx = state.reader.current_chapter_idx + 1;
+                    if let Some(ch) = book.chapters.get(next_idx) {
+                        let url = ch.url.clone();
+                        state.reader.loading = true;
+                        let _ = cmd_tx.send(AppCommand::FetchChapter(url, next_idx));
+                    }
                 }
             }
             return true;
         }
         (_, KeyCode::Char(c)) if c == '<' => {
-            if let Some(book) = state.library.selected_book() {
-                let prev_idx = state.reader.current_chapter_idx.saturating_sub(1);
-                if prev_idx != state.reader.current_chapter_idx {
-                    if let Some(ch) = book.chapters.get(prev_idx) {
-                        let url = ch.url.clone();
-                        state.reader.loading = true;
-                        let _ = cmd_tx.send(AppCommand::FetchChapter(url, prev_idx));
+            if state.reader.loading == false {
+                if let Some(book) = state.library.selected_book() {
+                    let prev_idx = state.reader.current_chapter_idx.saturating_sub(1);
+                    if prev_idx != state.reader.current_chapter_idx {
+                        if let Some(ch) = book.chapters.get(prev_idx) {
+                            let url = ch.url.clone();
+                            state.reader.loading = true;
+                            let _ = cmd_tx.send(AppCommand::FetchChapter(url, prev_idx));
+                        }
                     }
                 }
             }
@@ -321,15 +346,37 @@ fn handle_reader(
 
     match state.settings.reader_mode {
         ReaderMode::Paged => match key.code {
-            KeyCode::Right | KeyCode::Char('l') => { state.reader.next_page(size.width, size.height.saturating_sub(2)); true }
-            KeyCode::Left  | KeyCode::Char('h') => { state.reader.prev_page(size.width, size.height.saturating_sub(2)); true }
+            KeyCode::Right | KeyCode::Char('l') => {
+                state
+                    .reader
+                    .next_page(size.width, size.height.saturating_sub(2));
+                true
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                state
+                    .reader
+                    .prev_page(size.width, size.height.saturating_sub(2));
+                true
+            }
             _ => true,
         },
         ReaderMode::Scrollable => match key.code {
-            KeyCode::Down | KeyCode::Char('j') => { state.reader.scroll_down(1); true }
-            KeyCode::Up   | KeyCode::Char('k') => { state.reader.scroll_up(1); true }
-            KeyCode::PageDown => { state.reader.scroll_down(20); true }
-            KeyCode::PageUp   => { state.reader.scroll_up(20); true }
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.reader.scroll_down(1);
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.reader.scroll_up(1);
+                true
+            }
+            KeyCode::PageDown => {
+                state.reader.scroll_down(20);
+                true
+            }
+            KeyCode::PageUp => {
+                state.reader.scroll_up(20);
+                true
+            }
             _ => true,
         },
     }
