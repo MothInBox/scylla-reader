@@ -12,6 +12,7 @@ The project  contains multiple crates:
 * **`scylla-plugin-api/`**: Definitioins for plugin developers.
 * **`plugin-template/`**: A baseline implementation used for learning to make new scrapers with Extism.
 
+
 ## Installation
 
 ### Option A: Using Nix (Recommended)
@@ -60,8 +61,16 @@ Update flake.nix:
     };
 }
 ```
+Then in home.nix add to your home packages
+```nix
+{ config, pkgs, inputs, ... }: {
+  home.packages = [
+    scylla-reader.packages.${pkgs.system}.default
+  ];
+}
+```
 
-### Option B: Using Cargo
+### Option B: Using Cargo (UNTESTED)
 
 ### Prerequisites
 must have the Rust stable toolchain installed on your system along with native development headers for ssl and curl.
@@ -84,9 +93,43 @@ cargo install --path scylla-reader
 cd plugin-template
 make
 ```
-The template plugin can then run by this command seqeunce in the TUI
+## FAQ
+### Where can I get plugins?
+As of right now, develop your own or find one someone else has developed!
+
+see the template plugin to get an idea on how to develop your own! 
 ```
 i (open add book window)
 type "template" 
-ctrl + s (submit all)
+ctrl + s (submit all)i
 ```
+
+
+> [!WARNING]
+> Be aware that plugins could be running anything on your machine. Verify the plugin yourself or go with trusted sources.
+
+### Where is data stored?
+
+#### .local/share/scylla-reader
+contains:
+ - library.db (database for library persistence)
+
+#### .config/scylla-reader
+contains:
+ - template.txt (files containing cookies for the plugin / domain)
+ - plugins:
+    - plugin-template.wasm (the .wasm code for plugins)
+
+> [!NOTE]
+> could contain more than just template 
+> (e.g. royalroad.txt and plugin-royalroad.wasm)
+
+
+## Roadmap
+### Features to Add
+ - Ability to set current chapter from library page
+ - Multiple "Reading Sessions" (imaybe youve completed a book but want to re-read and keep that progress, give them names too)
+ - More customisation through settings
+ - Persistent Settings
+### Bugs to fix
+ - If you move chapters too quick it gets stuck on that chapter, and does some very strange stuff. Try hold next chapter for a bit.
