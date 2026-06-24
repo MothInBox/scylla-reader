@@ -1,5 +1,6 @@
 use crate::app::WinInput;
 use crate::app::{AppState, Page};
+use crate::db::Db;
 use crate::messenger::AppCommand;
 use crate::settings::{SettingsField, SettingsPage};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -407,7 +408,12 @@ fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
         // Enter, set chapter as current for book selected book.
         (_, KeyCode::Enter) => {
             if let Some(book) = state.library.selected_book_mut() {
+                let db = Db::open().unwrap_or_else(|e| {
+                    crate::settings::log_debug(&format!("DB open failed {}", e));
+                    panic!("Could not open database fo jump update")
+                });
                 book.progress.current = state.win_cursor as u32;
+                db.update_progress(&book.url, book.progress.current, book.progress.total);
             }
             state.reset_win_input();
             state.current_page = Page::Library;
