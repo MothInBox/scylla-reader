@@ -126,6 +126,6 @@ fn draw_jump_widget(frame: &mut Frame, area: Rect, state: &mut AppState) {
         items,
         state.win_cursor,
         &mut state.win_scroll_offset,
-        " [Esc] Cancel",
+        "[Enter] Set Current [↑↓] Move [Esc] Cancel",
     );
 }

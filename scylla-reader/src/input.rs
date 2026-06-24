@@ -406,11 +406,13 @@ fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
     match (key.modifiers, key.code) {
         // Enter, set chapter as current for book selected book.
         (_, KeyCode::Enter) => {
+            if let Some(book) = state.library.selected_book_mut() {
+                book.progress.current = state.win_cursor as u32;
+            }
             state.reset_win_input();
             state.current_page = Page::Library;
             true
         }
-
         // Up/Down — move between lines
         (_, KeyCode::Up) => {
             if state.win_cursor > 0 {
