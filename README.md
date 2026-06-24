@@ -131,5 +131,5 @@ contains:
  - Multiple "Reading Sessions" (imaybe youve completed a book but want to re-read and keep that progress, give them names too)
  - More customisation through settings
  - Persistent Settings
-### Bugs to fix
- - If you move chapters too quick it gets stuck on that chapter, and does some very strange stuff. Try hold next chapter for a bit.
+### Fixed
+ - split library.rs into a model and app.
