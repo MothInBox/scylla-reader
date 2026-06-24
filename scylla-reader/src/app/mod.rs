@@ -1,7 +1,8 @@
 pub mod page;
 pub use page::Page;
 
-use crate::library::Library;
+use crate::library::{self, Library};
+use crate::models::Book;
 use crate::settings::Settings;
 
 pub struct ReaderState {
@@ -61,9 +62,15 @@ impl ReaderState {
 
     pub fn total_pages_for(&self, area_width: u16, area_height: u16) -> usize {
         let lpp = Self::lines_per_page(area_height);
-        if lpp == 0 { return 1; }
+        if lpp == 0 {
+            return 1;
+        }
         let width = area_width as usize;
-        let visual_lines: usize = self.content.iter().map(|l| Self::wrap_line_count(l, width)).sum();
+        let visual_lines: usize = self
+            .content
+            .iter()
+            .map(|l| Self::wrap_line_count(l, width))
+            .sum();
         let pages = (visual_lines + lpp - 1) / lpp;
         if pages == 0 { 1 } else { pages }
     }
@@ -74,7 +81,9 @@ impl ReaderState {
 
     pub fn page_lines_wrapped(&self, area_width: u16, area_height: u16) -> Vec<String> {
         let lpp = Self::lines_per_page(area_height);
-        if lpp == 0 { return vec![]; }
+        if lpp == 0 {
+            return vec![];
+        }
         let width = area_width as usize;
         let mut vlines: Vec<String> = Vec::new();
         for line in &self.content {
@@ -85,7 +94,9 @@ impl ReaderState {
                 vlines.extend(parts);
             }
         }
-        if vlines.is_empty() { vlines.push(String::new()); }
+        if vlines.is_empty() {
+            vlines.push(String::new());
+        }
         let total_pages = (vlines.len() + lpp - 1) / lpp;
         let page_idx = std::cmp::min(self.page, total_pages.saturating_sub(1));
         let start = page_idx * lpp;
@@ -94,8 +105,12 @@ impl ReaderState {
     }
 
     fn wrap_line_count(line: &str, width: usize) -> usize {
-        if width == 0 { return 1; }
-        if line.trim().is_empty() { return 1; }
+        if width == 0 {
+            return 1;
+        }
+        if line.trim().is_empty() {
+            return 1;
+        }
         let mut count = 0usize;
         let mut cur = 0usize;
         for word in line.split_whitespace() {
@@ -109,13 +124,19 @@ impl ReaderState {
                 cur = wlen;
             }
         }
-        if cur > 0 { count += 1; }
+        if cur > 0 {
+            count += 1;
+        }
         count
     }
 
     fn wrap_line(line: &str, width: usize) -> Vec<String> {
-        if width == 0 { return vec![line.to_string()]; }
-        if line.trim().is_empty() { return vec![String::new()]; }
+        if width == 0 {
+            return vec![line.to_string()];
+        }
+        if line.trim().is_empty() {
+            return vec![String::new()];
+        }
         let mut parts: Vec<String> = Vec::new();
         let mut cur = String::new();
         let mut cur_len = 0usize;
@@ -134,7 +155,9 @@ impl ReaderState {
                 cur_len = wlen;
             }
         }
-        if !cur.is_empty() { parts.push(cur); }
+        if !cur.is_empty() {
+            parts.push(cur);
+        }
         parts
     }
 
@@ -190,25 +213,31 @@ impl AppState {
     }
 
     pub fn valid_urls(&self) -> Vec<String> {
-        self.url_inputs.iter()
+        self.url_inputs
+            .iter()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect()
     }
 
-pub fn open_reader_chapter(
-    &mut self,
-    chapter_title: String,
-    content: String,
-    chapter_idx: usize,
-) {
-    let book_title = self.library.selected_book()
-        .map(|b| b.title.clone())
-        .unwrap_or_default();
-    let book_url = self.library.selected_book()
-        .map(|b| b.url.clone())
-        .unwrap_or_default();
-    self.reader.load(book_title, book_url, chapter_title, content, chapter_idx);
-    self.current_page = Page::Reader;
-}
+    pub fn open_reader_chapter(
+        &mut self,
+        chapter_title: String,
+        content: String,
+        chapter_idx: usize,
+    ) {
+        let book_title = self
+            .library
+            .selected_book()
+            .map(|b| b.title.clone())
+            .unwrap_or_default();
+        let book_url = self
+            .library
+            .selected_book()
+            .map(|b| b.url.clone())
+            .unwrap_or_default();
+        self.reader
+            .load(book_title, book_url, chapter_title, content, chapter_idx);
+        self.current_page = Page::Reader;
+    }
 }

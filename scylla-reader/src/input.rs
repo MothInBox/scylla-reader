@@ -15,6 +15,7 @@ pub fn handle_input(
         Page::Library => handle_library(state, key, cmd_tx),
         Page::Settings => handle_settings(state, key),
         Page::Reader => handle_reader(state, key, cmd_tx, size),
+        Page::BookChapterJump => handle_jumping_chapter(state, key),
     }
 }
 
@@ -110,6 +111,10 @@ fn handle_library(
         }
         KeyCode::Char('i') => {
             state.current_page = Page::AddingBook;
+            true
+        }
+        KeyCode::Char('j') => {
+            state.current_page = Page::BookChapterJump;
             true
         }
         KeyCode::Char('d') => {
@@ -379,5 +384,16 @@ fn handle_reader(
             }
             _ => true,
         },
+    }
+}
+
+fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
+    let booktochange = state.library.selected_book();
+    match (key.modifiers, key.code) {
+        (_, KeyCode::Esc) => {
+            state.current_page = Page::Library;
+            true
+        }
+        _ => true,
     }
 }

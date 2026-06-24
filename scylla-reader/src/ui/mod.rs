@@ -1,10 +1,11 @@
 pub mod library;
-pub mod settings;
 pub mod reader;
+pub mod settings;
 
+use crate::app::{AppState, Page};
+use crate::models::book;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use crate::app::{AppState, Page};
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
     match state.current_page {
@@ -14,11 +15,17 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
         Page::AddingBook => {
             library::draw(frame, area, state);
         }
+        Page::BookChapterJump => library::draw(frame, area, state),
     }
     if state.current_page == Page::AddingBook {
         let popup_area = centered_rect(70, 50, area);
         frame.render_widget(Clear, popup_area);
         draw_input_widget(frame, popup_area, state);
+    }
+    if state.current_page == Page::BookChapterJump {
+        let popup_area = centered_rect(70, 50, area);
+        frame.render_widget(Clear, popup_area);
+        draw_jump_widget(frame, popup_area, state);
     }
 }
 
@@ -47,7 +54,10 @@ fn draw_input_widget(frame: &mut Frame, area: Rect, state: &AppState) {
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
-    let display: String = state.url_inputs.iter().enumerate()
+    let display: String = state
+        .url_inputs
+        .iter()
+        .enumerate()
         .map(|(i, line)| {
             if i == state.url_cursor {
                 format!("> {}", line)
@@ -73,5 +83,42 @@ fn draw_input_widget(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let hints = Paragraph::new(" [Enter] New line  [Ctrl+s] Submit all  [↑↓] Move between lines  [Backspace] Delete  [Esc] Cancel")
         .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(hints, chunks[1]);
+}
+
+fn draw_jump_widget(frame: &mut Frame, area: Rect, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+
+    let display: String = state
+        .url_inputs
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            if i == state.url_cursor {
+                format!("> {}", line)
+            } else {
+                format!("  {}", line)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let chapter_count = state.library.selected_book().unwrap().chapters.len();
+
+    let block = Block::default()
+        .title(format!(
+            " Jump to Chapter ({} Chapter{}) ",
+            chapter_count,
+            if chapter_count == 1 { "" } else { "s" }
+        ))
+        .borders(Borders::ALL);
+    let paragraph = Paragraph::new(display)
+        .block(block)
+        .wrap(ratatui::widgets::Wrap { trim: false });
+    frame.render_widget(paragraph, chunks[0]);
+
+    let hints = Paragraph::new("Esc] Cancel").style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hints, chunks[1]);
 }
