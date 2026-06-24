@@ -131,5 +131,3 @@ contains:
  - Multiple "Reading Sessions" (imaybe youve completed a book but want to re-read and keep that progress, give them names too)
  - More customisation through settings
  - Persistent Settings
-### Fixed
- - split library.rs into a model and app.
