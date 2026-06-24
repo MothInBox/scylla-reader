@@ -38,7 +38,7 @@ fn handle_adding_book(
                     }
                 }
             }
-            state.reset_url_input();
+            state.reset_win_input();
             state.current_page = Page::Library;
             true
         }
@@ -82,7 +82,7 @@ fn handle_adding_book(
 
         // Esc — cancel
         (_, KeyCode::Esc) => {
-            state.reset_url_input();
+            state.reset_win_input();
             state.current_page = Page::Library;
             true
         }

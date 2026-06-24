@@ -203,7 +203,7 @@ impl AppState {
         }
     }
 
-    pub fn reset_url_input(&mut self) {
+    pub fn reset_win_input(&mut self) {
         self.win_inputs = vec![String::new()];
         self.win_cursor = 0;
     }
