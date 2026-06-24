@@ -231,6 +231,7 @@ pub struct AppState {
     pub current_page: Page,
     pub win_inputs: Vec<WinInput>,
     pub win_cursor: usize,
+    pub win_scroll_offset: usize,
     pub settings: Settings,
     pub reader: ReaderState,
 }
@@ -242,6 +243,7 @@ impl AppState {
             current_page: Page::Library,
             win_inputs: vec![WinInput::RawText(String::new())],
             win_cursor: 0,
+            win_scroll_offset: 0,
             settings: Settings::new(),
             reader: ReaderState::new(),
         }
@@ -250,8 +252,8 @@ impl AppState {
     pub fn reset_win_input(&mut self) {
         self.win_inputs = vec![WinInput::RawText(String::new())];
         self.win_cursor = 0;
+        self.win_scroll_offset = 0;
     }
-
     pub fn current_line_mut(&mut self) -> &mut WinInput {
         &mut self.win_inputs[self.win_cursor]
     }
