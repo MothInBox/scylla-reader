@@ -305,7 +305,6 @@ fn handle_reader(
     size: Rect,
 ) -> bool {
     use crate::settings::ReaderMode;
-    use crossterm::event::KeyModifiers;
 
     // Chapter navigation works in both modes
     match (key.modifiers, key.code) {
