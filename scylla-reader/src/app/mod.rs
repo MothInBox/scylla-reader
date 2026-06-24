@@ -3,7 +3,9 @@ pub use page::Page;
 
 use crate::library::{self, Library};
 use crate::models::Book;
+use crate::models::Chapter;
 use crate::settings::Settings;
+use std::fmt;
 
 pub struct ReaderState {
     pub content: Vec<String>,
@@ -182,10 +184,52 @@ impl ReaderState {
     }
 }
 
+pub enum WinInput {
+    RawText(String),
+    ChapterItem(Chapter),
+}
+impl WinInput {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            WinInput::RawText(s) => s.is_empty(),
+            WinInput::ChapterItem(c) => c.title.is_empty(),
+        }
+    }
+
+    pub fn pop(&mut self) -> Option<char> {
+        match self {
+            WinInput::RawText(s) => s.pop(),
+            WinInput::ChapterItem(_) => None, // Chapters are usually immutable in UI input fields
+        }
+    }
+
+    pub fn push(&mut self, c: char) {
+        match self {
+            WinInput::RawText(s) => s.push(c),
+            WinInput::ChapterItem(_) => {} // Ignore typing characters if it's a structural Chapter
+        }
+    }
+
+    pub fn trim_to_string(&self) -> String {
+        match self {
+            WinInput::RawText(s) => s.trim().to_string(),
+            WinInput::ChapterItem(c) => c.title.trim().to_string(),
+        }
+    }
+}
+impl fmt::Display for WinInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WinInput::RawText(s) => write!(f, "{}", s),
+            WinInput::ChapterItem(c) => write!(f, "{}", c.title), // Assuming it has .title
+        }
+    }
+}
+
 pub struct AppState {
     pub library: Library,
     pub current_page: Page,
-    pub win_inputs: Vec<String>,
+    pub win_inputs: Vec<WinInput>,
     pub win_cursor: usize,
     pub settings: Settings,
     pub reader: ReaderState,
@@ -196,7 +240,7 @@ impl AppState {
         Self {
             library: Library::new(),
             current_page: Page::Library,
-            win_inputs: vec![String::new()],
+            win_inputs: vec![WinInput::RawText(String::new())],
             win_cursor: 0,
             settings: Settings::new(),
             reader: ReaderState::new(),
@@ -204,19 +248,20 @@ impl AppState {
     }
 
     pub fn reset_win_input(&mut self) {
-        self.win_inputs = vec![String::new()];
+        self.win_inputs = vec![WinInput::RawText(String::new())];
         self.win_cursor = 0;
     }
 
-    pub fn current_line_mut(&mut self) -> &mut String {
+    pub fn current_line_mut(&mut self) -> &mut WinInput {
         &mut self.win_inputs[self.win_cursor]
     }
 
-    pub fn valid_urls(&self) -> Vec<String> {
+    pub fn valid_win_input(&self) -> Vec<WinInput> {
         self.win_inputs
             .iter()
-            .map(|s| s.trim().to_string())
+            .map(|s| s.trim_to_string())
             .filter(|s| !s.is_empty())
+            .map(WinInput::RawText)
             .collect()
     }
 

@@ -1,3 +1,4 @@
+use crate::app::WinInput;
 use crate::app::{AppState, Page};
 use crate::messenger::AppCommand;
 use crate::settings::{SettingsField, SettingsPage};
@@ -27,13 +28,13 @@ fn handle_adding_book(
     match (key.modifiers, key.code) {
         // Ctrl+s — submit all valid URLs
         (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
-            let urls = state.valid_urls();
+            let urls = state.valid_win_input();
             if urls.is_empty() {
                 crate::settings::log_debug("No valid URLs to scrape");
             } else {
                 crate::settings::log_debug(&format!("Submitting {} URLs", urls.len()));
                 for url in urls {
-                    if let Err(e) = cmd_tx.send(AppCommand::Scrape(url)) {
+                    if let Err(e) = cmd_tx.send(AppCommand::Scrape(url.to_string())) {
                         eprintln!("Failed to queue scrape: {}", e);
                     }
                 }
@@ -46,7 +47,9 @@ fn handle_adding_book(
         // Enter — add new line below win_cursor
         (_, KeyCode::Enter) => {
             let win_cursor = state.win_cursor;
-            state.win_inputs.insert(win_cursor + 1, String::new());
+            state
+                .win_inputs
+                .insert(win_cursor + 1, WinInput::RawText(String::new()));
             state.win_cursor += 1;
             true
         }
@@ -114,6 +117,18 @@ fn handle_library(
             true
         }
         KeyCode::Char('j') => {
+            crate::settings::log_debug(&format!(
+                "Adding Book {}, to win_inputs",
+                state.library.selected_book().unwrap().title
+            ));
+            state.win_inputs = state
+                .library
+                .selected_book()
+                .unwrap()
+                .chapters
+                .iter()
+                .map(|c| WinInput::ChapterItem(c.clone()))
+                .collect();
             state.current_page = Page::BookChapterJump;
             true
         }
@@ -388,12 +403,35 @@ fn handle_reader(
 }
 
 fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
-    let booktochange = state.library.selected_book();
     match (key.modifiers, key.code) {
-        (_, KeyCode::Esc) => {
+        // Enter, set chapter as current for book selected book.
+        (_, KeyCode::Enter) => {
+            state.reset_win_input();
             state.current_page = Page::Library;
             true
         }
+
+        // Up/Down — move between lines
+        (_, KeyCode::Up) => {
+            if state.win_cursor > 0 {
+                state.win_cursor -= 1;
+            }
+            true
+        }
+        (_, KeyCode::Down) => {
+            if state.win_cursor < state.win_inputs.len() - 1 {
+                state.win_cursor += 1;
+            }
+            true
+        }
+
+        // Esc — cancel
+        (_, KeyCode::Esc) => {
+            state.reset_win_input();
+            state.current_page = Page::Library;
+            true
+        }
+
         _ => true,
     }
 }

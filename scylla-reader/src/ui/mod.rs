@@ -105,7 +105,7 @@ fn draw_jump_widget(frame: &mut Frame, area: Rect, state: &AppState) {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let chapter_count = state.library.selected_book().unwrap().chapters.len();
+    let chapter_count = state.win_inputs.len();
 
     let block = Block::default()
         .title(format!(
