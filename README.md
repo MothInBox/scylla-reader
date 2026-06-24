@@ -1,6 +1,6 @@
 
 # Scylla Reader
-A TUI reader that interfaces with .WASM plugins to allow for an easily extensible Reader and Library manager.
+A TUI reader that interfaces with web assembly plugins to allow for an easily extensible Reader and Library manager.
 
 
 
