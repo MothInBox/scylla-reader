@@ -1,4 +1,3 @@
-pub mod app;
 pub mod cookie_store;
 pub mod db;
 pub mod input;
@@ -7,6 +6,7 @@ pub mod messenger;
 pub mod models;
 pub mod scrapers;
 pub mod settings;
+pub mod state;
 pub mod ui;
 pub mod worker;
 
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
-    let mut state = app::AppState::new();
+    let mut state = state::AppState::new();
 
     // Load persisted library
     let db = Db::open().unwrap_or_else(|e| {

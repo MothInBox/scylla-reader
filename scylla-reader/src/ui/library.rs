@@ -1,4 +1,4 @@
-use crate::app::AppState;
+use crate::state::AppState;
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};

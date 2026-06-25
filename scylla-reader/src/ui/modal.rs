@@ -1,5 +1,5 @@
-use crate::app::AppState;
-use crate::app::modal::Modal;
+use crate::state::AppState;
+use crate::state::modal::Modal;
 use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::style::{Modifier, Style};

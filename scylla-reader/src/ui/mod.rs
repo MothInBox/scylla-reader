@@ -4,8 +4,8 @@ pub mod reader;
 pub mod settings;
 pub mod widgets;
 
-use crate::app::AppState;
-use crate::app::page::Page;
+use crate::state::AppState;
+use crate::state::page::Page;
 use ratatui::prelude::*;
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {

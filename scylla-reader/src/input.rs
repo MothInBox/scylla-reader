@@ -1,7 +1,7 @@
-use crate::app::{AppState, Modal, Page};
 use crate::db::Db;
 use crate::messenger::AppCommand;
 use crate::settings::{SettingsField, SettingsPage};
+use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::prelude::Rect;
 
