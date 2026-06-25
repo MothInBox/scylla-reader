@@ -1,5 +1,3 @@
-use crate::models::Book;
-
 pub enum AppCommand {
     Scrape(String),
     UpdateAll(Vec<String>),

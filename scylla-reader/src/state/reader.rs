@@ -160,7 +160,7 @@ impl ReaderState {
         }
     }
 
-    pub fn prev_page(&mut self, area_width: u16, area_height: u16) {
+    pub fn prev_page(&mut self, _area_width: u16, _area_height: u16) {
         if self.page > 0 {
             self.page -= 1;
         }

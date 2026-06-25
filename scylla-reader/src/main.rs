@@ -10,7 +10,6 @@ pub mod state;
 pub mod ui;
 pub mod worker;
 
-use crate::db::Db;
 use crate::messenger::{AppCommand, ChapterContent};
 use crate::models::Book;
 use crossterm::{

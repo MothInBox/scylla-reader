@@ -1,4 +1,3 @@
-use crate::db::Db;
 use crate::messenger::AppCommand;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -114,9 +113,14 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
     if let Some(cursor_val) = selected_cursor {
         if let Some(book) = state.library.selected_book_mut() {
             book.progress.current = cursor_val as u32;
-            state
-                .db
-                .update_progress(&book.url, book.progress.current, book.progress.total);
+            if let Err(err) =
+                state
+                    .db
+                    .update_progress(&book.url, book.progress.current, book.progress.total)
+            {
+                crate::settings::log_debug(&format!("Failed to update book progress. e: {}", err));
+                return false;
+            }
         }
         state.modal = Modal::None;
         state.current_page = Page::Library;
