@@ -1,4 +1,5 @@
 pub mod app;
+pub mod cookie_store;
 pub mod db;
 pub mod input;
 pub mod library;

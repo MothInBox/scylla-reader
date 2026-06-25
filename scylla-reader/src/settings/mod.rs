@@ -1,10 +1,8 @@
-pub mod cookies;
 pub mod fields;
 
-pub use cookies::CookieStore;
 pub use fields::SettingsField;
 
-use cookies::CookieStore as CS;
+use crate::cookie_store::CookieStore;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,7 +47,7 @@ pub struct Settings {
     pub editing: bool,
     pub edit_buffer: String,
     pub settings_page: SettingsPage,
-    pub cookie_stores: Vec<CS>,
+    pub cookie_stores: Vec<CookieStore>,
     pub selected_cookie: usize,
     pub cookie_edit_buffer: String,
     pub debug_log: bool,
@@ -64,7 +62,7 @@ impl Settings {
             editing: false,
             edit_buffer: String::new(),
             settings_page: SettingsPage::Main,
-            cookie_stores: CS::discover_all(),
+            cookie_stores: CookieStore::discover_all(),
             selected_cookie: 0,
             cookie_edit_buffer: String::new(),
             debug_log: false,
@@ -73,7 +71,7 @@ impl Settings {
     }
 
     pub fn reload_cookies(&mut self) {
-        self.cookie_stores = CS::discover_all();
+        self.cookie_stores = CookieStore::discover_all();
     }
 
     pub fn save_current_cookie(&mut self) {
@@ -88,7 +86,13 @@ impl Settings {
         match field {
             SettingsField::Cookies => format!("{} domain(s) configured", self.cookie_stores.len()),
             SettingsField::RateLimit => self.rate_limit_secs.to_string(),
-            SettingsField::DebugLog => if self.debug_log { "ON".to_string() } else { "OFF".to_string() },
+            SettingsField::DebugLog => {
+                if self.debug_log {
+                    "ON".to_string()
+                } else {
+                    "OFF".to_string()
+                }
+            }
             SettingsField::ReaderMode => self.reader_mode.to_string(),
         }
     }
@@ -99,12 +103,10 @@ pub fn set_debug(enabled: bool) {
 }
 
 pub fn log_debug(msg: &str) {
-    if !DEBUG_ENABLED.load(Ordering::Relaxed) { return; }
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(LOG_FILE)
-    {
+    if !DEBUG_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(LOG_FILE) {
         let _ = writeln!(file, "[DEBUG] {}", msg);
     }
 }

@@ -1,7 +1,5 @@
-pub mod cookie_store;
 pub mod services;
 pub use services::ScraperRegistry;
-
 
 use crate::models::Book;
 use async_trait::async_trait;

@@ -1,7 +1,7 @@
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub fn config_dir() -> PathBuf {
-    // Use home dir dynamically instead of hardcoding username
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     PathBuf::from(home).join(".config/scylla-reader")
 }
@@ -20,12 +20,12 @@ impl CookieStore {
         }
     }
 
-    /// Scan config dir for all *.txt files and return a CookieStore for each
     pub fn discover_all() -> Vec<CookieStore> {
         let dir = config_dir();
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = fs::read_dir(&dir) else {
             return vec![];
         };
+
         entries
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().map(|x| x == "txt").unwrap_or(false))
@@ -37,16 +37,13 @@ impl CookieStore {
     }
 
     pub fn load(&self) -> Result<String, Box<dyn std::error::Error>> {
-        crate::settings::log_debug(&format!("Loading cookies from {:?}", self.path));
-        let contents = std::fs::read_to_string(&self.path)
-            .map_err(|e| format!(
-                "Could not read cookie file at {:?}: {}",
-                self.path, e
-            ))?;
+        let contents = fs::read_to_string(&self.path)
+            .map_err(|e| format!("Could not read cookie file at {:?}: {}", self.path, e))?;
 
         let cookie_str: String = contents
             .lines()
-            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .collect::<Vec<_>>()
             .join("; ");
 
@@ -54,30 +51,33 @@ impl CookieStore {
             return Err(format!("Cookie file for '{}' is empty.", self.domain).into());
         }
 
-        crate::settings::log_debug(&format!("Loaded {} chars for '{}'", cookie_str.len(), self.domain));
         Ok(cookie_str)
     }
 
     pub fn save(&self, contents: &str) -> Result<(), Box<dyn std::error::Error>> {
-        std::fs::create_dir_all(self.path.parent().unwrap())?;
-        std::fs::write(&self.path, contents)?;
-        crate::settings::log_debug(&format!("Saved cookies to {:?}", self.path));
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&self.path, contents)?;
         Ok(())
     }
 
     pub fn load_raw(&self) -> String {
-        std::fs::read_to_string(&self.path).unwrap_or_default()
+        fs::read_to_string(&self.path).unwrap_or_default()
     }
 
     pub fn preview(&self) -> String {
         let raw = self.load_raw();
-        let raw = raw.trim();
-        if raw.is_empty() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
             "<empty>".to_string()
-        } else if raw.len() > 40 {
-            format!("{}...", &raw[..40])
+        } else if trimmed.len() > 40 {
+            format!("{}...", &trimmed[..40])
         } else {
-            raw.to_string()
+            trimmed.to_string()
         }
+    }
+    pub fn path(&self) -> &PathBuf {
+        &self.path
     }
 }
