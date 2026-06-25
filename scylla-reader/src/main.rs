@@ -55,12 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut state = state::AppState::new();
 
-    // Load persisted library
-    let db = Db::open().unwrap_or_else(|e| {
-        crate::settings::log_debug(&format!("DB open failed: {}", e));
-        panic!("Could not open database");
-    });
-    for book in db.load_books().unwrap_or_default() {
+    for book in state.db.load_books().unwrap_or_default() {
         state.library.books.push(book);
     }
 
@@ -81,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             // Persist the upserted book
             if let Some(b) = state.library.books.iter().find(|b| b.url == book.url) {
-                db.upsert_book(b).unwrap_or_else(|e| {
+                state.db.upsert_book(b).unwrap_or_else(|e| {
                     crate::settings::log_debug(&format!("DB upsert failed: {}", e));
                 });
             }
@@ -98,7 +93,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             // Persist updated progress
             if let Some(book) = state.library.selected_book() {
-                db.update_progress(&book.url, book.progress.current, book.progress.total)
+                state
+                    .db
+                    .update_progress(&book.url, book.progress.current, book.progress.total)
                     .unwrap_or_else(|e| {
                         crate::settings::log_debug(&format!("DB progress update failed: {}", e));
                     });
@@ -180,7 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Persist delete
                 if let Some(url) = removed_url {
                     if state.library.books.len() < pre_books_len {
-                        db.delete_book(&url).unwrap_or_else(|e| {
+                        state.db.delete_book(&url).unwrap_or_else(|e| {
                             crate::settings::log_debug(&format!("DB delete failed: {}", e));
                         });
                     }
@@ -190,7 +187,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some((url, old_status)) = pre_status {
                     if let Some(book) = state.library.books.iter().find(|b| b.url == url) {
                         if book.status != old_status {
-                            db.update_status(&book.url, &book.status)
+                            state
+                                .db
+                                .update_status(&book.url, &book.status)
                                 .unwrap_or_else(|e| {
                                     crate::settings::log_debug(&format!(
                                         "DB status update failed: {}",

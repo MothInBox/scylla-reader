@@ -5,6 +5,7 @@ pub use page::Page;
 pub mod reader;
 pub use reader::ReaderState;
 
+use crate::db::Db;
 use crate::library::Library;
 use crate::models::Chapter;
 use crate::settings::Settings;
@@ -15,6 +16,7 @@ pub struct AppState {
     pub modal: Modal,
     pub settings: Settings,
     pub reader: ReaderState,
+    pub db: Db,
 }
 impl AppState {
     pub fn new() -> Self {
@@ -24,6 +26,10 @@ impl AppState {
             modal: Modal::None,
             settings: Settings::new(),
             reader: ReaderState::new(),
+            db: Db::open().unwrap_or_else(|e| {
+                crate::settings::log_debug(&format!("DB open failed: {}", e));
+                panic!("Could not open database");
+            }),
         }
     }
 

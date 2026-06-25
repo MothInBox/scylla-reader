@@ -113,12 +113,10 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
 
     if let Some(cursor_val) = selected_cursor {
         if let Some(book) = state.library.selected_book_mut() {
-            let db = Db::open().unwrap_or_else(|e| {
-                crate::settings::log_debug(&format!("DB open failed {}", e));
-                panic!("Could not open database for jump update")
-            });
             book.progress.current = cursor_val as u32;
-            db.update_progress(&book.url, book.progress.current, book.progress.total);
+            state
+                .db
+                .update_progress(&book.url, book.progress.current, book.progress.total);
         }
         state.modal = Modal::None;
         state.current_page = Page::Library;
