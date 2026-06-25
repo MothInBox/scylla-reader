@@ -1,12 +1,3 @@
-pub mod page;
-pub use page::Page;
-
-use crate::library::{self, Library};
-use crate::models::Book;
-use crate::models::Chapter;
-use crate::settings::Settings;
-use std::fmt;
-
 pub struct ReaderState {
     pub content: Vec<String>,
     pub scroll: usize,
@@ -169,7 +160,7 @@ impl ReaderState {
         }
     }
 
-    pub fn prev_page(&mut self, area_width: u16, area_height: u16) {
+    pub fn prev_page(&mut self, _area_width: u16, _area_height: u16) {
         if self.page > 0 {
             self.page -= 1;
         }
@@ -181,110 +172,5 @@ impl ReaderState {
 
     pub fn scroll_up(&mut self, amount: usize) {
         self.scroll = self.scroll.saturating_sub(amount);
-    }
-}
-
-pub enum WinInput {
-    RawText(String),
-    ChapterItem(Chapter),
-}
-impl WinInput {
-    pub fn is_empty(&self) -> bool {
-        match self {
-            WinInput::RawText(s) => s.is_empty(),
-            WinInput::ChapterItem(c) => c.title.is_empty(),
-        }
-    }
-
-    pub fn pop(&mut self) -> Option<char> {
-        match self {
-            WinInput::RawText(s) => s.pop(),
-            WinInput::ChapterItem(_) => None, // Chapters are usually immutable in UI input fields
-        }
-    }
-
-    pub fn push(&mut self, c: char) {
-        match self {
-            WinInput::RawText(s) => s.push(c),
-            WinInput::ChapterItem(_) => {} // Ignore typing characters if it's a structural Chapter
-        }
-    }
-
-    pub fn trim_to_string(&self) -> String {
-        match self {
-            WinInput::RawText(s) => s.trim().to_string(),
-            WinInput::ChapterItem(c) => c.title.trim().to_string(),
-        }
-    }
-}
-impl fmt::Display for WinInput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            WinInput::RawText(s) => write!(f, "{}", s),
-            WinInput::ChapterItem(c) => write!(f, "{}", c.title), // Assuming it has .title
-        }
-    }
-}
-
-pub struct AppState {
-    pub library: Library,
-    pub current_page: Page,
-    pub win_inputs: Vec<WinInput>,
-    pub win_cursor: usize,
-    pub win_scroll_offset: usize,
-    pub settings: Settings,
-    pub reader: ReaderState,
-}
-
-impl AppState {
-    pub fn new() -> Self {
-        Self {
-            library: Library::new(),
-            current_page: Page::Library,
-            win_inputs: vec![WinInput::RawText(String::new())],
-            win_cursor: 0,
-            win_scroll_offset: 0,
-            settings: Settings::new(),
-            reader: ReaderState::new(),
-        }
-    }
-
-    pub fn reset_win_input(&mut self) {
-        self.win_inputs = vec![WinInput::RawText(String::new())];
-        self.win_cursor = 0;
-        self.win_scroll_offset = 0;
-    }
-    pub fn current_line_mut(&mut self) -> &mut WinInput {
-        &mut self.win_inputs[self.win_cursor]
-    }
-
-    pub fn valid_win_input(&self) -> Vec<WinInput> {
-        self.win_inputs
-            .iter()
-            .map(|s| s.trim_to_string())
-            .filter(|s| !s.is_empty())
-            .map(WinInput::RawText)
-            .collect()
-    }
-
-    pub fn open_reader_chapter(
-        &mut self,
-        chapter_title: String,
-        content: String,
-        chapter_idx: usize,
-    ) {
-        let book_title = self
-            .library
-            .selected_book()
-            .map(|b| b.title.clone())
-            .unwrap_or_default();
-        let book_url = self
-            .library
-            .selected_book()
-            .map(|b| b.url.clone())
-            .unwrap_or_default();
-        self.reader
-            .load(book_title, book_url, chapter_title, content, chapter_idx);
-        self.current_page = Page::Reader;
     }
 }

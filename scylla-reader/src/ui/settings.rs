@@ -1,7 +1,7 @@
+use crate::settings::{SettingsField, SettingsPage};
+use crate::state::AppState;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
-use crate::app::AppState;
-use crate::settings::{SettingsField, SettingsPage};
 
 pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
     match state.settings.settings_page {
@@ -18,9 +18,16 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
         .split(area);
 
     let fields = SettingsField::all();
-    let items: Vec<ListItem> = fields.iter().map(|f| {
-        ListItem::new(format!("  {}: {}", f.label(), state.settings.field_value(f)))
-    }).collect();
+    let items: Vec<ListItem> = fields
+        .iter()
+        .map(|f| {
+            ListItem::new(format!(
+                "  {}: {}",
+                f.label(),
+                state.settings.field_value(f)
+            ))
+        })
+        .collect();
 
     let list = List::new(items)
         .block(Block::default().title(" Settings ").borders(Borders::ALL))
@@ -42,9 +49,12 @@ fn draw_cookie_list(frame: &mut Frame, area: Rect, state: &AppState) {
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
-    let items: Vec<ListItem> = state.settings.cookie_stores.iter().map(|cs| {
-        ListItem::new(format!("  {}: {}", cs.domain, cs.preview()))
-    }).collect();
+    let items: Vec<ListItem> = state
+        .settings
+        .cookie_stores
+        .iter()
+        .map(|cs| ListItem::new(format!("  {}: {}", cs.domain, cs.preview())))
+        .collect();
 
     let list = List::new(items)
         .block(Block::default().title(" Cookies ").borders(Borders::ALL))
@@ -66,7 +76,9 @@ fn draw_cookie_edit(frame: &mut Frame, area: Rect, state: &AppState) {
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
-    let domain = state.settings.cookie_stores
+    let domain = state
+        .settings
+        .cookie_stores
         .get(state.settings.selected_cookie)
         .map(|cs| cs.domain.as_str())
         .unwrap_or("unknown");
@@ -82,7 +94,7 @@ fn draw_cookie_edit(frame: &mut Frame, area: Rect, state: &AppState) {
 
     frame.render_widget(paragraph, chunks[0]);
 
-    let hints = Paragraph::new(" [Enter] Save  [Esc] Cancel")
-        .style(Style::default().fg(Color::DarkGray));
+    let hints =
+        Paragraph::new(" [Enter] Save  [Esc] Cancel").style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hints, chunks[1]);
 }

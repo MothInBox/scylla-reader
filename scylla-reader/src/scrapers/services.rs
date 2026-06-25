@@ -31,8 +31,8 @@ impl ScraperRegistry {
                         ));
 
                         // Check/create cookie file before moving path
-                        let store = crate::scrapers::cookie_store::CookieStore::for_domain(domain);
-                        let cookie_path = store.path_buf();
+                        let store = crate::cookie_store::CookieStore::for_domain(domain);
+                        let cookie_path = store.path();
                         if !cookie_path.exists() {
                             std::fs::create_dir_all(cookie_path.parent().unwrap()).ok();
                             std::fs::write(cookie_path, "# Paste cookies for this domain here\n")
@@ -57,7 +57,7 @@ impl ScraperRegistry {
         let (domain, wasm_path) = self.find_plugin(url)?;
         crate::settings::log_debug(&format!("Using plugin '{}' for: {}", domain, url));
 
-        let cookies = crate::scrapers::cookie_store::CookieStore::for_domain(domain)
+        let cookies = crate::cookie_store::CookieStore::for_domain(domain)
             .load()
             .ok();
 
@@ -98,7 +98,7 @@ impl ScraperRegistry {
         url: &str,
     ) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
         let (domain, wasm_path) = self.find_plugin(url)?;
-        let cookies = crate::scrapers::cookie_store::CookieStore::for_domain(domain)
+        let cookies = crate::cookie_store::CookieStore::for_domain(domain)
             .load()
             .ok();
         let input_json = serde_json::to_vec(&ScrapeInput {
@@ -114,14 +114,12 @@ impl ScraperRegistry {
         &self,
         url: &str,
     ) -> Result<(&str, &std::path::PathBuf), Box<dyn std::error::Error + Send + Sync>> {
-        // 1. Explicit intercept for mock/template routing
         if url.starts_with("template") {
             if let Some((domain, path)) = self.plugins.iter().find(|(d, _)| d == "template") {
                 return Ok((domain.as_str(), path));
             }
         }
 
-        // 2. Fallback to normal domain substring checking
         self.plugins
             .iter()
             .find(|(domain, _)| url.contains(domain.as_str()))
