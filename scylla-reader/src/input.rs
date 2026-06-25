@@ -1,5 +1,4 @@
-use crate::app::WinInput;
-use crate::app::{AppState, Page};
+use crate::app::{AppState, Modal, Page};
 use crate::db::Db;
 use crate::messenger::AppCommand;
 use crate::settings::{SettingsField, SettingsPage};
@@ -27,78 +26,77 @@ fn handle_adding_book(
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
     match (key.modifiers, key.code) {
-        // Ctrl+s — submit all valid URLs
         (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
-            let urls = state.valid_win_input();
+            let urls: Vec<String> = if let Modal::AddBook { inputs, .. } = &state.modal {
+                inputs
+                    .iter()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            } else {
+                vec![]
+            };
+
             if urls.is_empty() {
                 crate::settings::log_debug("No valid URLs to scrape");
             } else {
                 crate::settings::log_debug(&format!("Submitting {} URLs", urls.len()));
                 for url in urls {
-                    if let Err(e) = cmd_tx.send(AppCommand::Scrape(url.to_string())) {
+                    if let Err(e) = cmd_tx.send(AppCommand::Scrape(url)) {
                         eprintln!("Failed to queue scrape: {}", e);
                     }
                 }
             }
-            state.reset_win_input();
+
+            state.modal = Modal::None;
             state.current_page = Page::Library;
-            true
+            return true;
         }
-
-        // Enter — add new line below win_cursor
-        (_, KeyCode::Enter) => {
-            let win_cursor = state.win_cursor;
-            state
-                .win_inputs
-                .insert(win_cursor + 1, WinInput::RawText(String::new()));
-            state.win_cursor += 1;
-            true
-        }
-
-        // Backspace — delete char, or if line empty delete the line
-        (_, KeyCode::Backspace) => {
-            let win_cursor = state.win_cursor;
-            let line_empty = state.win_inputs[win_cursor].is_empty();
-            if line_empty && state.win_inputs.len() > 1 {
-                state.win_inputs.remove(win_cursor);
-                if state.win_cursor > 0 {
-                    state.win_cursor -= 1;
-                }
-            } else {
-                state.win_inputs[win_cursor].pop();
-            }
-            true
-        }
-
-        // Up/Down — move between lines
-        (_, KeyCode::Up) => {
-            if state.win_cursor > 0 {
-                state.win_cursor -= 1;
-            }
-            true
-        }
-        (_, KeyCode::Down) => {
-            if state.win_cursor < state.win_inputs.len() - 1 {
-                state.win_cursor += 1;
-            }
-            true
-        }
-
-        // Esc — cancel
         (_, KeyCode::Esc) => {
-            state.reset_win_input();
+            state.modal = Modal::None;
             state.current_page = Page::Library;
-            true
+            return true;
         }
-
-        // Regular typing
-        (_, KeyCode::Char(c)) => {
-            state.current_line_mut().push(c);
-            true
-        }
-
-        _ => true,
+        _ => {}
     }
+
+    if let Modal::AddBook { inputs, cursor, .. } = &mut state.modal {
+        match key.code {
+            KeyCode::Enter => {
+                inputs.insert(*cursor + 1, String::new());
+                *cursor += 1;
+            }
+            KeyCode::Backspace => {
+                let line_empty = inputs[*cursor].is_empty();
+                if line_empty && inputs.len() > 1 {
+                    inputs.remove(*cursor);
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                } else {
+                    inputs[*cursor].pop();
+                }
+            }
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if *cursor < inputs.len().saturating_sub(1) {
+                    *cursor += 1;
+                }
+            }
+            KeyCode::Char(c)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                inputs[*cursor].push(c);
+            }
+            _ => {}
+        }
+    }
+
+    true
 }
 
 fn handle_library(
@@ -114,23 +112,24 @@ fn handle_library(
             true
         }
         KeyCode::Char('i') => {
+            state.modal = Modal::AddBook {
+                inputs: vec![String::new()],
+                cursor: 0,
+                scroll_offset: 0,
+            };
             state.current_page = Page::AddingBook;
             true
         }
         KeyCode::Char('j') => {
-            crate::settings::log_debug(&format!(
-                "Adding Book {}, to win_inputs",
-                state.library.selected_book().unwrap().title
-            ));
-            state.win_inputs = state
-                .library
-                .selected_book()
-                .unwrap()
-                .chapters
-                .iter()
-                .map(|c| WinInput::ChapterItem(c.clone()))
-                .collect();
-            state.current_page = Page::BookChapterJump;
+            if let Some(book) = state.library.selected_book() {
+                crate::settings::log_debug(&format!("Adding Book {} to modal", book.title));
+                state.modal = Modal::JumpChapter {
+                    chapters: book.chapters.clone(),
+                    cursor: 0,
+                    scroll_offset: 0,
+                };
+                state.current_page = Page::BookChapterJump;
+            }
             true
         }
         KeyCode::Char('d') => {
@@ -146,10 +145,8 @@ fn handle_library(
             true
         }
         KeyCode::Enter => {
-            // Open first unread chapter or chapter at current progress
             if let Some(book) = state.library.selected_book() {
                 if book.chapters.is_empty() {
-                    // No chapters yet — show description
                     let book_title = book.title.clone();
                     let desc = book
                         .description
@@ -327,10 +324,9 @@ fn handle_reader(
 ) -> bool {
     use crate::settings::ReaderMode;
 
-    // Chapter navigation works in both modes
     match (key.modifiers, key.code) {
         (_, KeyCode::Char(c)) if c == '>' => {
-            if state.reader.loading == false {
+            if !state.reader.loading {
                 if let Some(book) = state.library.selected_book() {
                     let next_idx = state.reader.current_chapter_idx + 1;
                     if let Some(ch) = book.chapters.get(next_idx) {
@@ -343,7 +339,7 @@ fn handle_reader(
             return true;
         }
         (_, KeyCode::Char(c)) if c == '<' => {
-            if state.reader.loading == false {
+            if !state.reader.loading {
                 if let Some(book) = state.library.selected_book() {
                     let prev_idx = state.reader.current_chapter_idx.saturating_sub(1);
                     if prev_idx != state.reader.current_chapter_idx {
@@ -403,42 +399,46 @@ fn handle_reader(
 }
 
 fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
-    match (key.modifiers, key.code) {
-        // Enter, set chapter as current for book selected book.
-        (_, KeyCode::Enter) => {
-            if let Some(book) = state.library.selected_book_mut() {
-                let db = Db::open().unwrap_or_else(|e| {
-                    crate::settings::log_debug(&format!("DB open failed {}", e));
-                    panic!("Could not open database fo jump update")
-                });
-                book.progress.current = state.win_cursor as u32;
-                db.update_progress(&book.url, book.progress.current, book.progress.total);
+    let mut selected_cursor = None;
+    if let Modal::JumpChapter {
+        chapters, cursor, ..
+    } = &mut state.modal
+    {
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
             }
-            state.reset_win_input();
-            state.current_page = Page::Library;
-            true
-        }
-        // Up/Down — move between lines
-        (_, KeyCode::Up) => {
-            if state.win_cursor > 0 {
-                state.win_cursor -= 1;
+            KeyCode::Down => {
+                if *cursor < chapters.len().saturating_sub(1) {
+                    *cursor += 1;
+                }
             }
-            true
-        }
-        (_, KeyCode::Down) => {
-            if state.win_cursor < state.win_inputs.len() - 1 {
-                state.win_cursor += 1;
+            KeyCode::Enter => {
+                selected_cursor = Some(*cursor);
             }
-            true
+            KeyCode::Esc => {
+                state.modal = Modal::None;
+                state.current_page = Page::Library;
+                return true;
+            }
+            _ => {}
         }
-
-        // Esc — cancel
-        (_, KeyCode::Esc) => {
-            state.reset_win_input();
-            state.current_page = Page::Library;
-            true
-        }
-
-        _ => true,
     }
+
+    if let Some(cursor_val) = selected_cursor {
+        if let Some(book) = state.library.selected_book_mut() {
+            let db = Db::open().unwrap_or_else(|e| {
+                crate::settings::log_debug(&format!("DB open failed {}", e));
+                panic!("Could not open database for jump update")
+            });
+            book.progress.current = cursor_val as u32;
+            db.update_progress(&book.url, book.progress.current, book.progress.total);
+        }
+        state.modal = Modal::None;
+        state.current_page = Page::Library;
+    }
+
+    true
 }

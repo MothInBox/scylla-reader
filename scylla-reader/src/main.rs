@@ -1,27 +1,27 @@
 pub mod app;
+pub mod db;
 pub mod input;
 pub mod library;
-pub mod models;
-pub mod ui;
-pub mod scrapers;
 pub mod messenger;
-pub mod worker;
+pub mod models;
+pub mod scrapers;
 pub mod settings;
-pub mod db;
+pub mod ui;
+pub mod worker;
 
+use crate::db::Db;
+use crate::messenger::{AppCommand, ChapterContent};
+use crate::models::Book;
 use crossterm::{
-    event::{self, Event},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
+    event::{self, Event},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::prelude::*;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use std::io::stdout;
 use std::sync::mpsc;
-use crate::models::Book;
-use crate::messenger::{AppCommand, ChapterContent};
-use crate::db::Db;
 
 fn cleanup() {
     let _ = stdout().execute(LeaveAlternateScreen);
@@ -45,8 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Must happen before EnterAlternateScreen
-    let picker = Picker::from_query_stdio()
-        .unwrap_or_else(|_| Picker::from_fontsize((8, 12)));
+    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::from_fontsize((8, 12)));
     let picker_font_size = picker.font_size();
     let picker_protocol_type = picker.protocol_type();
 
@@ -71,11 +70,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(book) = ui_rx.try_recv() {
             crate::settings::log_debug(&format!("UI received book: {}", book.title));
             if let Some(existing) = state.library.books.iter_mut().find(|b| b.url == book.url) {
-                existing.title       = book.title.clone();
+                existing.title = book.title.clone();
                 existing.progress.total = book.progress.total;
-                existing.cover_url   = book.cover_url.clone();
+                existing.cover_url = book.cover_url.clone();
                 existing.description = book.description.clone();
-                existing.chapters    = book.chapters.clone();
+                existing.chapters = book.chapters.clone();
             } else {
                 state.library.books.push(book.clone());
             }
@@ -103,16 +102,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         crate::settings::log_debug(&format!("DB progress update failed: {}", e));
                     });
             }
-            state.open_reader_chapter(
-                chapter.title,
-                chapter.content,
-                chapter.chapter_idx,
-            );
+            state.open_reader_chapter(chapter.title, chapter.content, chapter.chapter_idx);
         }
 
         // Receive finished cover protocol from background thread
         if let Ok((url, protocol)) = cover_rx.try_recv() {
-            let current_url = state.library
+            let current_url = state
+                .library
                 .selected_book()
                 .and_then(|b| b.cover_url.as_deref().map(str::to_owned));
             if current_url.as_deref() == Some(&url) {
@@ -121,7 +117,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Kick off background cover load if selected book changed
-        let current_cover_url = state.library
+        let current_cover_url = state
+            .library
             .selected_book()
             .and_then(|b| b.cover_url.clone());
 
@@ -143,7 +140,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let protocol = picker.new_resize_protocol(img);
                                     let _ = cover_tx.send((url, protocol));
                                 }
-                                Err(e) => crate::settings::log_debug(&format!("Image decode: {}", e)),
+                                Err(e) => {
+                                    crate::settings::log_debug(&format!("Image decode: {}", e))
+                                }
                             },
                             Err(e) => crate::settings::log_debug(&format!("Cover bytes: {}", e)),
                         },
@@ -162,7 +161,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if event::poll(std::time::Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
                 // Capture pre-input state for DB sync
-                let pre_status = state.library.selected_book()
+                let pre_status = state
+                    .library
+                    .selected_book()
                     .map(|b| (b.url.clone(), b.status.clone()));
                 let pre_books_len = state.library.books.len();
                 let removed_url = if key.code == crossterm::event::KeyCode::Char('d') {
@@ -188,9 +189,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some((url, old_status)) = pre_status {
                     if let Some(book) = state.library.books.iter().find(|b| b.url == url) {
                         if book.status != old_status {
-                            db.update_status(&book.url, &book.status).unwrap_or_else(|e| {
-                                crate::settings::log_debug(&format!("DB status update failed: {}", e));
-                            });
+                            db.update_status(&book.url, &book.status)
+                                .unwrap_or_else(|e| {
+                                    crate::settings::log_debug(&format!(
+                                        "DB status update failed: {}",
+                                        e
+                                    ));
+                                });
                         }
                     }
                 }

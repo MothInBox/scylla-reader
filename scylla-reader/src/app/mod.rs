@@ -1,11 +1,11 @@
+pub mod modal;
+pub use modal::Modal;
 pub mod page;
 pub use page::Page;
 
-use crate::library::{self, Library};
-use crate::models::Book;
+use crate::library::Library;
 use crate::models::Chapter;
 use crate::settings::Settings;
-use std::fmt;
 
 pub struct ReaderState {
     pub content: Vec<String>,
@@ -184,89 +184,55 @@ impl ReaderState {
     }
 }
 
-pub enum WinInput {
-    RawText(String),
-    ChapterItem(Chapter),
-}
-impl WinInput {
-    pub fn is_empty(&self) -> bool {
-        match self {
-            WinInput::RawText(s) => s.is_empty(),
-            WinInput::ChapterItem(c) => c.title.is_empty(),
-        }
-    }
-
-    pub fn pop(&mut self) -> Option<char> {
-        match self {
-            WinInput::RawText(s) => s.pop(),
-            WinInput::ChapterItem(_) => None, // Chapters are usually immutable in UI input fields
-        }
-    }
-
-    pub fn push(&mut self, c: char) {
-        match self {
-            WinInput::RawText(s) => s.push(c),
-            WinInput::ChapterItem(_) => {} // Ignore typing characters if it's a structural Chapter
-        }
-    }
-
-    pub fn trim_to_string(&self) -> String {
-        match self {
-            WinInput::RawText(s) => s.trim().to_string(),
-            WinInput::ChapterItem(c) => c.title.trim().to_string(),
-        }
-    }
-}
-impl fmt::Display for WinInput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            WinInput::RawText(s) => write!(f, "{}", s),
-            WinInput::ChapterItem(c) => write!(f, "{}", c.title), // Assuming it has .title
-        }
-    }
-}
-
 pub struct AppState {
     pub library: Library,
     pub current_page: Page,
-    pub win_inputs: Vec<WinInput>,
-    pub win_cursor: usize,
-    pub win_scroll_offset: usize,
+    pub modal: Modal,
     pub settings: Settings,
     pub reader: ReaderState,
 }
-
 impl AppState {
     pub fn new() -> Self {
         Self {
             library: Library::new(),
             current_page: Page::Library,
-            win_inputs: vec![WinInput::RawText(String::new())],
-            win_cursor: 0,
-            win_scroll_offset: 0,
+            modal: Modal::None,
             settings: Settings::new(),
             reader: ReaderState::new(),
         }
     }
 
-    pub fn reset_win_input(&mut self) {
-        self.win_inputs = vec![WinInput::RawText(String::new())];
-        self.win_cursor = 0;
-        self.win_scroll_offset = 0;
-    }
-    pub fn current_line_mut(&mut self) -> &mut WinInput {
-        &mut self.win_inputs[self.win_cursor]
+    pub fn close_modal(&mut self) {
+        self.modal = Modal::None;
     }
 
-    pub fn valid_win_input(&self) -> Vec<WinInput> {
-        self.win_inputs
-            .iter()
-            .map(|s| s.trim_to_string())
-            .filter(|s| !s.is_empty())
-            .map(WinInput::RawText)
-            .collect()
+    pub fn open_add_book_modal(&mut self) {
+        self.modal = Modal::AddBook {
+            inputs: vec![String::new()], // Assumes Modal uses Vec<String> now
+            cursor: 0,
+            scroll_offset: 0,
+        };
     }
 
+    pub fn open_jump_chapter_modal(&mut self, chapters: Vec<Chapter>) {
+        self.modal = Modal::JumpChapter {
+            chapters,
+            cursor: 0,
+            scroll_offset: 0,
+        };
+    }
+
+    pub fn valid_add_book_inputs(&self) -> Vec<String> {
+        if let Modal::AddBook { inputs, .. } = &self.modal {
+            inputs
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        } else {
+            vec![]
+        }
+    }
     pub fn open_reader_chapter(
         &mut self,
         chapter_title: String,
