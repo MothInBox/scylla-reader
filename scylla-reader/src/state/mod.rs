@@ -7,7 +7,6 @@ pub use reader::ReaderState;
 
 use crate::db::Db;
 use crate::library::Library;
-use crate::models::Chapter;
 use crate::settings::Settings;
 
 pub struct AppState {
@@ -35,22 +34,6 @@ impl AppState {
 
     pub fn close_modal(&mut self) {
         self.modal = Modal::None;
-    }
-
-    pub fn open_add_book_modal(&mut self) {
-        self.modal = Modal::AddBook {
-            inputs: vec![String::new()], // Assumes Modal uses Vec<String> now
-            cursor: 0,
-            scroll_offset: 0,
-        };
-    }
-
-    pub fn open_jump_chapter_modal(&mut self, chapters: Vec<Chapter>) {
-        self.modal = Modal::JumpChapter {
-            chapters,
-            cursor: 0,
-            scroll_offset: 0,
-        };
     }
 
     pub fn valid_add_book_inputs(&self) -> Vec<String> {

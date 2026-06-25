@@ -11,5 +11,6 @@ pub enum Modal {
         chapters: Vec<Chapter>,
         cursor: usize,
         scroll_offset: usize,
+        show_titles: bool,
     },
 }

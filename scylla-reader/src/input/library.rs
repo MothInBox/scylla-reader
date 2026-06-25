@@ -30,6 +30,7 @@ pub fn handle_library(
                     chapters: book.chapters.clone(),
                     cursor: 0,
                     scroll_offset: 0,
+                    show_titles: true,
                 };
                 state.current_page = Page::BookChapterJump;
             }

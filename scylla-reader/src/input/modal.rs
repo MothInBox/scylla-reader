@@ -106,6 +106,11 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
                 state.current_page = Page::Library;
                 return true;
             }
+            KeyCode::Char('t') => {
+                if let Modal::JumpChapter { show_titles, .. } = &mut state.modal {
+                    *show_titles = !*show_titles;
+                }
+            }
             _ => {}
         }
     }

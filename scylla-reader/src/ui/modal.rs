@@ -42,6 +42,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
             chapters,
             cursor,
             scroll_offset,
+            show_titles,
         } => {
             let popup_area = centered_rect(70, 50, area);
             frame.render_widget(Clear, popup_area);
@@ -49,7 +50,13 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
             let count = chapters.len();
             let items: Vec<ListItem> = chapters
                 .iter()
-                .map(|ch| ListItem::new(ch.url.clone()))
+                .map(|ch| {
+                    ListItem::new(if *show_titles {
+                        ch.title.clone()
+                    } else {
+                        ch.url.clone()
+                    })
+                })
                 .collect();
 
             let title = format!(
@@ -65,7 +72,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 items,
                 *cursor,
                 scroll_offset,
-                " [Enter] Set Current  [↑↓] Move  [Esc] Cancel",
+                " [Enter] Set Current  [↑↓] Move  [t] Link/Title  [Esc] Cancel",
             );
         }
     }
