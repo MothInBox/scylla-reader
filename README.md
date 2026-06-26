@@ -131,6 +131,7 @@ contains:
 
 ## Roadmap
 ### Features to Add
+ - Easier way to install plugins. System to pull plugins from a git repo. Will require extension page.
  - Multiple "Reading Sessions" (imaybe youve completed a book but want to re-read and keep that progress, give them names too)
  - More customisation through settings
  - Persistent Settings
