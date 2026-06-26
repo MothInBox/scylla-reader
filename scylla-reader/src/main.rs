@@ -45,7 +45,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Must happen before EnterAlternateScreen
-    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::from_fontsize((8, 12)));
+    let picker = {
+        let mut p = Picker::from_query_stdio().unwrap_or_else(|_| Picker::from_fontsize((8, 12)));
+        #[cfg(feature = "vhs-mode")]
+        //We need the VHS to be Halfblocks, the picker does not pick it up automatically for some reason?
+        p.set_protocol_type(ratatui_image::picker::ProtocolType::Halfblocks);
+        p
+    };
+
     let picker_font_size = picker.font_size();
     let picker_protocol_type = picker.protocol_type();
 
