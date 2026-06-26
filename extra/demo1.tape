@@ -1,11 +1,15 @@
 Output demo1.gif
 Set FontSize 14
-Set Width 1920
-Set Height 1080
+Set Width 1200
+Set Height 600
 
 Hide
 Type "export PS1='demo ~ $ '"
 Enter
+
+Type "alias scylla-reader='env VHS=1 TERM_PROGRAM= ../scylla-reader/target/release/scylla-reader'"
+Enter
+
 Ctrl+L
 Show
 
@@ -13,22 +17,21 @@ Type "scylla-reader"
 Enter
 Sleep 2s
 
-# open insert modal
 Type "i"
 Sleep 500ms
 
-# type into the field
+Type "template"
+Sleep 500ms
+Enter
+Sleep 500ms
 Type "https://www.royalroad.com/fiction/117255/rend"
 Sleep 500ms
 
-# submit
 Ctrl+S
 Sleep 1s
 
-#past template
 Down
 Sleep 1s
 
-# enter the created item
 Enter
 Sleep 2s

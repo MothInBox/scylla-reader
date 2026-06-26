@@ -2,7 +2,11 @@
 # Scylla Reader
 A TUI reader that interfaces with web assembly plugins to allow for an easily extensible Reader and Library manager.
 
+Features a scraper system, made to be extended by anyone via wasm:
+![App Screenshot](extra/demo1.gif)
 
+Multiple ways to read:
+![App Screenshot](extra/demo2.gif)
 
 ## Layout
 

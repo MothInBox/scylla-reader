@@ -45,7 +45,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Must happen before EnterAlternateScreen
-    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::from_fontsize((8, 12)));
+    let picker = {
+        let mut p = Picker::from_query_stdio().unwrap_or_else(|_| Picker::from_fontsize((8, 12)));
+        #[cfg(feature = "vhs-mode")]
+        //We need the VHS to be Halfblocks, the picker does not pick it up automatically for some reason?
+        p.set_protocol_type(ratatui_image::picker::ProtocolType::Halfblocks);
+        p
+    };
+
     let picker_font_size = picker.font_size();
     let picker_protocol_type = picker.protocol_type();
 
@@ -128,9 +135,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(url) = current_cover_url {
                 let cover_tx = cover_tx.clone();
                 std::thread::spawn(move || {
-                    let mut picker = Picker::from_query_stdio()
-                        .unwrap_or_else(|_| Picker::from_fontsize(picker_font_size));
-                    picker.set_protocol_type(picker.protocol_type());
+                    let mut picker = Picker::from_fontsize(picker_font_size);
+                    picker.set_protocol_type(picker_protocol_type);
                     match reqwest::blocking::get(&url) {
                         Ok(resp) => match resp.bytes() {
                             Ok(bytes) => match image::load_from_memory(&bytes) {

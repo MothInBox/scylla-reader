@@ -26,3 +26,6 @@ dirs = "5"
 
 extism = "1"
 scylla-plugin-api = { path = "../scylla-plugin-api" }
+
+[features]
+vhs-mode = []
