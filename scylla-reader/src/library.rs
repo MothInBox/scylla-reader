@@ -2,7 +2,6 @@
 //! cover-image caching.
 
 use crate::models::{Book, BookStatus, Progress};
-use image::DynamicImage;
 use ratatui_image::protocol::StatefulProtocol;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -26,8 +25,6 @@ pub struct Library {
     pub books: Vec<Book>,
     pub selected_index: usize,
     pub filter: LibraryFilter,
-    pub cached_cover: Option<DynamicImage>,
-    pub cached_cover_url: Option<String>,
     pub cached_protocol: Option<StatefulProtocol>,
 }
 
@@ -37,8 +34,6 @@ impl Library {
             books: Vec::new(),
             selected_index: 0,
             filter: LibraryFilter::All,
-            cached_cover: None,
-            cached_cover_url: None,
             cached_protocol: None,
         }
     }
@@ -135,23 +130,6 @@ impl Library {
     pub fn select_prev(&mut self) {
         if self.selected_index > 0 {
             self.selected_index -= 1;
-        }
-    }
-
-    pub fn set_chapter(
-        &mut self,
-        booktochange: Option<&mut Book>,
-        new_chapter: &u32,
-    ) -> Result<(), ()> {
-        if let Some(book) = booktochange {
-            if book.progress.total >= *new_chapter {
-                book.progress.current = *new_chapter;
-                Ok(())
-            } else {
-                Err(())
-            }
-        } else {
-            Err(())
         }
     }
 }

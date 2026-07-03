@@ -112,8 +112,6 @@ impl App {
                         });
                     }
                     self.last_cover_url = None;
-                    self.state.library.cached_cover = None;
-                    self.state.library.cached_cover_url = None;
                 }
                 AppEvent::ChapterFetched(chapter) => {
                     crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Chapter received: {}", chapter.title));
@@ -151,8 +149,6 @@ impl App {
 
         if current_cover_url != self.last_cover_url {
             self.last_cover_url = current_cover_url.clone();
-            self.state.library.cached_cover = None;
-            self.state.library.cached_cover_url = None;
             self.state.library.cached_protocol = None;
 
             if let Some(url) = current_cover_url {

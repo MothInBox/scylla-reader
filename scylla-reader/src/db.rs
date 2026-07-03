@@ -14,6 +14,7 @@ impl Db {
             std::fs::create_dir_all(parent).ok();
         }
         let conn = Connection::open(&path)?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         let db = Self { conn };
         db.migrate()?;
         Ok(db)
@@ -44,8 +45,6 @@ impl Db {
                 ord         INTEGER NOT NULL,
                 PRIMARY KEY (book_url, url)
             );
-
-            PRAGMA foreign_keys = ON;
         ")
     }
 
@@ -167,6 +166,7 @@ impl Db {
     }
 
     pub fn open_conn(conn: Connection) -> Result<Db> {
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         let db = Db { conn };
         db.migrate()?;
         Ok(db)
@@ -177,6 +177,7 @@ impl Db {
             std::fs::create_dir_all(parent).ok();
         }
         let conn = Connection::open(path)?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         let db = Db { conn };
         db.migrate()?;
         Ok(db)
