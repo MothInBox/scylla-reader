@@ -88,7 +88,8 @@ impl Worker {
 AppCommand::FetchCover(url) => {
     let event_tx = self.event_tx.clone();
     std::thread::spawn(move || {
-        let mut picker = ratatui_image::picker::Picker::from_fontsize((8, 12));
+        let mut picker = ratatui_image::picker::Picker::from_query_stdio()
+            .unwrap_or_else(|_| ratatui_image::picker::Picker::from_fontsize((8, 12)));
         match reqwest::blocking::get(&url) {
             Ok(resp) => match resp.bytes() {
                 Ok(bytes) => match image::load_from_memory(&bytes) {
