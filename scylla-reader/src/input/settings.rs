@@ -80,7 +80,11 @@ fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
             state.settings.debug_log = !state.settings.debug_log;
             crate::settings::set_debug(state.settings.debug_log);
             if state.settings.debug_log {
-                let _ = std::fs::write(crate::settings::LOG_FILE, "");
+                let log_path = crate::settings::log_file();
+                if let Some(parent) = log_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&log_path, "");
                 crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", "Debug logging enabled");
             }
             state.settings.reload_log();

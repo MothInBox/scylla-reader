@@ -9,7 +9,12 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
-pub const LOG_FILE: &str = "/tmp/scylla-reader.log";
+
+pub fn log_file() -> std::path::PathBuf {
+    let base = dirs::state_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    base.join("scylla-reader").join("scylla-reader.log")
+}
 
 pub enum LogLevel {
     Error,
@@ -45,7 +50,11 @@ pub fn log(level: LogLevel, module: &str, msg: &str) {
         return;
     }
     let ts = timestamp();
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(LOG_FILE) {
+    let path = log_file();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(file, "[{}] [{}] [{}] {}", ts, level, module, msg);
     }
 }
@@ -153,7 +162,8 @@ impl Settings {
     }
 
     pub fn reload_log(&mut self) {
-        let content = std::fs::read_to_string(LOG_FILE).unwrap_or_default();
+        let path = log_file();
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
         self.log_lines = content.lines().map(|l| l.to_string()).collect();
     }
 
