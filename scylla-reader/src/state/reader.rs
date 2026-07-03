@@ -3,6 +3,7 @@
 pub struct ReaderState {
     pub content: Vec<String>,
     pub scroll: usize,
+    pub visual_scroll: usize,
     pub page: usize,
     pub chapter_title: String,
     pub book_title: String,
@@ -16,6 +17,7 @@ impl ReaderState {
         Self {
             content: Vec::new(),
             scroll: 0,
+            visual_scroll: 0,
             page: 0,
             chapter_title: String::new(),
             book_title: String::new(),
@@ -46,6 +48,7 @@ impl ReaderState {
         }
         self.content = lines;
         self.scroll = 0;
+        self.visual_scroll = 0;
         self.page = 0;
         self.current_chapter_idx = chapter_idx;
         self.loading = false;
@@ -177,6 +180,62 @@ impl ReaderState {
 
     pub fn scroll_up(&mut self, amount: usize) {
         self.scroll = self.scroll.saturating_sub(amount);
+    }
+
+    pub fn total_visual_lines(&self, area_width: u16) -> usize {
+        let width = area_width as usize;
+        self.content
+            .iter()
+            .map(|l| Self::wrap_line_count(l, width))
+            .sum()
+    }
+
+    pub fn visible_wrapped_lines(&self, area_width: u16, area_height: u16) -> Vec<String> {
+        let height = area_height as usize;
+        let width = area_width as usize;
+
+        let mut vlines: Vec<String> = Vec::new();
+        for line in &self.content {
+            let parts = Self::wrap_line(line, width);
+            if parts.is_empty() {
+                vlines.push(String::new());
+            } else {
+                vlines.extend(parts);
+            }
+        }
+        if vlines.is_empty() {
+            vlines.push(String::new());
+        }
+
+        let max_scroll = vlines.len().saturating_sub(height);
+        let scroll = std::cmp::min(self.visual_scroll, max_scroll);
+
+        let end = (scroll + height).min(vlines.len());
+        vlines[scroll..end].to_vec()
+    }
+
+    pub fn scroll_down_visual(&mut self, area_width: u16) {
+        let total = self.total_visual_lines(area_width);
+        if total > 0 {
+            self.visual_scroll = (self.visual_scroll + 1).min(total.saturating_sub(1));
+        }
+    }
+
+    pub fn scroll_up_visual(&mut self) {
+        self.visual_scroll = self.visual_scroll.saturating_sub(1);
+    }
+
+    pub fn scroll_down_visual_page(&mut self, area_width: u16, area_height: u16) {
+        let total = self.total_visual_lines(area_width);
+        let step = (area_height as usize).saturating_sub(4);
+        if total > 0 {
+            self.visual_scroll = (self.visual_scroll + step).min(total.saturating_sub(1));
+        }
+    }
+
+    pub fn scroll_up_visual_page(&mut self, area_height: u16) {
+        let step = (area_height as usize).saturating_sub(4);
+        self.visual_scroll = self.visual_scroll.saturating_sub(step);
     }
 }
 
