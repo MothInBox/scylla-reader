@@ -9,7 +9,6 @@ pub fn handle_library(
     key: KeyEvent,
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
-    let total_books = state.library.books.len();
     match key.code {
         KeyCode::Char('q') => false,
         KeyCode::Tab => {
@@ -89,14 +88,15 @@ pub fn handle_library(
             true
         }
         KeyCode::Down => {
-            if total_books > 0 {
+            let visible_len = state.library.visible_indices().len();
+            if visible_len > 0 {
                 state.library.selected_index =
-                    (state.library.selected_index + 1).min(total_books - 1);
+                    (state.library.selected_index + 1).min(visible_len - 1);
             }
             true
         }
         KeyCode::Up => {
-            if total_books > 0 {
+            if state.library.visible_indices().len() > 0 {
                 state.library.selected_index = state.library.selected_index.saturating_sub(1);
             }
             true

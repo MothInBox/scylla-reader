@@ -387,4 +387,18 @@ mod tests {
         assert_eq!(lib.selected_index, 0);
     }
 
+    #[test]
+    fn test_navigation_respects_filter_bounds() {
+        let mut lib = Library::new();
+        lib.add_book("Book A".into(), "url-a".into(), 10);
+        lib.add_book("Book B".into(), "url-b".into(), 10);
+        lib.books[1].status = BookStatus::Dropped;
+
+        lib.filter = LibraryFilter::ByStatus(BookStatus::Reading);
+
+        lib.selected_index = 0;
+        lib.select_next();
+        assert_eq!(lib.selected_index, 0, "should not navigate past visible items");
+    }
+
 }
