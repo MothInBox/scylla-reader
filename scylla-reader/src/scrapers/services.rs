@@ -1,7 +1,7 @@
 use crate::models::{Book, BookStatus, Chapter, Progress};
 use curl::easy::{Easy, List};
 use extism::{CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType, Wasm};
-use scylla_plugin_api::{ChapterOutput, ScrapeInput, ScrapeOutput};
+use scylla_plugin_api::{ChapterOutput, PluginSchema, ScrapeInput, ScrapeOutput};
 
 pub struct ScraperRegistry {
     plugins: Vec<(String, std::path::PathBuf)>,
@@ -30,13 +30,8 @@ impl ScraperRegistry {
                             path.display()
                         ));
 
-                        let store = crate::cookie_store::CookieStore::for_domain(domain);
-                        let cookie_path = store.path();
-                        if !cookie_path.exists() {
-                            std::fs::create_dir_all(cookie_path.parent().unwrap()).ok();
-                            std::fs::write(cookie_path, "# Paste cookies for this domain here\n")
-                                .ok();
-                        }
+                        let schema = Self::discover_schema(&path);
+                        crate::plugin_config::PluginConfig::init_config_file(domain, &schema.fields, schema.accepts_cookies);
 
                         plugins.push((domain.to_string(), path));
                     }
@@ -49,6 +44,50 @@ impl ScraperRegistry {
         Self { plugins }
     }
 
+    fn discover_schema(wasm_path: &std::path::PathBuf) -> PluginSchema {
+        let curl_fetch_fn = Function::new(
+            "curl_fetch",
+            [ValType::I64],
+            [ValType::I64],
+            UserData::<()>::default(),
+            host_curl_fetch,
+        );
+        let wasm = Wasm::file(wasm_path);
+        let manifest = Manifest::new([wasm]).with_allowed_host("*");
+        let Ok(mut plugin) = Plugin::new(&manifest, [curl_fetch_fn], true) else {
+            return PluginSchema { fields: vec![], accepts_cookies: true };
+        };
+        let Ok(result) = plugin.call::<&[u8], &[u8]>("get_config_schema", b"null") else {
+            return PluginSchema { fields: vec![], accepts_cookies: true };
+        };
+        serde_json::from_slice(&result).unwrap_or(PluginSchema { fields: vec![], accepts_cookies: true })
+    }
+
+    fn load_cookies_for_domain(domain: &str) -> Option<String> {
+        let path = crate::plugin_config::config_dir().join(format!("{}.json", domain));
+        let contents = std::fs::read_to_string(&path).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        let raw = json.get("_cookies")?.as_str()?;
+        let parsed: String = raw
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("; ");
+        if parsed.is_empty() { None } else { Some(parsed) }
+    }
+
+    fn load_plugin_config(domain: &str) -> Option<String> {
+        let path = crate::plugin_config::config_dir().join(format!("{}.json", domain));
+        let contents = std::fs::read_to_string(&path).ok()?;
+        let mut json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        if let Some(obj) = json.as_object_mut() {
+            obj.remove("_schema");
+            obj.remove("_cookies");
+        }
+        serde_json::to_string(&json).ok()
+    }
+
     pub async fn scrape_url(
         &self,
         url: &str,
@@ -56,13 +95,13 @@ impl ScraperRegistry {
         let (domain, wasm_path) = self.find_plugin(url)?;
         crate::settings::log_debug(&format!("Using plugin '{}' for: {}", domain, url));
 
-        let cookies = crate::cookie_store::CookieStore::for_domain(domain)
-            .load()
-            .ok();
+        let cookies = Self::load_cookies_for_domain(domain);
+        let config = Self::load_plugin_config(domain);
 
         let input = ScrapeInput {
             url: url.to_string(),
             cookies,
+            config,
         };
         let input_json = serde_json::to_vec(&input)?;
 
@@ -97,12 +136,12 @@ impl ScraperRegistry {
         url: &str,
     ) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
         let (domain, wasm_path) = self.find_plugin(url)?;
-        let cookies = crate::cookie_store::CookieStore::for_domain(domain)
-            .load()
-            .ok();
+        let cookies = Self::load_cookies_for_domain(domain);
+        let config = Self::load_plugin_config(domain);
         let input_json = serde_json::to_vec(&ScrapeInput {
             url: url.to_string(),
             cookies,
+            config,
         })?;
         let output_bytes = call_plugin(wasm_path, "scrape_chapter", &input_json)?;
         let output: ChapterOutput = serde_json::from_slice(&output_bytes)?;

@@ -1,5 +1,5 @@
 use extism_pdk::*;
-use scylla_plugin_api::{ChapterOutput, PluginChapter, ScrapeInput, ScrapeOutput};
+use scylla_plugin_api::{ChapterOutput, ConfigField, PluginChapter, PluginSchema, ScrapeInput, ScrapeOutput};
 
 #[link(wasm_import_module = "wasi_snapshot_preview1")]
 extern "C" {
@@ -156,26 +156,58 @@ fn seed_from_str(s: &str) -> u64 {
     hash
 }
 
+fn config_value(config: &Option<String>, key: &str, default: &str) -> String {
+    config
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .and_then(|v| v.get(key).and_then(|v| v.as_str().map(String::from)))
+        .unwrap_or_else(|| default.to_string())
+}
+
 // ENTRY POINTS. Here is where data is passed from the plugin to scylla-reader, everything above is
 // can be done however you want to do it, as long as these two plugin_fn exist and return the data
 // as you intend and as specified.
+
+#[plugin_fn]
+pub fn get_config_schema(Json(()): Json<()>) -> FnResult<Json<PluginSchema>> {
+    Ok(Json(PluginSchema {
+        fields: vec![
+            ConfigField {
+                key: "chapter_count".into(),
+                label: "Chapter count".into(),
+                field_type: "number".into(),
+                default: "5".into(),
+            },
+            ConfigField {
+                key: "cover_source".into(),
+                label: "Cover image URL".into(),
+                field_type: "string".into(),
+                default: "https://picsum.photos/400/600".into(),
+            },
+        ],
+        accepts_cookies: false,
+    }))
+}
 
 // Called when the book is initially added to the library (i : template : ctrl + s)
 #[plugin_fn]
 pub fn scrape_book(Json(input): Json<ScrapeInput>) -> FnResult<Json<ScrapeOutput>> {
     let title = "Inifine Scroll (Template)".to_string();
-    let cover_url = Some("https://picsum.photos/400/600".to_string());
+    let cover_url = Some(config_value(&input.config, "cover_source", "https://picsum.photos/400/600"));
     let description = Some(
         "An infinite scroll containing choas (this is the template plugin included with scylla-reader)."
             .to_string(),
     );
 
+    let count: usize = config_value(&input.config, "chapter_count", "5")
+        .parse()
+        .unwrap_or(5);
     let mut chapters = Vec::new();
-    for i in 1..=5 {
+    for i in 1..=count {
         chapters.push(PluginChapter {
             title: format!("Chapter {}: Mutable Horizons", i),
             url: format!("{}#chapter-{}", input.url, i),
-            order: i,
+            order: i as u32,
         });
     }
 

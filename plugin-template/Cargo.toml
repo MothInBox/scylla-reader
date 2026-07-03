@@ -14,3 +14,5 @@ extism-pdk = "1"
 # Your shared plugin API contract 
 # (Point this path to wherever your scylla_plugin_api crate lives on your local machine)
 scylla-plugin-api = { path = "../scylla-plugin-api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -185,6 +185,8 @@ version = "0.1.0"
 dependencies = [
  "extism-pdk",
  "scylla-plugin-api",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

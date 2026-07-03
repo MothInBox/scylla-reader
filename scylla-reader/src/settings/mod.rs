@@ -3,7 +3,7 @@
 pub mod fields;
 pub use fields::SettingsField;
 
-use crate::cookie_store::CookieStore;
+use crate::plugin_config::PluginConfig;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,11 +11,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 pub const LOG_FILE: &str = "/tmp/scylla-reader.log";
 
-#[derive(PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SettingsPage {
     Main,
-    CookieList,
-    CookieEdit,
+    PluginList,
+    PluginFields,
+    PluginFieldEdit,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -48,11 +49,13 @@ pub struct Settings {
     pub editing: bool,
     pub edit_buffer: String,
     pub settings_page: SettingsPage,
-    pub cookie_stores: Vec<CookieStore>,
-    pub selected_cookie: usize,
-    pub cookie_edit_buffer: String,
     pub debug_log: bool,
     pub reader_mode: ReaderMode,
+    pub plugin_configs: Vec<PluginConfig>,
+    pub selected_plugin: usize,
+    pub selected_plugin_field: usize,
+    pub plugin_field_editing: bool,
+    pub plugin_field_buffer: String,
 }
 
 impl Settings {
@@ -63,29 +66,50 @@ impl Settings {
             editing: false,
             edit_buffer: String::new(),
             settings_page: SettingsPage::Main,
-            cookie_stores: CookieStore::discover_all(),
-            selected_cookie: 0,
-            cookie_edit_buffer: String::new(),
             debug_log: false,
             reader_mode: ReaderMode::Paged,
+            plugin_configs: PluginConfig::discover_all(),
+            selected_plugin: 0,
+            selected_plugin_field: 0,
+            plugin_field_editing: false,
+            plugin_field_buffer: String::new(),
         }
     }
 
-    pub fn reload_cookies(&mut self) {
-        self.cookie_stores = CookieStore::discover_all();
+    pub fn reload_plugins(&mut self) {
+        self.plugin_configs = PluginConfig::discover_all();
     }
 
-    pub fn save_current_cookie(&mut self) {
-        if let Some(store) = self.cookie_stores.get(self.selected_cookie) {
-            if let Err(e) = store.save(&self.cookie_edit_buffer) {
-                log_debug(&format!("Failed to save cookie: {}", e));
+    pub fn save_current_field(&mut self) -> Result<(), String> {
+        let Some(config) = self.plugin_configs.get_mut(self.selected_plugin) else {
+            return Ok(());
+        };
+        let is_cookie = self.selected_plugin_field == config.schema.len();
+        if is_cookie {
+            config.cookies = self.plugin_field_buffer.clone();
+            return config.save();
+        }
+        let key = config
+            .schema
+            .get(self.selected_plugin_field)
+            .map(|f| f.key.clone());
+        let Some(key) = key else {
+            return Ok(());
+        };
+        if let Some(field) = config.schema.get(self.selected_plugin_field) {
+            if field.field_type == "number"
+                && !self.plugin_field_buffer.is_empty()
+                && self.plugin_field_buffer.parse::<f64>().is_err()
+            {
+                return Err("Invalid number".to_string());
             }
         }
+        config.update_value(&key, self.plugin_field_buffer.clone());
+        config.save()
     }
 
     pub fn field_value(&self, field: &SettingsField) -> String {
         match field {
-            SettingsField::Cookies => format!("{} domain(s) configured", self.cookie_stores.len()),
             SettingsField::RateLimit => self.rate_limit_secs.to_string(),
             SettingsField::DebugLog => {
                 if self.debug_log {
@@ -95,6 +119,9 @@ impl Settings {
                 }
             }
             SettingsField::ReaderMode => self.reader_mode.to_string(),
+            SettingsField::Plugins => {
+                format!("{} domain(s)", self.plugin_configs.len())
+            }
         }
     }
 }
@@ -135,6 +162,10 @@ mod tests {
         assert_eq!(s.reader_mode, ReaderMode::Paged);
         assert!(!s.debug_log);
         assert_eq!(s.selected_field, 0);
+        assert_eq!(s.settings_page, SettingsPage::Main);
+        assert_eq!(s.selected_plugin, 0);
+        assert_eq!(s.selected_plugin_field, 0);
+        assert!(!s.plugin_field_editing);
     }
 
     #[test]

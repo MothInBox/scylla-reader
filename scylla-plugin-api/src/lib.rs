@@ -1,10 +1,24 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize)]
+pub struct ConfigField {
+    pub key: String,
+    pub label: String,
+    pub field_type: String,
+    pub default: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PluginSchema {
+    pub fields: Vec<ConfigField>,
+    pub accepts_cookies: bool,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct ScrapeInput {
     pub url: String,
     pub cookies: Option<String>,
+    pub config: Option<String>,
 }
 
 

@@ -1,12 +1,12 @@
 //! Binary entry point — panic hook, then delegate to App.
 
 pub mod app;
-pub mod cookie_store;
 pub mod db;
 pub mod input;
 pub mod library;
 pub mod messenger;
 pub mod models;
+pub mod plugin_config;
 pub mod scrapers;
 pub mod settings;
 pub mod state;
