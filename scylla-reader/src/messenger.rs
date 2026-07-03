@@ -7,6 +7,7 @@ pub enum AppCommand {
     UpdateAll(Vec<String>),
     FetchChapter(String, usize),
     SetRateLimit(u64),
+    FetchCover(String),
 }
 
 pub struct ChapterContent {
@@ -18,4 +19,5 @@ pub struct ChapterContent {
 pub enum AppEvent {
     BookScraped(Book),
     ChapterFetched(ChapterContent),
+    CoverFetched(String, ratatui_image::protocol::StatefulProtocol),
 }

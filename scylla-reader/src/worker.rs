@@ -60,6 +60,7 @@ impl Worker {
                                         self.rate_limit_secs = secs;
                                     }
                                     AppCommand::UpdateAll(_) => {}
+                                    AppCommand::FetchCover(_) => {}
                                 },
                                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                                 Err(mpsc::RecvTimeoutError::Disconnected) => break 'urls,
@@ -71,7 +72,7 @@ impl Worker {
                 AppCommand::SetRateLimit(secs) => {
                     self.rate_limit_secs = secs;
                 }
-AppCommand::FetchChapter(url, idx) => {
+                AppCommand::FetchChapter(url, idx) => {
     let url = clean_url(&url);
     match runtime.block_on(self.registry.scrape_chapter(&url)) {
         Ok((title, content)) => {
@@ -83,6 +84,25 @@ AppCommand::FetchChapter(url, idx) => {
         }
         Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Chapter fetch failed: {}", e)),
     }
+}
+AppCommand::FetchCover(url) => {
+    let event_tx = self.event_tx.clone();
+    std::thread::spawn(move || {
+        let mut picker = ratatui_image::picker::Picker::from_fontsize((8, 12));
+        match reqwest::blocking::get(&url) {
+            Ok(resp) => match resp.bytes() {
+                Ok(bytes) => match image::load_from_memory(&bytes) {
+                    Ok(img) => {
+                        let protocol = picker.new_resize_protocol(img);
+                        let _ = event_tx.send(AppEvent::CoverFetched(url, protocol));
+                    }
+                    Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Image decode: {}", e)),
+                },
+                Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Cover bytes: {}", e)),
+            },
+            Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Cover fetch: {}", e)),
+        }
+    });
 }
             }
         }

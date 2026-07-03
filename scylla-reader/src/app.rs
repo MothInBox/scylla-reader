@@ -14,8 +14,6 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::prelude::*;
-use ratatui_image::picker::Picker;
-use ratatui_image::protocol::StatefulProtocol;
 use std::io::stdout;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -25,10 +23,6 @@ pub struct App {
     state: AppState,
     cmd_tx: mpsc::Sender<AppCommand>,
     event_rx: mpsc::Receiver<AppEvent>,
-    cover_tx: mpsc::Sender<(String, StatefulProtocol)>,
-    cover_rx: mpsc::Receiver<(String, StatefulProtocol)>,
-    picker_font_size: (u16, u16),
-    picker_protocol_type: ratatui_image::picker::ProtocolType,
     last_cover_url: Option<String>,
 }
 
@@ -36,7 +30,6 @@ impl App {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let (cmd_tx, cmd_rx) = mpsc::channel::<AppCommand>();
         let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
-        let (cover_tx, cover_rx) = mpsc::channel::<(String, StatefulProtocol)>();
 
         let registry = ScraperRegistry::new();
         let worker_event_tx = event_tx;
@@ -44,16 +37,6 @@ impl App {
             let worker = worker::Worker::new(cmd_rx, worker_event_tx, registry);
             worker.run();
         });
-
-        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::from_fontsize((8, 12)));
-        #[cfg(feature = "vhs-mode")]
-        let picker = {
-            let mut p = picker;
-            p.set_protocol_type(ratatui_image::picker::ProtocolType::Halfblocks);
-            p
-        };
-        let picker_font_size = picker.font_size();
-        let picker_protocol_type = picker.protocol_type();
 
         let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
@@ -67,10 +50,6 @@ impl App {
             state,
             cmd_tx,
             event_rx,
-            cover_tx,
-            cover_rx,
-            picker_font_size,
-            picker_protocol_type,
             last_cover_url: None,
         })
     }
@@ -151,16 +130,15 @@ impl App {
                     }
                     self.state.open_reader_chapter(chapter.title, chapter.content, chapter.chapter_idx);
                 }
-            }
-        }
-
-        while let Ok((url, protocol)) = self.cover_rx.try_recv() {
-            let current_url = self.state
-                .library
-                .selected_book()
-                .and_then(|b| b.cover_url.as_deref().map(str::to_owned));
-            if current_url.as_deref() == Some(&url) {
-                self.state.library.cached_protocol = Some(protocol);
+                AppEvent::CoverFetched(url, protocol) => {
+                    let current_url = self.state
+                        .library
+                        .selected_book()
+                        .and_then(|b| b.cover_url.as_deref().map(str::to_owned));
+                    if current_url.as_deref() == Some(&url) {
+                        self.state.library.cached_protocol = Some(protocol);
+                    }
+                }
             }
         }
     }
@@ -178,26 +156,7 @@ impl App {
             self.state.library.cached_protocol = None;
 
             if let Some(url) = current_cover_url {
-                let cover_tx = self.cover_tx.clone();
-                let picker_font_size = self.picker_font_size;
-                let picker_protocol_type = self.picker_protocol_type;
-                std::thread::spawn(move || {
-                    let mut picker = Picker::from_fontsize(picker_font_size);
-                    picker.set_protocol_type(picker_protocol_type);
-                    match reqwest::blocking::get(&url) {
-                        Ok(resp) => match resp.bytes() {
-                            Ok(bytes) => match image::load_from_memory(&bytes) {
-                                Ok(img) => {
-                                    let protocol = picker.new_resize_protocol(img);
-                                    let _ = cover_tx.send((url, protocol));
-                                }
-                                Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Image decode: {}", e)),
-                            },
-                            Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Cover bytes: {}", e)),
-                        },
-                        Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Cover fetch: {}", e)),
-                    }
-                });
+                let _ = self.cmd_tx.send(AppCommand::FetchCover(url));
             }
         }
     }
