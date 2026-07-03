@@ -308,8 +308,9 @@ impl PluginConfig {
 }
 
 pub fn config_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    PathBuf::from(home).join(".config/scylla-reader")
+    dirs::config_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("scylla-reader")
 }
 
 pub fn plugins_dir() -> PathBuf {

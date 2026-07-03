@@ -261,8 +261,6 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
     let mut list = List::new();
     list.append("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .map_err(|e| e.to_string())?;
-    list.append("Referer: https://www.scribblehub.com/")
-        .map_err(|e| e.to_string())?;
     handle.http_headers(list).map_err(|e| e.to_string())?;
     handle.follow_location(true).map_err(|e| e.to_string())?;
 
