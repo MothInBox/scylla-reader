@@ -136,4 +136,5 @@ contains:
  - Multiple "Reading Sessions" (imaybe youve completed a book but want to re-read and keep that progress, give them names too)
  - More customisation through settings
  - Persistent Settings
+ - Seperation into a daemon/server and TUI client?
 Add all to dev branch then polish for main.
