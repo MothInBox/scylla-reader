@@ -2,9 +2,11 @@ use crate::models::{Book, BookStatus, Chapter, Progress};
 use curl::easy::{Easy, List};
 use extism::{CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType, Wasm};
 use scylla_plugin_api::{ChapterOutput, PluginSchema, ScrapeInput, ScrapeOutput};
+use std::cell::RefCell;
 
 pub struct ScraperRegistry {
     plugins: Vec<(String, std::path::PathBuf)>,
+    plugin_cache: RefCell<Vec<(String, Plugin)>>,
 }
 
 impl ScraperRegistry {
@@ -41,7 +43,7 @@ impl ScraperRegistry {
             crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Plugin dir not found: {}", plugin_dir.display()));
         }
 
-        Self { plugins }
+        Self { plugins, plugin_cache: RefCell::new(Vec::new()) }
     }
 
     fn discover_schema(wasm_path: &std::path::PathBuf) -> PluginSchema {
@@ -111,7 +113,7 @@ impl ScraperRegistry {
         };
         let input_json = serde_json::to_vec(&input)?;
 
-        let output_bytes = call_plugin(wasm_path, "scrape_book", &input_json)?;
+        let output_bytes = self.call_cached_plugin(domain, wasm_path, "scrape_book", &input_json)?;
         let output: ScrapeOutput = serde_json::from_slice(&output_bytes)?;
 
         Ok(Book {
@@ -149,9 +151,40 @@ impl ScraperRegistry {
             cookies,
             config,
         })?;
-        let output_bytes = call_plugin(wasm_path, "scrape_chapter", &input_json)?;
+        let output_bytes = self.call_cached_plugin(domain, wasm_path, "scrape_chapter", &input_json)?;
         let output: ChapterOutput = serde_json::from_slice(&output_bytes)?;
         Ok((output.title, output.content))
+    }
+
+    fn call_cached_plugin(
+        &self,
+        domain: &str,
+        wasm_path: &std::path::PathBuf,
+        function: &str,
+        input: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        let mut cache = self.plugin_cache.borrow_mut();
+        let idx = cache.iter().position(|(d, _)| d == domain);
+
+        let plugin = if let Some(idx) = idx {
+            &mut cache[idx].1
+        } else {
+            let curl_fetch_fn = Function::new(
+                "curl_fetch",
+                [ValType::I64],
+                [ValType::I64],
+                UserData::<()>::default(),
+                host_curl_fetch,
+            );
+            let wasm = Wasm::file(wasm_path);
+            let manifest = Manifest::new([wasm]).with_allowed_host("*");
+            let plugin = Plugin::new(&manifest, [curl_fetch_fn], true)?;
+            cache.push((domain.to_string(), plugin));
+            &mut cache.last_mut().unwrap().1
+        };
+
+        let result = plugin.call::<&[u8], &[u8]>(function, input)?;
+        Ok(result.to_vec())
     }
 
     fn find_plugin(
@@ -257,6 +290,7 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
     String::from_utf8(data).map_err(|e| e.to_string())
 }
 
+#[allow(dead_code)]
 fn call_plugin(
     wasm_path: &std::path::PathBuf,
     function: &str,
