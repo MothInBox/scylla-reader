@@ -1,21 +1,18 @@
 use std::sync::mpsc;
-use crate::models::Book;
-use crate::messenger::{AppCommand, ChapterContent};
+use crate::messenger::{AppCommand, AppEvent, ChapterContent};
 use crate::scrapers::services::ScraperRegistry;
 
 pub struct Worker {
     cmd_rx: mpsc::Receiver<AppCommand>,
-    ui_tx: mpsc::Sender<Book>,
-    chapter_tx: mpsc::Sender<ChapterContent>,
+    event_tx: mpsc::Sender<AppEvent>,
 }
 
 impl Worker {
     pub fn new(
         cmd_rx: mpsc::Receiver<AppCommand>,
-        ui_tx: mpsc::Sender<Book>,
-        chapter_tx: mpsc::Sender<ChapterContent>,
+        event_tx: mpsc::Sender<AppEvent>,
     ) -> Self {
-        Self { cmd_rx, ui_tx, chapter_tx }
+        Self { cmd_rx, event_tx }
     }
 
     pub fn run(self) {
@@ -25,11 +22,11 @@ impl Worker {
         while let Ok(command) = self.cmd_rx.recv() {
             match command {
                 AppCommand::Scrape(url) => {
-                    Self::scrape_and_send(&runtime, &registry, &self.ui_tx, &clean_url(&url));
+                    Self::scrape_and_send(&runtime, &registry, &self.event_tx, &clean_url(&url));
                 }
                 AppCommand::UpdateAll(urls) => {
                     for url in urls {
-                        Self::scrape_and_send(&runtime, &registry, &self.ui_tx, &clean_url(&url));
+                        Self::scrape_and_send(&runtime, &registry, &self.event_tx, &clean_url(&url));
                         std::thread::sleep(std::time::Duration::from_secs(2));
                     }
                 }
@@ -37,11 +34,11 @@ AppCommand::FetchChapter(url, idx) => {
     let url = clean_url(&url);
     match runtime.block_on(registry.scrape_chapter(&url)) {
         Ok((title, content)) => {
-            let _ = self.chapter_tx.send(ChapterContent {
+            let _ = self.event_tx.send(AppEvent::ChapterFetched(ChapterContent {
                 chapter_idx: idx,
                 title,
                 content,
-            });
+            }));
         }
         Err(e) => crate::settings::log_debug(&format!("Chapter fetch failed: {}", e)),
     }
@@ -53,13 +50,13 @@ AppCommand::FetchChapter(url, idx) => {
     fn scrape_and_send(
         runtime: &tokio::runtime::Runtime,
         registry: &ScraperRegistry,
-        ui_tx: &mpsc::Sender<Book>,
+        event_tx: &mpsc::Sender<AppEvent>,
         url: &str,
     ) {
         match runtime.block_on(registry.scrape_url(url)) {
             Ok(book) => {
                 crate::settings::log_debug(&format!("Scraped: {}", book.title));
-                let _ = ui_tx.send(book);
+                let _ = event_tx.send(AppEvent::BookScraped(book));
             }
             Err(e) => crate::settings::log_debug(&format!("Scrape failed: {}", e)),
         }

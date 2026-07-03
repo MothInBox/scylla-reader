@@ -1,3 +1,5 @@
+use crate::models::Book;
+
 pub enum AppCommand {
     Scrape(String),
     UpdateAll(Vec<String>),
@@ -8,4 +10,9 @@ pub struct ChapterContent {
     pub chapter_idx: usize,
     pub title: String,
     pub content: String,
+}
+
+pub enum AppEvent {
+    BookScraped(Book),
+    ChapterFetched(ChapterContent),
 }
