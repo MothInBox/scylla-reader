@@ -2854,7 +2854,6 @@ dependencies = [
 name = "scylla-reader"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "crossterm",
  "curl",
  "dirs",
