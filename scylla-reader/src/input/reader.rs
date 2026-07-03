@@ -1,3 +1,5 @@
+//! Reader page input handler — paging, scrolling, chapter nav.
+
 use crate::messenger::AppCommand;
 use crate::state::{AppState, Page};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -65,19 +67,19 @@ pub fn handle_reader(
         },
         ReaderMode::Scrollable => match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
-                state.reader.scroll_down(1);
+                state.reader.scroll_down_visual(size.width);
                 true
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                state.reader.scroll_up(1);
+                state.reader.scroll_up_visual();
                 true
             }
             KeyCode::PageDown => {
-                state.reader.scroll_down(20);
+                state.reader.scroll_down_visual_page(size.width, size.height);
                 true
             }
             KeyCode::PageUp => {
-                state.reader.scroll_up(20);
+                state.reader.scroll_up_visual_page(size.height);
                 true
             }
             _ => true,

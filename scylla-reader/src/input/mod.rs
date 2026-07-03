@@ -1,3 +1,5 @@
+//! Input dispatch — routes crossterm events to page-specific handlers.
+
 pub mod library;
 pub mod modal;
 pub mod reader;
@@ -14,10 +16,10 @@ pub fn handle_input(
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
     size: Rect,
 ) -> bool {
-    match state.current_page.clone() {
+    match &state.current_page {
         Page::AddingBook => modal::handle_adding_book(state, key, cmd_tx),
         Page::Library => library::handle_library(state, key, cmd_tx),
-        Page::Settings => settings::handle_settings(state, key),
+        Page::Settings => settings::handle_settings(state, key, cmd_tx),
         Page::Reader => reader::handle_reader(state, key, cmd_tx, size),
         Page::BookChapterJump => modal::handle_jumping_chapter(state, key),
     }

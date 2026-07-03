@@ -6,8 +6,10 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
     match state.settings.settings_page {
         SettingsPage::Main => draw_main(frame, area, state),
-        SettingsPage::CookieList => draw_cookie_list(frame, area, state),
-        SettingsPage::CookieEdit => draw_cookie_edit(frame, area, state),
+        SettingsPage::DebugLog => draw_debug_log(frame, area, state),
+        SettingsPage::PluginList => draw_plugin_list(frame, area, state),
+        SettingsPage::PluginFields => draw_plugin_fields(frame, area, state),
+        SettingsPage::PluginFieldEdit => draw_plugin_field_edit(frame, area, state),
     }
 }
 
@@ -43,7 +45,33 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(hints, chunks[1]);
 }
 
-fn draw_cookie_list(frame: &mut Frame, area: Rect, state: &AppState) {
+fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+
+    let toggle_status = if state.settings.debug_log { "ON" } else { "OFF" };
+    let toggle_line = Paragraph::new(format!(
+        " Debug Logging: {}    [Enter] Toggle",
+        toggle_status,
+    ))
+    .block(Block::default().title(" Debug Log ").borders(Borders::ALL));
+    frame.render_widget(toggle_line, chunks[0]);
+
+    let log_content = state.settings.log_lines.join("\n");
+    let log_widget = Paragraph::new(log_content)
+        .block(Block::default().title(" Log ").borders(Borders::ALL))
+        .scroll((state.settings.log_scroll as u16, 0))
+        .wrap(ratatui::widgets::Wrap { trim: false });
+    frame.render_widget(log_widget, chunks[1]);
+
+    let hints = Paragraph::new(" [↑↓] Scroll  [Enter] Toggle  [Esc] Back")
+        .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(hints, chunks[2]);
+}
+
+fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -51,18 +79,63 @@ fn draw_cookie_list(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let items: Vec<ListItem> = state
         .settings
-        .cookie_stores
+        .plugin_configs
         .iter()
-        .map(|cs| ListItem::new(format!("  {}: {}", cs.domain, cs.preview())))
+        .map(|pc| ListItem::new(format!("  {}: {}", pc.domain, pc.preview())))
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().title(" Cookies ").borders(Borders::ALL))
+        .block(Block::default().title(" Plugin Configs ").borders(Borders::ALL))
         .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
         .highlight_symbol(">> ");
 
     let mut list_state = ListState::default();
-    list_state.select(Some(state.settings.selected_cookie));
+    list_state.select(Some(state.settings.selected_plugin));
+    frame.render_stateful_widget(list, chunks[0], &mut list_state);
+
+    let hints = Paragraph::new(" [↑↓] Navigate  [Enter] Select  [Esc] Back")
+        .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(hints, chunks[1]);
+}
+
+fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+
+    let Some(config) = state.settings.plugin_configs.get(state.settings.selected_plugin) else {
+        return;
+    };
+
+    let mut items: Vec<ListItem> = config
+        .schema
+        .iter()
+        .map(|f| {
+            let value = config.values.get(&f.key).map(|v| v.as_str()).unwrap_or("");
+            ListItem::new(format!("  {}: {}", f.label, value))
+        })
+        .collect();
+
+    if config.accepts_cookies {
+        items.push(ListItem::new(format!(
+            "  Cookies: {}",
+            config.cookies_preview()
+        )));
+    }
+
+    let cookie_extra = if config.accepts_cookies { 1 } else { 0 };
+    let field_count = config.schema.len() + cookie_extra;
+    let clamped = state.settings.selected_plugin_field.min(field_count.saturating_sub(1));
+    let list = List::new(items)
+        .block(Block::default()
+            .title(format!(" {} ", config.domain))
+            .borders(Borders::ALL))
+        .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
+        .highlight_symbol(">> ");
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(clamped));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
     let hints = Paragraph::new(" [↑↓] Navigate  [Enter] Edit  [Esc] Back")
@@ -70,25 +143,36 @@ fn draw_cookie_list(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(hints, chunks[1]);
 }
 
-fn draw_cookie_edit(frame: &mut Frame, area: Rect, state: &AppState) {
+fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
-    let domain = state
-        .settings
-        .cookie_stores
-        .get(state.settings.selected_cookie)
-        .map(|cs| cs.domain.as_str())
-        .unwrap_or("unknown");
+    let config = state.settings.plugin_configs.get(state.settings.selected_plugin);
+    let is_cookie = config
+        .map(|c| state.settings.selected_plugin_field == c.schema.len() && c.accepts_cookies)
+        .unwrap_or(false);
+
+    let title = match (config, is_cookie) {
+        (Some(c), true) => format!(" {} — Cookies ", c.domain),
+        (Some(c), false) => {
+            let label = c
+                .schema
+                .get(state.settings.selected_plugin_field)
+                .map(|f| f.label.as_str())
+                .unwrap_or("unknown");
+            format!(" {} — {} ", c.domain, label)
+        }
+        (None, _) => " unknown ".to_string(),
+    };
 
     let block = Block::default()
-        .title(format!(" Editing cookies for: {} ", domain))
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 
-    let paragraph = Paragraph::new(state.settings.cookie_edit_buffer.as_str())
+    let paragraph = Paragraph::new(state.settings.plugin_field_buffer.as_str())
         .block(block)
         .wrap(ratatui::widgets::Wrap { trim: false });
 

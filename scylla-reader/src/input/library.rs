@@ -1,3 +1,5 @@
+//! Library page input handler — navigation, filter, add/delete, jump.
+
 use crate::messenger::AppCommand;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -7,7 +9,6 @@ pub fn handle_library(
     key: KeyEvent,
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
-    let total_books = state.library.books.len();
     match key.code {
         KeyCode::Char('q') => false,
         KeyCode::Tab => {
@@ -25,7 +26,7 @@ pub fn handle_library(
         }
         KeyCode::Char('j') => {
             if let Some(book) = state.library.selected_book() {
-                crate::settings::log_debug(&format!("Adding Book {} to modal", book.title));
+                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Adding Book {} to modal", book.title));
                 state.modal = Modal::JumpChapter {
                     chapters: book.chapters.clone(),
                     cursor: 0,
@@ -56,7 +57,7 @@ pub fn handle_library(
                         .description
                         .clone()
                         .unwrap_or_else(|| "No content available.".to_string());
-                    crate::settings::log_debug(&format!("No chapters for: {}", book_title));
+                    crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("No chapters for: {}", book_title));
                     state.open_reader_chapter("Description".to_string(), desc, 0);
                 } else {
                     let idx = (book.progress.current as usize).min(book.chapters.len() - 1);
@@ -64,7 +65,7 @@ pub fn handle_library(
                     state.reader.loading = true;
                     state.current_page = Page::Reader;
                     if let Err(e) = cmd_tx.send(AppCommand::FetchChapter(chapter_url, idx)) {
-                        crate::settings::log_debug(&format!("Failed to queue chapter: {}", e));
+                        crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Failed to queue chapter: {}", e));
                     }
                 }
             }
@@ -79,22 +80,23 @@ pub fn handle_library(
                 .filter(|u| !u.is_empty())
                 .collect();
             if !urls.is_empty() {
-                crate::settings::log_debug("Attempting to update all books...");
+                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", "Attempting to update all books...");
                 if let Err(e) = cmd_tx.send(AppCommand::UpdateAll(urls)) {
-                    eprintln!("Failed to queue update: {}", e);
+                    crate::settings::log(crate::settings::LogLevel::Error, "INPUT", &format!("Failed to queue update: {}", e));
                 }
             }
             true
         }
         KeyCode::Down => {
-            if total_books > 0 {
+            let visible_len = state.library.visible_indices().len();
+            if visible_len > 0 {
                 state.library.selected_index =
-                    (state.library.selected_index + 1).min(total_books - 1);
+                    (state.library.selected_index + 1).min(visible_len - 1);
             }
             true
         }
         KeyCode::Up => {
-            if total_books > 0 {
+            if state.library.visible_indices().len() > 0 {
                 state.library.selected_index = state.library.selected_index.saturating_sub(1);
             }
             true

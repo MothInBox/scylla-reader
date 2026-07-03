@@ -1,11 +1,23 @@
+//! Types for channel communication between the main thread and worker.
+
+use crate::models::Book;
+
 pub enum AppCommand {
     Scrape(String),
     UpdateAll(Vec<String>),
     FetchChapter(String, usize),
+    SetRateLimit(u64),
+    FetchCover(String),
 }
 
 pub struct ChapterContent {
     pub chapter_idx: usize,
     pub title: String,
     pub content: String,
+}
+
+pub enum AppEvent {
+    BookScraped(Book),
+    ChapterFetched(ChapterContent),
+    CoverFetched(String, ratatui_image::protocol::StatefulProtocol),
 }

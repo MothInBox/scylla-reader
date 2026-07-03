@@ -1,10 +1,12 @@
 use crate::models::{Book, BookStatus, Chapter, Progress};
 use curl::easy::{Easy, List};
 use extism::{CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType, Wasm};
-use scylla_plugin_api::{ChapterOutput, ScrapeInput, ScrapeOutput};
+use scylla_plugin_api::{ChapterOutput, PluginSchema, ScrapeInput, ScrapeOutput};
+use std::cell::RefCell;
 
 pub struct ScraperRegistry {
-    plugins: Vec<(String, std::path::PathBuf)>, // (domain, wasm_path)
+    plugins: Vec<(String, std::path::PathBuf)>,
+    plugin_cache: RefCell<Vec<(String, Plugin)>>,
 }
 
 impl ScraperRegistry {
@@ -24,30 +26,74 @@ impl ScraperRegistry {
                 }
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     if let Some(domain) = stem.strip_prefix("plugin-") {
-                        crate::settings::log_debug(&format!(
+                        crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!(
                             "Discovered plugin: {} -> {}",
                             domain,
                             path.display()
                         ));
 
-                        // Check/create cookie file before moving path
-                        let store = crate::cookie_store::CookieStore::for_domain(domain);
-                        let cookie_path = store.path();
-                        if !cookie_path.exists() {
-                            std::fs::create_dir_all(cookie_path.parent().unwrap()).ok();
-                            std::fs::write(cookie_path, "# Paste cookies for this domain here\n")
-                                .ok();
-                        }
+                        let schema = Self::discover_schema(&path);
+                        crate::plugin_config::PluginConfig::init_config_file(domain, &schema.fields, schema.accepts_cookies);
 
                         plugins.push((domain.to_string(), path));
                     }
                 }
             }
         } else {
-            crate::settings::log_debug(&format!("Plugin dir not found: {}", plugin_dir.display()));
+            crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Plugin dir not found: {}", plugin_dir.display()));
         }
 
-        Self { plugins }
+        Self { plugins, plugin_cache: RefCell::new(Vec::new()) }
+    }
+
+    fn discover_schema(wasm_path: &std::path::PathBuf) -> PluginSchema {
+        let curl_fetch_fn = Function::new(
+            "curl_fetch",
+            [ValType::I64],
+            [ValType::I64],
+            UserData::<()>::default(),
+            host_curl_fetch,
+        );
+        let wasm = Wasm::file(wasm_path);
+        let manifest = Manifest::new([wasm]).with_allowed_host("*");
+        let Ok(mut plugin) = Plugin::new(&manifest, [curl_fetch_fn], true) else {
+            return PluginSchema { fields: vec![], accepts_cookies: true };
+        };
+        let Ok(result) = plugin.call::<&[u8], &[u8]>("get_config_schema", b"null") else {
+            return PluginSchema { fields: vec![], accepts_cookies: true };
+        };
+        serde_json::from_slice(&result).unwrap_or(PluginSchema { fields: vec![], accepts_cookies: true })
+    }
+
+    fn load_cookies_for_domain(domain: &str) -> Option<String> {
+        let path = crate::plugin_config::config_dir().join(format!("{}.json", domain));
+        let contents = std::fs::read_to_string(&path).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        let raw = json.get("_cookies")?.as_str()?;
+        let parsed: String = raw
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("; ");
+        if parsed.is_empty() {
+            crate::settings::log(crate::settings::LogLevel::Debug, "COOKIE", &format!("No cookies for {} (empty after parse)", domain));
+            None
+        } else {
+            crate::settings::log(crate::settings::LogLevel::Debug, "COOKIE", &format!("Loaded {} chars of cookies for {}", parsed.len(), domain));
+            Some(parsed)
+        }
+    }
+
+    fn load_plugin_config(domain: &str) -> Option<String> {
+        let path = crate::plugin_config::config_dir().join(format!("{}.json", domain));
+        let contents = std::fs::read_to_string(&path).ok()?;
+        let mut json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        if let Some(obj) = json.as_object_mut() {
+            obj.remove("_schema");
+            obj.remove("_cookies");
+            obj.remove("_accepts_cookies");
+        }
     }
 
     pub async fn scrape_url(
@@ -55,19 +101,19 @@ impl ScraperRegistry {
         url: &str,
     ) -> Result<Book, Box<dyn std::error::Error + Send + Sync>> {
         let (domain, wasm_path) = self.find_plugin(url)?;
-        crate::settings::log_debug(&format!("Using plugin '{}' for: {}", domain, url));
+        crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Using plugin '{}' for: {}", domain, url));
 
-        let cookies = crate::cookie_store::CookieStore::for_domain(domain)
-            .load()
-            .ok();
+        let cookies = Self::load_cookies_for_domain(domain);
+        let config = Self::load_plugin_config(domain);
 
         let input = ScrapeInput {
             url: url.to_string(),
             cookies,
+            config,
         };
         let input_json = serde_json::to_vec(&input)?;
 
-        let output_bytes = call_plugin(wasm_path, "scrape_book", &input_json)?;
+        let output_bytes = self.call_cached_plugin(domain, wasm_path, "scrape_book", &input_json)?;
         let output: ScrapeOutput = serde_json::from_slice(&output_bytes)?;
 
         Ok(Book {
@@ -98,16 +144,47 @@ impl ScraperRegistry {
         url: &str,
     ) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
         let (domain, wasm_path) = self.find_plugin(url)?;
-        let cookies = crate::cookie_store::CookieStore::for_domain(domain)
-            .load()
-            .ok();
+        let cookies = Self::load_cookies_for_domain(domain);
+        let config = Self::load_plugin_config(domain);
         let input_json = serde_json::to_vec(&ScrapeInput {
             url: url.to_string(),
             cookies,
+            config,
         })?;
-        let output_bytes = call_plugin(wasm_path, "scrape_chapter", &input_json)?;
+        let output_bytes = self.call_cached_plugin(domain, wasm_path, "scrape_chapter", &input_json)?;
         let output: ChapterOutput = serde_json::from_slice(&output_bytes)?;
         Ok((output.title, output.content))
+    }
+
+    fn call_cached_plugin(
+        &self,
+        domain: &str,
+        wasm_path: &std::path::PathBuf,
+        function: &str,
+        input: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        let mut cache = self.plugin_cache.borrow_mut();
+        let idx = cache.iter().position(|(d, _)| d == domain);
+
+        let plugin = if let Some(idx) = idx {
+            &mut cache[idx].1
+        } else {
+            let curl_fetch_fn = Function::new(
+                "curl_fetch",
+                [ValType::I64],
+                [ValType::I64],
+                UserData::<()>::default(),
+                host_curl_fetch,
+            );
+            let wasm = Wasm::file(wasm_path);
+            let manifest = Manifest::new([wasm]).with_allowed_host("*");
+            let plugin = Plugin::new(&manifest, [curl_fetch_fn], true)?;
+            cache.push((domain.to_string(), plugin));
+            &mut cache.last_mut().unwrap().1
+        };
+
+        let result = plugin.call::<&[u8], &[u8]>(function, input)?;
+        Ok(result.to_vec())
     }
 
     fn find_plugin(
@@ -134,8 +211,6 @@ impl ScraperRegistry {
     }
 }
 
-// ── curl host function ────────────────────────────────────────────────────────
-
 fn host_curl_fetch(
     plugin: &mut CurrentPlugin,
     inputs: &[Val],
@@ -148,6 +223,23 @@ fn host_curl_fetch(
     let url = parts.next().unwrap_or("").to_string();
     let cookies = parts.next().unwrap_or("").to_string();
 
+    crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Fetching: {}", url));
+
+    if !cookies.is_empty() {
+        let has_equals = cookies.contains('=');
+        let has_cf = cookies.contains("cf_clearance=");
+        crate::settings::log(
+            crate::settings::LogLevel::Debug,
+            "COOKIE",
+            &format!(
+                "len={} has_=={} has_cf_clearance={}",
+                cookies.len(),
+                has_equals,
+                has_cf,
+            ),
+        );
+    }
+
     let result = fetch_with_curl(&url, &cookies).unwrap_or_default();
 
     let mem = plugin.memory_new(result.as_bytes())?;
@@ -158,6 +250,7 @@ fn host_curl_fetch(
 fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
     let mut data = Vec::new();
     let mut handle = Easy::new();
+    let start = std::time::Instant::now();
 
     handle.url(url).map_err(|e| e.to_string())?;
     handle
@@ -169,8 +262,6 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
 
     let mut list = List::new();
     list.append("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .map_err(|e| e.to_string())?;
-    list.append("Referer: https://www.scribblehub.com/")
         .map_err(|e| e.to_string())?;
     handle.http_headers(list).map_err(|e| e.to_string())?;
     handle.follow_location(true).map_err(|e| e.to_string())?;
@@ -186,11 +277,20 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
         transfer.perform().map_err(|e| e.to_string())?;
     }
 
+    let elapsed = start.elapsed();
+    let status = handle.response_code().unwrap_or(0);
+    crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!(
+        "HTTP {} — {}B — {:?} — {}",
+        status,
+        data.len(),
+        elapsed,
+        url,
+    ));
+
     String::from_utf8(data).map_err(|e| e.to_string())
 }
 
-// ── Plugin runner ─────────────────────────────────────────────────────────────
-
+#[allow(dead_code)]
 fn call_plugin(
     wasm_path: &std::path::PathBuf,
     function: &str,
@@ -216,10 +316,11 @@ fn call_plugin(
     let result = plugin.call::<&[u8], &[u8]>(function, input)?;
     let bytes = result.to_vec();
 
-    crate::settings::log_debug(&format!(
-        "[{}::{}] returned {} bytes: {}",
+    crate::settings::log(crate::settings::LogLevel::Debug, "PLUGIN", &format!(
+        "[{}::{}] input={}B output={}B: {}",
         plugin_name,
         function,
+        input.len(),
         bytes.len(),
         &String::from_utf8_lossy(&bytes)
             .chars()

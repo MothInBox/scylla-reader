@@ -1,3 +1,5 @@
+//! Reader page renderer — paged and scrollable modes.
+
 use crate::settings::ReaderMode;
 use crate::state::AppState;
 use ratatui::prelude::*;
@@ -36,12 +38,13 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let header = Paragraph::new(format!(
         " {} — Ch.{} {}",
-        state.reader.book_title, state.reader.current_chapter_idx, state.reader.chapter_title,
+        state.reader.book_title,
+        state.reader.current_chapter_idx + 1,
+        state.reader.chapter_title,
     ))
     .style(Style::default().fg(Color::Yellow));
     frame.render_widget(header, chunks[0]);
 
-    // Calculate wrapped visual lines for the current page using area width/height.
     let lines = state
         .reader
         .page_lines_wrapped(chunks[1].width, chunks[1].height);
@@ -99,30 +102,29 @@ fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let header = Paragraph::new(format!(
         " {} — Ch.{} {}",
-        state.reader.book_title, state.reader.current_chapter_idx, state.reader.chapter_title,
+        state.reader.book_title,
+        state.reader.current_chapter_idx + 1,
+        state.reader.chapter_title,
     ))
     .style(Style::default().fg(Color::Yellow));
     frame.render_widget(header, chunks[0]);
 
-    let visible_lines: Vec<&str> = state
+    let lines = state
         .reader
-        .content
-        .iter()
-        .skip(state.reader.scroll)
-        .map(|s| s.as_str())
-        .collect();
-    let content = visible_lines.join("\n");
+        .visible_wrapped_lines(chunks[1].width, chunks[1].height);
+    let content = lines.join("\n");
     let block = Block::default().borders(Borders::LEFT);
-    let paragraph = Paragraph::new(content)
-        .block(block)
-        .wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(content).block(block);
     frame.render_widget(paragraph, chunks[1]);
 
-    let progress = if state.reader.content.is_empty() {
+    let total_visual = state.reader.total_visual_lines(chunks[1].width);
+    let progress = if total_visual == 0 {
         0
     } else {
-        (state.reader.scroll * 100) / state.reader.content.len()
+        let current = std::cmp::min(state.reader.visual_scroll, total_visual.saturating_sub(1));
+        (current * 100) / total_visual
     };
+
     let prev_hint = if state.reader.current_chapter_idx > 0 {
         "[<] Prev  "
     } else {

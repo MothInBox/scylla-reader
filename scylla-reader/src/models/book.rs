@@ -1,3 +1,5 @@
+//! Book and Chapter structs.
+
 use serde::{Deserialize, Serialize};
 use crate::models::Progress;
 
@@ -31,7 +33,28 @@ impl std::fmt::Display for BookStatus {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_status_cycle_wraps() {
+        assert_eq!(BookStatus::Reading.next(), BookStatus::Paused);
+        assert_eq!(BookStatus::Paused.next(), BookStatus::Dropped);
+        assert_eq!(BookStatus::Dropped.next(), BookStatus::Completed);
+        assert_eq!(BookStatus::Completed.next(), BookStatus::Reading);
+    }
+
+    #[test]
+    fn test_status_display() {
+        assert_eq!(format!("{}", BookStatus::Reading), "Reading");
+        assert_eq!(format!("{}", BookStatus::Paused), "Paused");
+        assert_eq!(format!("{}", BookStatus::Dropped), "Dropped");
+        assert_eq!(format!("{}", BookStatus::Completed), "Completed");
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Chapter {
     pub title: String,
     pub url: String,

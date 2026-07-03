@@ -1,3 +1,5 @@
+//! Library page renderer — book list, detail side panel, filter bar.
+
 use crate::state::AppState;
 
 use ratatui::prelude::*;
@@ -50,7 +52,15 @@ fn draw_book_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
             };
             ListItem::new(format!(
                 "{} ({}) {}/{}{}",
-                b.title, b.status, b.progress.current, b.progress.total, tags
+                b.title,
+                b.status,
+                if b.progress.total == 0 {
+                    0
+                } else {
+                    (b.progress.current + 1).min(b.progress.total)
+                },
+                b.progress.total,
+                tags
             ))
         })
         .collect();
@@ -98,12 +108,15 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, state: &mut AppState) {
         "Title:    {}\nStatus:   {}\nProgress: {}/{} chapters\nTags:     {}\n\n{}",
         title,
         status,
-        progress.current,
+        if progress.total == 0 {
+            0
+        } else {
+            (progress.current + 1).min(progress.total)
+        },
         progress.total,
         tags.join(", "),
         description.unwrap_or_default(),
     );
-
     frame.render_widget(
         Paragraph::new(details).wrap(Wrap { trim: false }),
         side_chunks[1],

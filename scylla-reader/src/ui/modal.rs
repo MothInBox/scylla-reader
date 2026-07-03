@@ -1,3 +1,5 @@
+//! Modal popup renderer — add-book form and jump-to-chapter list.
+
 use crate::state::AppState;
 use crate::state::modal::Modal;
 use crate::ui::widgets::centered_rect;
