@@ -194,24 +194,54 @@ impl ReaderState {
         let height = area_height as usize;
         let width = area_width as usize;
 
-        let mut vlines: Vec<String> = Vec::new();
-        for line in &self.content {
-            let parts = Self::wrap_line(line, width);
-            if parts.is_empty() {
-                vlines.push(String::new());
-            } else {
-                vlines.extend(parts);
-            }
-        }
-        if vlines.is_empty() {
-            vlines.push(String::new());
+        if height == 0 {
+            return Vec::new();
         }
 
-        let max_scroll = vlines.len().saturating_sub(height);
+        // Clamp scroll against the total number of wrapped (visual) lines without allocating them all.
+        let total = self.total_visual_lines(area_width);
+        if total == 0 {
+            return vec![String::new()];
+        }
+        let max_scroll = total.saturating_sub(height);
         let scroll = std::cmp::min(self.visual_scroll, max_scroll);
 
-        let end = (scroll + height).min(vlines.len());
-        vlines[scroll..end].to_vec()
+        let mut out: Vec<String> = Vec::with_capacity(height.min(total));
+        let mut visual_idx = 0usize;
+
+        for line in &self.content {
+            let count = Self::wrap_line_count(line, width);
+
+            // Skip entire wrapped line groups before the scroll window without allocating them.
+            if visual_idx + count <= scroll {
+                visual_idx += count;
+                continue;
+            }
+
+            let mut parts = Self::wrap_line(line, width);
+            if parts.is_empty() {
+                parts.push(String::new());
+            }
+
+            for part in parts {
+                if visual_idx >= scroll && out.len() < height {
+                    out.push(part);
+                }
+                visual_idx += 1;
+                if out.len() >= height {
+                    break;
+                }
+            }
+
+            if out.len() >= height {
+                break;
+            }
+        }
+
+        if out.is_empty() {
+            out.push(String::new());
+        }
+        out
     }
 
     pub fn scroll_down_visual(&mut self, area_width: u16) {

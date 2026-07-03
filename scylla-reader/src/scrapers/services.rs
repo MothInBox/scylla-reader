@@ -92,8 +92,8 @@ impl ScraperRegistry {
         if let Some(obj) = json.as_object_mut() {
             obj.remove("_schema");
             obj.remove("_cookies");
+            obj.remove("_accepts_cookies");
         }
-        serde_json::to_string(&json).ok()
     }
 
     pub async fn scrape_url(
@@ -226,16 +226,18 @@ fn host_curl_fetch(
     crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Fetching: {}", url));
 
     if !cookies.is_empty() {
-        let first_20: String = cookies.chars().take(20).collect();
         let has_equals = cookies.contains('=');
         let has_cf = cookies.contains("cf_clearance=");
-        crate::settings::log(crate::settings::LogLevel::Debug, "COOKIE", &format!(
-            "len={} has_=={} has_cf_clearance={} preview=\"{}\"",
-            cookies.len(),
-            has_equals,
-            has_cf,
-            first_20,
-        ));
+        crate::settings::log(
+            crate::settings::LogLevel::Debug,
+            "COOKIE",
+            &format!(
+                "len={} has_=={} has_cf_clearance={}",
+                cookies.len(),
+                has_equals,
+                has_cf,
+            ),
+        );
     }
 
     let result = fetch_with_curl(&url, &cookies).unwrap_or_default();
