@@ -8,34 +8,35 @@ use crate::scrapers::services::ScraperRegistry;
 pub struct Worker {
     cmd_rx: mpsc::Receiver<AppCommand>,
     event_tx: mpsc::Sender<AppEvent>,
+    registry: ScraperRegistry,
 }
 
 impl Worker {
     pub fn new(
         cmd_rx: mpsc::Receiver<AppCommand>,
         event_tx: mpsc::Sender<AppEvent>,
+        registry: ScraperRegistry,
     ) -> Self {
-        Self { cmd_rx, event_tx }
+        Self { cmd_rx, event_tx, registry }
     }
 
     pub fn run(self) {
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-        let registry = ScraperRegistry::new();
 
         while let Ok(command) = self.cmd_rx.recv() {
             match command {
                 AppCommand::Scrape(url) => {
-                    Self::scrape_and_send(&runtime, &registry, &self.event_tx, &clean_url(&url));
+                    Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
                 }
                 AppCommand::UpdateAll(urls) => {
                     for url in urls {
-                        Self::scrape_and_send(&runtime, &registry, &self.event_tx, &clean_url(&url));
+                        Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
                         std::thread::sleep(std::time::Duration::from_secs(2));
                     }
                 }
 AppCommand::FetchChapter(url, idx) => {
     let url = clean_url(&url);
-    match runtime.block_on(registry.scrape_chapter(&url)) {
+    match runtime.block_on(self.registry.scrape_chapter(&url)) {
         Ok((title, content)) => {
             let _ = self.event_tx.send(AppEvent::ChapterFetched(ChapterContent {
                 chapter_idx: idx,

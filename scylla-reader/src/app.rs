@@ -3,6 +3,7 @@
 
 use crate::input;
 use crate::messenger::{AppCommand, AppEvent};
+use crate::scrapers::services::ScraperRegistry;
 use crate::state::AppState;
 use crate::ui;
 use crate::worker;
@@ -37,9 +38,10 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
         let (cover_tx, cover_rx) = mpsc::channel::<(String, StatefulProtocol)>();
 
+        let registry = ScraperRegistry::new();
         let worker_event_tx = event_tx;
         std::thread::spawn(move || {
-            let worker = worker::Worker::new(cmd_rx, worker_event_tx);
+            let worker = worker::Worker::new(cmd_rx, worker_event_tx, registry);
             worker.run();
         });
 
