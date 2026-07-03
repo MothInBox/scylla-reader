@@ -6,6 +6,7 @@ pub enum AppCommand {
     Scrape(String),
     UpdateAll(Vec<String>),
     FetchChapter(String, usize),
+    SetRateLimit(u64),
 }
 
 pub struct ChapterContent {

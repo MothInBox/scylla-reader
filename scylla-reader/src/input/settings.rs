@@ -1,10 +1,11 @@
+use crate::messenger::AppCommand;
 use crate::settings::{SettingsField, SettingsPage};
 use crate::state::{AppState, Page};
 use crossterm::event::{KeyCode, KeyEvent};
 
-pub fn handle_settings(state: &mut AppState, key: KeyEvent) -> bool {
+pub fn handle_settings(state: &mut AppState, key: KeyEvent, cmd_tx: &std::sync::mpsc::Sender<AppCommand>) -> bool {
     match state.settings.settings_page.clone() {
-        SettingsPage::Main => handle_settings_main(state, key),
+        SettingsPage::Main => handle_settings_main(state, key, cmd_tx),
         SettingsPage::DebugLog => handle_debug_log(state, key),
         SettingsPage::PluginList => handle_plugin_list(state, key),
         SettingsPage::PluginFields => handle_plugin_fields(state, key),
@@ -12,7 +13,7 @@ pub fn handle_settings(state: &mut AppState, key: KeyEvent) -> bool {
     }
 }
 
-pub fn handle_settings_main(state: &mut AppState, key: KeyEvent) -> bool {
+pub fn handle_settings_main(state: &mut AppState, key: KeyEvent, cmd_tx: &std::sync::mpsc::Sender<AppCommand>) -> bool {
     let num_fields = SettingsField::all().len();
     match key.code {
         KeyCode::Tab | KeyCode::Esc => {
@@ -30,8 +31,16 @@ pub fn handle_settings_main(state: &mut AppState, key: KeyEvent) -> bool {
         KeyCode::Enter => {
             match SettingsField::all()[state.settings.selected_field] {
                 SettingsField::RateLimit => {
-                    state.settings.edit_buffer = state.settings.rate_limit_secs.to_string();
-                    state.settings.editing = true;
+                    if state.settings.editing {
+                        if let Ok(rate) = state.settings.edit_buffer.parse::<u64>() {
+                            state.settings.rate_limit_secs = rate;
+                            let _ = cmd_tx.send(AppCommand::SetRateLimit(rate));
+                        }
+                        state.settings.editing = false;
+                    } else {
+                        state.settings.edit_buffer = state.settings.rate_limit_secs.to_string();
+                        state.settings.editing = true;
+                    }
                 }
                 SettingsField::DebugLog => {
                     state.settings.reload_log();

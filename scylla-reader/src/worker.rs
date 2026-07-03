@@ -9,6 +9,7 @@ pub struct Worker {
     cmd_rx: mpsc::Receiver<AppCommand>,
     event_tx: mpsc::Sender<AppEvent>,
     registry: ScraperRegistry,
+    rate_limit_secs: u64,
 }
 
 impl Worker {
@@ -17,10 +18,10 @@ impl Worker {
         event_tx: mpsc::Sender<AppEvent>,
         registry: ScraperRegistry,
     ) -> Self {
-        Self { cmd_rx, event_tx, registry }
+        Self { cmd_rx, event_tx, registry, rate_limit_secs: 2 }
     }
 
-    pub fn run(self) {
+    pub fn run(mut self) {
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
         while let Ok(command) = self.cmd_rx.recv() {
@@ -31,8 +32,11 @@ impl Worker {
                 AppCommand::UpdateAll(urls) => {
                     for url in urls {
                         Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
-                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        std::thread::sleep(std::time::Duration::from_secs(self.rate_limit_secs));
                     }
+                }
+                AppCommand::SetRateLimit(secs) => {
+                    self.rate_limit_secs = secs;
                 }
 AppCommand::FetchChapter(url, idx) => {
     let url = clean_url(&url);
