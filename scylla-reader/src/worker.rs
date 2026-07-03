@@ -126,8 +126,21 @@ AppCommand::FetchCover(url) => {
 }
 
 fn clean_url(url: &str) -> String {
-    if let (Some(open), Some(close)) = (url.find("]("), url.rfind(')')) {
-        return url[open + 2..close].trim().to_string();
+    if let (Some(open), _) = (url.find("]("), url.rfind(')')) {
+        let after = open + 2;
+        let mut depth = 0i32;
+        for (i, ch) in url[after..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    if depth == 0 {
+                        return url[after..after + i].trim().to_string();
+                    }
+                    depth -= 1;
+                }
+                _ => {}
+            }
+        }
     }
     url.trim().to_string()
 }
@@ -176,5 +189,11 @@ mod tests {
     fn test_clean_url_no_close_bracket() {
         let input = "[text](https://example.com";
         assert_eq!(clean_url(input), "[text](https://example.com");
+    }
+
+    #[test]
+    fn test_clean_url_trailing_parens_text() {
+        let input = "[link](https://url.com) and (stuff)";
+        assert_eq!(clean_url(input), "https://url.com");
     }
 }
