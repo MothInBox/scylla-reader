@@ -1,3 +1,5 @@
+//! Render dispatch — routes by current page to page-specific draw functions.
+
 pub mod library;
 pub mod modal;
 pub mod reader;

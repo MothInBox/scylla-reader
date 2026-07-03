@@ -4,7 +4,7 @@ use extism::{CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType, 
 use scylla_plugin_api::{ChapterOutput, ScrapeInput, ScrapeOutput};
 
 pub struct ScraperRegistry {
-    plugins: Vec<(String, std::path::PathBuf)>, // (domain, wasm_path)
+    plugins: Vec<(String, std::path::PathBuf)>,
 }
 
 impl ScraperRegistry {
@@ -30,7 +30,6 @@ impl ScraperRegistry {
                             path.display()
                         ));
 
-                        // Check/create cookie file before moving path
                         let store = crate::cookie_store::CookieStore::for_domain(domain);
                         let cookie_path = store.path();
                         if !cookie_path.exists() {
@@ -134,8 +133,6 @@ impl ScraperRegistry {
     }
 }
 
-// ── curl host function ────────────────────────────────────────────────────────
-
 fn host_curl_fetch(
     plugin: &mut CurrentPlugin,
     inputs: &[Val],
@@ -188,8 +185,6 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
 
     String::from_utf8(data).map_err(|e| e.to_string())
 }
-
-// ── Plugin runner ─────────────────────────────────────────────────────────────
 
 fn call_plugin(
     wasm_path: &std::path::PathBuf,

@@ -1,3 +1,5 @@
+//! Binary entry point — panic hook, then delegate to App.
+
 pub mod app;
 pub mod cookie_store;
 pub mod db;

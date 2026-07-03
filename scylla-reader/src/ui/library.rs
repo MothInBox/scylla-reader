@@ -1,3 +1,5 @@
+//! Library page renderer — book list, detail side panel, filter bar.
+
 use crate::state::AppState;
 
 use ratatui::prelude::*;

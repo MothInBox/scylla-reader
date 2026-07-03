@@ -1,3 +1,5 @@
+//! Per-domain cookie file management — load, save, preview, and discover.
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -71,13 +73,127 @@ impl CookieStore {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             "<empty>".to_string()
-        } else if trimmed.len() > 40 {
-            format!("{}...", &trimmed[..40])
+        } else if trimmed.chars().count() > 40 {
+            format!("{}...", trimmed.chars().take(40).collect::<String>())
         } else {
             trimmed.to_string()
         }
     }
     pub fn path(&self) -> &PathBuf {
         &self.path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_dir_ends_with_scylla_reader() {
+        let dir = config_dir();
+        assert!(dir.to_string_lossy().ends_with("scylla-reader"));
+    }
+
+    #[test]
+    fn test_for_domain_sets_domain_and_path() {
+        let store = CookieStore::for_domain("example.com");
+        assert_eq!(store.domain, "example.com");
+        let path_str = store.path.to_string_lossy();
+        assert!(path_str.contains("example.com.txt"));
+    }
+
+    #[test]
+    fn test_preview_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.txt");
+        let store = CookieStore {
+            domain: "test".into(),
+            path: path.clone(),
+        };
+        assert_eq!(store.preview(), "<empty>");
+    }
+
+    #[test]
+    fn test_preview_short_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("short.txt");
+        std::fs::write(&path, "hello world").unwrap();
+        let store = CookieStore {
+            domain: "test".into(),
+            path,
+        };
+        assert_eq!(store.preview(), "hello world");
+    }
+
+    #[test]
+    fn test_preview_long_content_ascii() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("long.txt");
+        std::fs::write(&path, "a".repeat(100)).unwrap();
+        let store = CookieStore {
+            domain: "test".into(),
+            path,
+        };
+        let preview = store.preview();
+        assert_eq!(preview.len(), 43); // 40 chars + "..."
+        assert!(preview.ends_with("..."));
+    }
+
+    #[test]
+    fn test_preview_unicode_no_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("unicode.txt");
+        let content = "é".repeat(30);
+        std::fs::write(&path, &content).unwrap();
+        let store = CookieStore {
+            domain: "test".into(),
+            path,
+        };
+        let preview = store.preview();
+        assert!(!preview.is_empty());
+        assert!(preview.chars().count() <= 43); // 40 chars + "..."
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cookies.txt");
+        let store = CookieStore {
+            domain: "test".into(),
+            path: path.clone(),
+        };
+        store.save("key=value\n# comment\nfoo=bar").unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded, "key=value; foo=bar");
+    }
+
+    #[test]
+    fn test_load_empty_file_returns_err() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.txt");
+        std::fs::write(&path, "").unwrap();
+        let store = CookieStore {
+            domain: "test".into(),
+            path,
+        };
+        assert!(store.load().is_err());
+    }
+
+    #[test]
+    fn test_load_comments_only_returns_err() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("comments.txt");
+        std::fs::write(&path, "# just a comment\n# another\n").unwrap();
+        let store = CookieStore {
+            domain: "test".into(),
+            path,
+        };
+        assert!(store.load().is_err());
+    }
+
+    #[test]
+    fn test_discover_all_empty_dir() {
+        let stores = CookieStore::discover_all();
+        stores.iter().for_each(|_| {});
     }
 }

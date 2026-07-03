@@ -1,3 +1,5 @@
+//! Library page input handler — navigation, filter, add/delete, jump.
+
 use crate::messenger::AppCommand;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent};

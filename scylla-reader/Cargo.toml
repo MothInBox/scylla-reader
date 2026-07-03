@@ -26,5 +26,9 @@ dirs = "5"
 extism = "1"
 scylla-plugin-api = { path = "../scylla-plugin-api" }
 
+[dev-dependencies]
+tempfile = "3"
+pretty_assertions = "1"
+
 [features]
 vhs-mode = []

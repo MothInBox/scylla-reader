@@ -1,3 +1,5 @@
+//! Domain models — Book, Chapter, Progress, BookStatus, LibraryFilter.
+
 pub mod book;
 pub mod progress;
 

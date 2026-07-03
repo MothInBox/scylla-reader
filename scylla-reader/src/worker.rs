@@ -1,3 +1,6 @@
+//! Background worker thread that runs a Tokio runtime, owns the ScraperRegistry,
+//! and processes AppCommand messages, sending results back as AppEvents.
+
 use std::sync::mpsc;
 use crate::messenger::{AppCommand, AppEvent, ChapterContent};
 use crate::scrapers::services::ScraperRegistry;
@@ -64,9 +67,55 @@ AppCommand::FetchChapter(url, idx) => {
 }
 
 fn clean_url(url: &str) -> String {
-    // Strip markdown link format [text](url)
     if let (Some(open), Some(close)) = (url.find("]("), url.rfind(')')) {
         return url[open + 2..close].trim().to_string();
     }
     url.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clean_url_no_brackets() {
+        assert_eq!(clean_url("https://example.com"), "https://example.com");
+    }
+
+    #[test]
+    fn test_clean_url_markdown() {
+        let input = "[click here](https://example.com/page)";
+        assert_eq!(clean_url(input), "https://example.com/page");
+    }
+
+    #[test]
+    fn test_clean_url_markdown_with_trailing_text() {
+        let input = "[text](https://example.com) and more";
+        assert_eq!(clean_url(input), "https://example.com");
+    }
+
+    #[test]
+    fn test_clean_url_trims_whitespace() {
+        assert_eq!(clean_url("  https://example.com  "), "https://example.com");
+    }
+
+    #[test]
+    fn test_clean_url_empty_input() {
+        assert_eq!(clean_url(""), "");
+    }
+
+    #[test]
+    fn test_clean_url_nested_parens() {
+        let input = "[link](https://en.wikipedia.org/wiki/Rust_(programming_language))";
+        assert_eq!(
+            clean_url(input),
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)"
+        );
+    }
+
+    #[test]
+    fn test_clean_url_no_close_bracket() {
+        let input = "[text](https://example.com";
+        assert_eq!(clean_url(input), "[text](https://example.com");
+    }
 }

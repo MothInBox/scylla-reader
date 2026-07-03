@@ -1,5 +1,6 @@
-pub mod fields;
+//! Runtime settings — reader mode, scraping domain, cookie stores, debug logging.
 
+pub mod fields;
 pub use fields::SettingsField;
 
 use crate::cookie_store::CookieStore;
@@ -17,7 +18,7 @@ pub enum SettingsPage {
     CookieEdit,
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ReaderMode {
     Paged,
     Scrollable,
@@ -108,5 +109,62 @@ pub fn log_debug(msg: &str) {
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(LOG_FILE) {
         let _ = writeln!(file, "[DEBUG] {}", msg);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reader_mode_toggle() {
+        assert_eq!(ReaderMode::Paged.toggle(), ReaderMode::Scrollable);
+        assert_eq!(ReaderMode::Scrollable.toggle(), ReaderMode::Paged);
+    }
+
+    #[test]
+    fn test_reader_mode_display() {
+        assert_eq!(format!("{}", ReaderMode::Paged), "Paged");
+        assert_eq!(format!("{}", ReaderMode::Scrollable), "Scrollable");
+    }
+
+    #[test]
+    fn test_settings_defaults() {
+        let s = Settings::new();
+        assert_eq!(s.rate_limit_secs, 2);
+        assert_eq!(s.reader_mode, ReaderMode::Paged);
+        assert!(!s.debug_log);
+        assert_eq!(s.selected_field, 0);
+    }
+
+    #[test]
+    fn test_field_value_rate_limit() {
+        let s = Settings::new();
+        assert_eq!(s.field_value(&SettingsField::RateLimit), "2");
+    }
+
+    #[test]
+    fn test_field_value_debug_log() {
+        let mut s = Settings::new();
+        assert_eq!(s.field_value(&SettingsField::DebugLog), "OFF");
+        s.debug_log = true;
+        assert_eq!(s.field_value(&SettingsField::DebugLog), "ON");
+    }
+
+    #[test]
+    fn test_field_value_reader_mode() {
+        let mut s = Settings::new();
+        assert_eq!(s.field_value(&SettingsField::ReaderMode), "Paged");
+        s.reader_mode = ReaderMode::Scrollable;
+        assert_eq!(s.field_value(&SettingsField::ReaderMode), "Scrollable");
+    }
+
+    #[test]
+    fn test_set_debug_toggle() {
+        assert!(!DEBUG_ENABLED.load(Ordering::Relaxed));
+        set_debug(true);
+        assert!(DEBUG_ENABLED.load(Ordering::Relaxed));
+        set_debug(false);
+        assert!(!DEBUG_ENABLED.load(Ordering::Relaxed));
     }
 }

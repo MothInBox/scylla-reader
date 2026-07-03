@@ -1,3 +1,5 @@
+//! Types for channel communication between the main thread and worker.
+
 use crate::models::Book;
 
 pub enum AppCommand {

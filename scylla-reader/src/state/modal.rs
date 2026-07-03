@@ -1,5 +1,8 @@
+//! Modal state — add-book text inputs and jump-to-chapter list state.
+
 use crate::models::Chapter;
 
+#[derive(Debug, PartialEq)]
 pub enum Modal {
     None,
     AddBook {

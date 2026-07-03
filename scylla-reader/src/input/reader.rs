@@ -1,3 +1,5 @@
+//! Reader page input handler — paging, scrolling, chapter nav.
+
 use crate::messenger::AppCommand;
 use crate::state::{AppState, Page};
 use crossterm::event::{KeyCode, KeyEvent};

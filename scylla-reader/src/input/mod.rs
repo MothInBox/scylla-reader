@@ -1,3 +1,5 @@
+//! Input dispatch — routes crossterm events to page-specific handlers.
+
 pub mod library;
 pub mod modal;
 pub mod reader;

@@ -1,3 +1,5 @@
+//! SQLite persistence layer — books, tags, and chapters.
+
 use rusqlite::{Connection, Result, params};
 use crate::models::{Book, BookStatus, Chapter, Progress};
 
@@ -47,8 +49,6 @@ impl Db {
         ")
     }
 
-    // ── Load ────────────────────────────────────────────────────────────────
-
     pub fn load_books(&self) -> Result<Vec<Book>> {
         let mut stmt = self.conn.prepare(
             "SELECT url, title, status, current, total, cover_url, description FROM books ORDER BY rowid"
@@ -96,8 +96,6 @@ impl Db {
         })?.collect()
     }
 
-    // ── Upsert book (title, meta, progress) ────────────────────────────────
-
     pub fn upsert_book(&self, book: &Book) -> Result<()> {
         self.conn.execute(
             "INSERT INTO books (url, title, status, current, total, cover_url, description)
@@ -125,8 +123,6 @@ impl Db {
         Ok(())
     }
 
-    // ── Fast field updates (called on every status/progress change) ─────────
-
     pub fn update_progress(&self, book_url: &str, current: u32, total: u32) -> Result<()> {
         self.conn.execute(
             "UPDATE books SET current = ?1, total = ?2 WHERE url = ?3",
@@ -143,15 +139,10 @@ impl Db {
         Ok(())
     }
 
-    // ── Delete ──────────────────────────────────────────────────────────────
-
     pub fn delete_book(&self, book_url: &str) -> Result<()> {
-        // child rows cascade via FK
         self.conn.execute("DELETE FROM books WHERE url = ?", [book_url])?;
         Ok(())
     }
-
-    // ── Internal sync helpers ───────────────────────────────────────────────
 
     fn sync_tags(&self, book_url: &str, tags: &[String]) -> Result<()> {
         self.conn.execute("DELETE FROM tags WHERE book_url = ?", [book_url])?;
@@ -174,9 +165,23 @@ impl Db {
         }
         Ok(())
     }
-}
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+    pub fn open_conn(conn: Connection) -> Result<Db> {
+        let db = Db { conn };
+        db.migrate()?;
+        Ok(db)
+    }
+
+    pub fn open_path(path: &std::path::Path) -> Result<Db> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let conn = Connection::open(path)?;
+        let db = Db { conn };
+        db.migrate()?;
+        Ok(db)
+    }
+}
 
 fn data_path() -> std::path::PathBuf {
     dirs::data_local_dir()
@@ -200,5 +205,210 @@ fn parse_status(s: &str) -> BookStatus {
         "Dropped"   => BookStatus::Dropped,
         "Completed" => BookStatus::Completed,
         _           => BookStatus::Reading,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_db() -> Db {
+        let conn = Connection::open_in_memory().unwrap();
+        Db::open_conn(conn).unwrap()
+    }
+
+    fn sample_book(url: &str) -> Book {
+        Book {
+            title: format!("Book {}", url),
+            url: url.to_string(),
+            status: BookStatus::Reading,
+            progress: Progress { current: 0, total: 10 },
+            tags: vec!["tag1".into()],
+            cover_url: None,
+            description: Some("desc".into()),
+            chapters: vec![
+                Chapter { url: "ch1".into(), title: "Chapter 1".into(), order: 1 },
+                Chapter { url: "ch2".into(), title: "Chapter 2".into(), order: 2 },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_open_creates_tables() {
+        let db = test_db();
+        let books = db.load_books().unwrap();
+        assert!(books.is_empty());
+    }
+
+    #[test]
+    fn test_open_path_writes_to_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let db = Db::open_path(&path).unwrap();
+        db.upsert_book(&sample_book("url-1")).unwrap();
+        drop(db);
+        let db2 = Db::open_path(&path).unwrap();
+        assert_eq!(db2.load_books().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_upsert_and_load() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url-1")).unwrap();
+
+        let books = db.load_books().unwrap();
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].url, "url-1");
+        assert_eq!(books[0].title, "Book url-1");
+        assert_eq!(books[0].progress.total, 10);
+        assert_eq!(books[0].tags, vec!["tag1"]);
+        assert_eq!(books[0].chapters.len(), 2);
+    }
+
+    #[test]
+    fn test_upsert_multiple_books() {
+        let db = test_db();
+        db.upsert_book(&sample_book("a")).unwrap();
+        db.upsert_book(&sample_book("b")).unwrap();
+        assert_eq!(db.load_books().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_upsert_overwrites_existing() {
+        let db = test_db();
+        db.upsert_book(&sample_book("same-url")).unwrap();
+
+        let mut updated = sample_book("same-url");
+        updated.title = "Updated".into();
+        updated.progress.current = 5;
+        db.upsert_book(&updated).unwrap();
+
+        let books = db.load_books().unwrap();
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].title, "Updated");
+        assert_eq!(books[0].progress.current, 5);
+    }
+
+    #[test]
+    fn test_update_progress() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url")).unwrap();
+        db.update_progress("url", 7, 10).unwrap();
+
+        let books = db.load_books().unwrap();
+        assert_eq!(books[0].progress.current, 7);
+        assert_eq!(books[0].progress.total, 10);
+    }
+
+    #[test]
+    fn test_update_status() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url")).unwrap();
+        db.update_status("url", &BookStatus::Dropped).unwrap();
+
+        let books = db.load_books().unwrap();
+        assert_eq!(books[0].status, BookStatus::Dropped);
+    }
+
+    #[test]
+    fn test_delete_book() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url")).unwrap();
+        db.delete_book("url").unwrap();
+        assert!(db.load_books().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_delete_book_cascades_to_tags_and_chapters() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url")).unwrap();
+        db.delete_book("url").unwrap();
+
+        db.upsert_book(&sample_book("url")).unwrap();
+        let books = db.load_books().unwrap();
+        assert_eq!(books[0].tags.len(), 1);
+        assert_eq!(books[0].chapters.len(), 2);
+    }
+
+    #[test]
+    fn test_sync_tags_replaces() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url")).unwrap();
+
+        let mut book = sample_book("url");
+        book.tags = vec!["new-tag".into()];
+        db.upsert_book(&book).unwrap();
+
+        let books = db.load_books().unwrap();
+        assert_eq!(books[0].tags, vec!["new-tag"]);
+    }
+
+    #[test]
+    fn test_sync_chapters_replaces() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url")).unwrap();
+
+        let mut book = sample_book("url");
+        book.chapters = vec![Chapter { url: "ch-new".into(), title: "New".into(), order: 99 }];
+        db.upsert_book(&book).unwrap();
+
+        let books = db.load_books().unwrap();
+        assert_eq!(books[0].chapters.len(), 1);
+        assert_eq!(books[0].chapters[0].title, "New");
+    }
+
+    #[test]
+    fn test_status_str_roundtrip() {
+        for status in &[BookStatus::Reading, BookStatus::Paused, BookStatus::Dropped, BookStatus::Completed] {
+            let s = status_str(status);
+            assert_eq!(&parse_status(s), status);
+        }
+    }
+
+    #[test]
+    fn test_parse_status_unknown_defaults_to_reading() {
+        assert_eq!(parse_status("garbage"), BookStatus::Reading);
+        assert_eq!(parse_status(""), BookStatus::Reading);
+    }
+
+    #[test]
+    fn test_data_path_contains_db_filename() {
+        let path = data_path();
+        assert!(path.to_string_lossy().ends_with("library.db"));
+    }
+
+    #[test]
+    fn test_upsert_book_with_empty_chapters() {
+        let db = test_db();
+        let mut book = sample_book("url");
+        book.chapters = vec![];
+        db.upsert_book(&book).unwrap();
+
+        let books = db.load_books().unwrap();
+        assert!(books[0].chapters.is_empty());
+    }
+
+    #[test]
+    fn test_upsert_book_with_empty_tags() {
+        let db = test_db();
+        let mut book = sample_book("url");
+        book.tags = vec![];
+        db.upsert_book(&book).unwrap();
+
+        let books = db.load_books().unwrap();
+        assert!(books[0].tags.is_empty());
+    }
+
+    #[test]
+    fn test_load_books_ordered_by_rowid() {
+        let db = test_db();
+        db.upsert_book(&sample_book("b")).unwrap();
+        db.upsert_book(&sample_book("a")).unwrap();
+        db.upsert_book(&sample_book("c")).unwrap();
+
+        let books = db.load_books().unwrap();
+        assert_eq!(books[0].url, "b");
+        assert_eq!(books[1].url, "a");
+        assert_eq!(books[2].url, "c");
     }
 }

@@ -1,3 +1,5 @@
+//! Settings page input handler — field selection, cookie editing.
+
 use crate::settings::{SettingsField, SettingsPage};
 use crate::state::{AppState, Page};
 use crossterm::event::{KeyCode, KeyEvent};

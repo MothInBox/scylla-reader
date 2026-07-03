@@ -1,3 +1,5 @@
+//! Settings page renderer — main menu, cookie list, cookie editor.
+
 use crate::settings::{SettingsField, SettingsPage};
 use crate::state::AppState;
 use ratatui::prelude::*;

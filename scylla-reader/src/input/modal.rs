@@ -1,3 +1,5 @@
+//! Modal input handler — add-book form, jump-to-chapter list.
+
 use crate::messenger::AppCommand;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -124,7 +126,6 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
                     .update_progress(&book.url, book.progress.current, book.progress.total)
             {
                 crate::settings::log_debug(&format!("Failed to update book progress. e: {}", err));
-                return false;
             }
         }
         state.modal = Modal::None;

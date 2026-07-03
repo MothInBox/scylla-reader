@@ -1,3 +1,5 @@
+//! Reader page renderer — paged and scrollable modes.
+
 use crate::settings::ReaderMode;
 use crate::state::AppState;
 use ratatui::prelude::*;
@@ -43,7 +45,6 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
     .style(Style::default().fg(Color::Yellow));
     frame.render_widget(header, chunks[0]);
 
-    // Calculate wrapped visual lines for the current page using area width/height.
     let lines = state
         .reader
         .page_lines_wrapped(chunks[1].width, chunks[1].height);

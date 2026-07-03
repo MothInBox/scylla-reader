@@ -1,3 +1,6 @@
+//! Owns the terminal, channels, state, and main loop. Bridges worker events,
+//! input dispatch, cover loading, and UI rendering.
+
 use crate::input;
 use crate::messenger::{AppCommand, AppEvent};
 use crate::state::AppState;
