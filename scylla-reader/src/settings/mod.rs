@@ -1,4 +1,4 @@
-//! Runtime settings — reader mode, scraping domain, cookie stores, debug logging.
+//! Runtime settings — reader mode, scraping domain, plugin configs, debug logging.
 
 pub mod fields;
 pub use fields::SettingsField;
@@ -11,9 +11,49 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 pub const LOG_FILE: &str = "/tmp/scylla-reader.log";
 
+pub enum LogLevel {
+    Error,
+    Debug,
+}
+
+impl std::fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            LogLevel::Error => write!(f, "ERROR"),
+            LogLevel::Debug => write!(f, "DEBUG"),
+        }
+    }
+}
+
+fn timestamp() -> String {
+    let dur = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let total = dur.as_secs();
+    let h = (total / 3600) % 24;
+    let m = (total / 60) % 60;
+    let s = total % 60;
+    format!("{:02}:{:02}:{:02} UTC", h, m, s)
+}
+
+pub fn log(level: LogLevel, module: &str, msg: &str) {
+    let enabled = match level {
+        LogLevel::Error => true,
+        LogLevel::Debug => DEBUG_ENABLED.load(Ordering::Relaxed),
+    };
+    if !enabled {
+        return;
+    }
+    let ts = timestamp();
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(LOG_FILE) {
+        let _ = writeln!(file, "[{}] [{}] [{}] {}", ts, level, module, msg);
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum SettingsPage {
     Main,
+    DebugLog,
     PluginList,
     PluginFields,
     PluginFieldEdit,
@@ -56,6 +96,8 @@ pub struct Settings {
     pub selected_plugin_field: usize,
     pub plugin_field_editing: bool,
     pub plugin_field_buffer: String,
+    pub log_scroll: usize,
+    pub log_lines: Vec<String>,
 }
 
 impl Settings {
@@ -73,6 +115,8 @@ impl Settings {
             selected_plugin_field: 0,
             plugin_field_editing: false,
             plugin_field_buffer: String::new(),
+            log_scroll: 0,
+            log_lines: Vec::new(),
         }
     }
 
@@ -108,6 +152,11 @@ impl Settings {
         config.save()
     }
 
+    pub fn reload_log(&mut self) {
+        let content = std::fs::read_to_string(LOG_FILE).unwrap_or_default();
+        self.log_lines = content.lines().map(|l| l.to_string()).collect();
+    }
+
     pub fn field_value(&self, field: &SettingsField) -> String {
         match field {
             SettingsField::RateLimit => self.rate_limit_secs.to_string(),
@@ -130,14 +179,7 @@ pub fn set_debug(enabled: bool) {
     DEBUG_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
-pub fn log_debug(msg: &str) {
-    if !DEBUG_ENABLED.load(Ordering::Relaxed) {
-        return;
-    }
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(LOG_FILE) {
-        let _ = writeln!(file, "[DEBUG] {}", msg);
-    }
-}
+
 
 #[cfg(test)]
 mod tests {

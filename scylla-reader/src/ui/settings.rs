@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
     match state.settings.settings_page {
         SettingsPage::Main => draw_main(frame, area, state),
+        SettingsPage::DebugLog => draw_debug_log(frame, area, state),
         SettingsPage::PluginList => draw_plugin_list(frame, area, state),
         SettingsPage::PluginFields => draw_plugin_fields(frame, area, state),
         SettingsPage::PluginFieldEdit => draw_plugin_field_edit(frame, area, state),
@@ -42,6 +43,32 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
     let hints = Paragraph::new(" [↑↓] Navigate  [Enter] Select  [Tab] Back to Library")
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hints, chunks[1]);
+}
+
+fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+
+    let toggle_status = if state.settings.debug_log { "ON" } else { "OFF" };
+    let toggle_line = Paragraph::new(format!(
+        " Debug Logging: {}    [Enter] Toggle",
+        toggle_status,
+    ))
+    .block(Block::default().title(" Debug Log ").borders(Borders::ALL));
+    frame.render_widget(toggle_line, chunks[0]);
+
+    let log_content = state.settings.log_lines.join("\n");
+    let log_widget = Paragraph::new(log_content)
+        .block(Block::default().title(" Log ").borders(Borders::ALL))
+        .scroll((state.settings.log_scroll as u16, 0))
+        .wrap(ratatui::widgets::Wrap { trim: false });
+    frame.render_widget(log_widget, chunks[1]);
+
+    let hints = Paragraph::new(" [↑↓] Scroll  [Enter] Toggle  [Esc] Back")
+        .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(hints, chunks[2]);
 }
 
 fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {

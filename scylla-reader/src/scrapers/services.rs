@@ -24,7 +24,7 @@ impl ScraperRegistry {
                 }
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     if let Some(domain) = stem.strip_prefix("plugin-") {
-                        crate::settings::log_debug(&format!(
+                        crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!(
                             "Discovered plugin: {} -> {}",
                             domain,
                             path.display()
@@ -38,7 +38,7 @@ impl ScraperRegistry {
                 }
             }
         } else {
-            crate::settings::log_debug(&format!("Plugin dir not found: {}", plugin_dir.display()));
+            crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Plugin dir not found: {}", plugin_dir.display()));
         }
 
         Self { plugins }
@@ -74,7 +74,13 @@ impl ScraperRegistry {
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .collect::<Vec<_>>()
             .join("; ");
-        if parsed.is_empty() { None } else { Some(parsed) }
+        if parsed.is_empty() {
+            crate::settings::log(crate::settings::LogLevel::Debug, "COOKIE", &format!("No cookies for {} (empty after parse)", domain));
+            None
+        } else {
+            crate::settings::log(crate::settings::LogLevel::Debug, "COOKIE", &format!("Loaded {} chars of cookies for {}", parsed.len(), domain));
+            Some(parsed)
+        }
     }
 
     fn load_plugin_config(domain: &str) -> Option<String> {
@@ -93,7 +99,7 @@ impl ScraperRegistry {
         url: &str,
     ) -> Result<Book, Box<dyn std::error::Error + Send + Sync>> {
         let (domain, wasm_path) = self.find_plugin(url)?;
-        crate::settings::log_debug(&format!("Using plugin '{}' for: {}", domain, url));
+        crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Using plugin '{}' for: {}", domain, url));
 
         let cookies = Self::load_cookies_for_domain(domain);
         let config = Self::load_plugin_config(domain);
@@ -184,6 +190,21 @@ fn host_curl_fetch(
     let url = parts.next().unwrap_or("").to_string();
     let cookies = parts.next().unwrap_or("").to_string();
 
+    crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Fetching: {}", url));
+
+    if !cookies.is_empty() {
+        let first_20: String = cookies.chars().take(20).collect();
+        let has_equals = cookies.contains('=');
+        let has_cf = cookies.contains("cf_clearance=");
+        crate::settings::log(crate::settings::LogLevel::Debug, "COOKIE", &format!(
+            "len={} has_=={} has_cf_clearance={} preview=\"{}\"",
+            cookies.len(),
+            has_equals,
+            has_cf,
+            first_20,
+        ));
+    }
+
     let result = fetch_with_curl(&url, &cookies).unwrap_or_default();
 
     let mem = plugin.memory_new(result.as_bytes())?;
@@ -194,6 +215,7 @@ fn host_curl_fetch(
 fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
     let mut data = Vec::new();
     let mut handle = Easy::new();
+    let start = std::time::Instant::now();
 
     handle.url(url).map_err(|e| e.to_string())?;
     handle
@@ -221,6 +243,16 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
             .map_err(|e| e.to_string())?;
         transfer.perform().map_err(|e| e.to_string())?;
     }
+
+    let elapsed = start.elapsed();
+    let status = handle.response_code().unwrap_or(0);
+    crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!(
+        "HTTP {} — {}B — {:?} — {}",
+        status,
+        data.len(),
+        elapsed,
+        url,
+    ));
 
     String::from_utf8(data).map_err(|e| e.to_string())
 }
@@ -250,10 +282,11 @@ fn call_plugin(
     let result = plugin.call::<&[u8], &[u8]>(function, input)?;
     let bytes = result.to_vec();
 
-    crate::settings::log_debug(&format!(
-        "[{}::{}] returned {} bytes: {}",
+    crate::settings::log(crate::settings::LogLevel::Debug, "PLUGIN", &format!(
+        "[{}::{}] input={}B output={}B: {}",
         plugin_name,
         function,
+        input.len(),
         bytes.len(),
         &String::from_utf8_lossy(&bytes)
             .chars()

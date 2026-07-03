@@ -22,12 +22,12 @@ pub fn handle_adding_book(
             };
 
             if urls.is_empty() {
-                crate::settings::log_debug("No valid URLs to scrape");
+                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", "No valid URLs to scrape");
             } else {
-                crate::settings::log_debug(&format!("Submitting {} URLs", urls.len()));
+                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Submitting {} URLs", urls.len()));
                 for url in urls {
                     if let Err(e) = cmd_tx.send(AppCommand::Scrape(url)) {
-                        eprintln!("Failed to queue scrape: {}", e);
+                        crate::settings::log(crate::settings::LogLevel::Error, "INPUT", &format!("Failed to queue scrape: {}", e));
                     }
                 }
             }
@@ -125,7 +125,7 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
                     .db
                     .update_progress(&book.url, book.progress.current, book.progress.total)
             {
-                crate::settings::log_debug(&format!("Failed to update book progress. e: {}", err));
+                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Failed to update book progress. e: {}", err));
             }
         }
         state.modal = Modal::None;

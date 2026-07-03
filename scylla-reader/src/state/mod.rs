@@ -28,7 +28,7 @@ impl AppState {
             settings: Settings::new(),
             reader: ReaderState::new(),
             db: Db::open().unwrap_or_else(|e| {
-                crate::settings::log_debug(&format!("DB open failed: {}", e));
+                crate::settings::log(crate::settings::LogLevel::Error, "DB", &format!("DB open failed: {}", e));
                 panic!("Could not open database");
             }),
         }

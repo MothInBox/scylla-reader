@@ -27,7 +27,7 @@ pub fn handle_library(
         }
         KeyCode::Char('j') => {
             if let Some(book) = state.library.selected_book() {
-                crate::settings::log_debug(&format!("Adding Book {} to modal", book.title));
+                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Adding Book {} to modal", book.title));
                 state.modal = Modal::JumpChapter {
                     chapters: book.chapters.clone(),
                     cursor: 0,
@@ -58,7 +58,7 @@ pub fn handle_library(
                         .description
                         .clone()
                         .unwrap_or_else(|| "No content available.".to_string());
-                    crate::settings::log_debug(&format!("No chapters for: {}", book_title));
+                    crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("No chapters for: {}", book_title));
                     state.open_reader_chapter("Description".to_string(), desc, 0);
                 } else {
                     let idx = (book.progress.current as usize).min(book.chapters.len() - 1);
@@ -66,7 +66,7 @@ pub fn handle_library(
                     state.reader.loading = true;
                     state.current_page = Page::Reader;
                     if let Err(e) = cmd_tx.send(AppCommand::FetchChapter(chapter_url, idx)) {
-                        crate::settings::log_debug(&format!("Failed to queue chapter: {}", e));
+                        crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Failed to queue chapter: {}", e));
                     }
                 }
             }
@@ -81,9 +81,9 @@ pub fn handle_library(
                 .filter(|u| !u.is_empty())
                 .collect();
             if !urls.is_empty() {
-                crate::settings::log_debug("Attempting to update all books...");
+                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", "Attempting to update all books...");
                 if let Err(e) = cmd_tx.send(AppCommand::UpdateAll(urls)) {
-                    eprintln!("Failed to queue update: {}", e);
+                    crate::settings::log(crate::settings::LogLevel::Error, "INPUT", &format!("Failed to queue update: {}", e));
                 }
             }
             true

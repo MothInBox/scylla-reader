@@ -44,7 +44,7 @@ AppCommand::FetchChapter(url, idx) => {
                 content,
             }));
         }
-        Err(e) => crate::settings::log_debug(&format!("Chapter fetch failed: {}", e)),
+        Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Chapter fetch failed: {}", e)),
     }
 }
             }
@@ -59,10 +59,10 @@ AppCommand::FetchChapter(url, idx) => {
     ) {
         match runtime.block_on(registry.scrape_url(url)) {
             Ok(book) => {
-                crate::settings::log_debug(&format!("Scraped: {}", book.title));
+                crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Scraped: {}", book.title));
                 let _ = event_tx.send(AppEvent::BookScraped(book));
             }
-            Err(e) => crate::settings::log_debug(&format!("Scrape failed: {}", e)),
+            Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Scrape failed: {}", e)),
         }
     }
 }

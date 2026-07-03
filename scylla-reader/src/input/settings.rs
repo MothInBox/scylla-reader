@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 pub fn handle_settings(state: &mut AppState, key: KeyEvent) -> bool {
     match state.settings.settings_page.clone() {
         SettingsPage::Main => handle_settings_main(state, key),
+        SettingsPage::DebugLog => handle_debug_log(state, key),
         SettingsPage::PluginList => handle_plugin_list(state, key),
         SettingsPage::PluginFields => handle_plugin_fields(state, key),
         SettingsPage::PluginFieldEdit => handle_plugin_field_edit(state, key),
@@ -33,12 +34,9 @@ pub fn handle_settings_main(state: &mut AppState, key: KeyEvent) -> bool {
                     state.settings.editing = true;
                 }
                 SettingsField::DebugLog => {
-                    state.settings.debug_log = !state.settings.debug_log;
-                    crate::settings::set_debug(state.settings.debug_log);
-                    if state.settings.debug_log {
-                        let _ = std::fs::write(crate::settings::LOG_FILE, "");
-                        crate::settings::log_debug("Debug logging enabled");
-                    }
+                    state.settings.reload_log();
+                    state.settings.log_scroll = 0;
+                    state.settings.settings_page = SettingsPage::DebugLog;
                 }
                 SettingsField::ReaderMode => {
                     state.settings.reader_mode = state.settings.reader_mode.toggle();
@@ -57,6 +55,36 @@ pub fn handle_settings_main(state: &mut AppState, key: KeyEvent) -> bool {
         }
         KeyCode::Backspace if state.settings.editing => {
             state.settings.edit_buffer.pop();
+            true
+        }
+        _ => true,
+    }
+}
+
+fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            state.settings.settings_page = SettingsPage::Main;
+            true
+        }
+        KeyCode::Enter => {
+            state.settings.debug_log = !state.settings.debug_log;
+            crate::settings::set_debug(state.settings.debug_log);
+            if state.settings.debug_log {
+                let _ = std::fs::write(crate::settings::LOG_FILE, "");
+                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", "Debug logging enabled");
+            }
+            state.settings.reload_log();
+            state.settings.log_scroll = 0;
+            true
+        }
+        KeyCode::Up => {
+            state.settings.log_scroll = state.settings.log_scroll.saturating_sub(1);
+            true
+        }
+        KeyCode::Down => {
+            let max = state.settings.log_lines.len().saturating_sub(1);
+            state.settings.log_scroll = (state.settings.log_scroll + 1).min(max);
             true
         }
         _ => true,
@@ -149,7 +177,7 @@ pub fn handle_plugin_field_edit(state: &mut AppState, key: KeyEvent) -> bool {
         KeyCode::Enter => {
             let result = state.settings.save_current_field();
             if let Err(e) = result {
-                crate::settings::log_debug(&format!("Failed to save plugin field: {}", e));
+                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Failed to save plugin field: {}", e));
             }
             state.settings.plugin_field_buffer.clear();
             state.settings.plugin_field_editing = false;
