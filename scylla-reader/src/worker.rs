@@ -30,9 +30,42 @@ impl Worker {
                     Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
                 }
                 AppCommand::UpdateAll(urls) => {
-                    for url in urls {
+                    let mut urls_iter = urls.into_iter();
+                    if let Some(url) = urls_iter.next() {
                         Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
-                        std::thread::sleep(std::time::Duration::from_secs(self.rate_limit_secs));
+                    }
+                    for url in urls_iter {
+                        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(self.rate_limit_secs);
+                        while std::time::Instant::now() < deadline {
+                            match self.cmd_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                                Ok(cmd) => match cmd {
+                                    AppCommand::FetchChapter(url, idx) => {
+                                        let url = clean_url(&url);
+                                        match runtime.block_on(self.registry.scrape_chapter(&url)) {
+                                            Ok((title, content)) => {
+                                                let _ = self.event_tx.send(AppEvent::ChapterFetched(ChapterContent {
+                                                    chapter_idx: idx, title, content,
+                                                }));
+                                            }
+                                            Err(e) => crate::settings::log(
+                                                crate::settings::LogLevel::Debug, "SCRAPE",
+                                                &format!("Chapter fetch failed: {}", e),
+                                            ),
+                                        }
+                                    }
+                                    AppCommand::Scrape(url) => {
+                                        Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
+                                    }
+                                    AppCommand::SetRateLimit(secs) => {
+                                        self.rate_limit_secs = secs;
+                                    }
+                                    AppCommand::UpdateAll(_) => {}
+                                },
+                                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                            }
+                        }
+                        Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
                     }
                 }
                 AppCommand::SetRateLimit(secs) => {
