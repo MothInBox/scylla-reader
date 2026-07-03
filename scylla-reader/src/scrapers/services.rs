@@ -92,8 +92,8 @@ impl ScraperRegistry {
         if let Some(obj) = json.as_object_mut() {
             obj.remove("_schema");
             obj.remove("_cookies");
+            obj.remove("_accepts_cookies");
         }
-        serde_json::to_string(&json).ok()
     }
 
     pub async fn scrape_url(
