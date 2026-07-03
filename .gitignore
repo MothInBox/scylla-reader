@@ -8,3 +8,4 @@ target
 
 **/mutants.out*/
 rustc-ice-*.txt
+.worktrees
