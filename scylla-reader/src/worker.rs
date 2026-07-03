@@ -34,7 +34,7 @@ impl Worker {
                     if let Some(url) = urls_iter.next() {
                         Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
                     }
-                    for url in urls_iter {
+                    'urls: for url in urls_iter {
                         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(self.rate_limit_secs);
                         while std::time::Instant::now() < deadline {
                             match self.cmd_rx.recv_timeout(std::time::Duration::from_millis(100)) {
@@ -62,7 +62,7 @@ impl Worker {
                                     AppCommand::UpdateAll(_) => {}
                                 },
                                 Err(mpsc::RecvTimeoutError::Timeout) => {}
-                                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                                Err(mpsc::RecvTimeoutError::Disconnected) => break 'urls,
                             }
                         }
                         Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
