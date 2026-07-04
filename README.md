@@ -97,6 +97,57 @@ cargo install --path scylla-reader
 cd plugin-template
 make
 ```
+## Keybindings
+
+### Global (work everywhere)
+| Key | Action |
+|-----|--------|
+| `1` | Library |
+| `2` | Reader |
+| `3` | Settings |
+| `:` | Command Palette |
+| `?` | Toggle Hints |
+| `Esc` | Back / Close Modal |
+| `q` | Quit (from Library) |
+
+### Library
+| Key | Action |
+|-----|--------|
+| `i` | Add Book |
+| `j` | Jump Chapter |
+| `u` | Update All |
+| `d` | Delete Book |
+| `f` | Cycle Filter |
+| `Space` | Cycle Status |
+| `Enter` | Open Book |
+| `↑/↓` | Navigate |
+
+### Reader
+| Key | Action |
+|-----|--------|
+| `>` / `→` / `l` | Next Chapter |
+| `<` / `←` / `h` | Prev Chapter |
+| `j` / `↓` | Scroll Down / Next Page |
+| `k` / `↑` | Scroll Up / Prev Page |
+| `PgDn` / `PgUp` | Page Scroll |
+| `Esc` | Back to Library |
+
+### Settings
+| Key | Action |
+|-----|--------|
+| `↑/↓` | Navigate |
+| `Enter` | Select / Edit |
+| `Esc` | Back |
+
+### Modals
+| Key | Action |
+|-----|--------|
+| `Esc` | Cancel |
+| `Enter` | Confirm / Save |
+| `↑/↓` | Navigate |
+| `Ctrl+S` | Submit (Add Book) |
+| `t` | Toggle Title/URL (Jump) |
+
 ## FAQ
 ### Where can I get plugins?
 As of right now, develop your own or find one someone else has developed!
@@ -105,7 +156,7 @@ see the template plugin to get an idea on how to develop your own!
 ```
 i (open add book window)
 type "template" 
-ctrl + s (submit all)i
+ctrl + s (submit all)
 ```
 
 
