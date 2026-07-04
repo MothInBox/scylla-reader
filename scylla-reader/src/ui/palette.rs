@@ -28,12 +28,6 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             keys: "3",
             handler: |s, _| s.current_page = Page::Settings,
         },
-        PaletteAction {
-            category: "Navigation",
-            label: "Quit",
-            keys: "q",
-            handler: |_s, _| { /* handled in app loop */ },
-        },
         // Library actions
         PaletteAction {
             category: "Library",
@@ -270,7 +264,6 @@ mod tests {
         assert!(!actions.is_empty());
         assert!(actions.iter().any(|a| a.label == "Go to Library"));
         assert!(actions.iter().any(|a| a.label == "Add Book"));
-        assert!(actions.iter().any(|a| a.label == "Quit"));
     }
 
     #[test]
