@@ -40,9 +40,11 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
     list_state.select(Some(state.settings.selected_field));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    let hints = Paragraph::new(" [↑↓] Navigate  [Enter] Select  [Tab] Back to Library")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[1]);
+    if state.show_hints {
+        let hints = Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hints, chunks[1]);
+    }
 }
 
 fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -66,9 +68,11 @@ fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
         .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(log_widget, chunks[1]);
 
-    let hints = Paragraph::new(" [↑↓] Scroll  [Enter] Toggle  [Esc] Back")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[2]);
+    if state.show_hints {
+        let hints = Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hints, chunks[2]);
+    }
 }
 
 fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -93,9 +97,11 @@ fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
     list_state.select(Some(state.settings.selected_plugin));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    let hints = Paragraph::new(" [↑↓] Navigate  [Enter] Select  [Esc] Back")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[1]);
+    if state.show_hints {
+        let hints = Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hints, chunks[1]);
+    }
 }
 
 fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -138,9 +144,11 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
     list_state.select(Some(clamped));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    let hints = Paragraph::new(" [↑↓] Navigate  [Enter] Edit  [Esc] Back")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[1]);
+    if state.show_hints {
+        let hints = Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hints, chunks[1]);
+    }
 }
 
 fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -178,7 +186,58 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
 
     frame.render_widget(paragraph, chunks[0]);
 
-    let hints =
-        Paragraph::new(" [Enter] Save  [Esc] Cancel").style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[1]);
+    if state.show_hints {
+        let hints =
+            Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette").style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hints, chunks[1]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    #[test]
+    fn test_settings_draw_shows_hints_when_enabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = true;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Enter Select"));
+    }
+
+    #[test]
+    fn test_settings_draw_hides_hints_when_disabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = false;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(!content.contains("Enter Select"));
+    }
 }

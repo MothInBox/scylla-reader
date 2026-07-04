@@ -28,9 +28,11 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
     draw_book_list(frame, main_chunks[0], state);
     draw_side_panel(frame, main_chunks[1], state);
 
-    let hints = Paragraph::new(" [i] Add  [d] Delete [j] Jump  [Space] Status  [f] Filter  [u] Update  [Tab] Settings  [q] Quit")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[2]);
+    if state.show_hints {
+        let hints = Paragraph::new(" 1 Library  2 Reader  3 Settings  i Add  j Jump  u Update  d Delete  f Filter  Space Status  : Palette  q Quit")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hints, chunks[2]);
+    }
 
     crate::ui::modal::draw_modal(frame, area, state);
 }
@@ -121,4 +123,53 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, state: &mut AppState) {
         Paragraph::new(details).wrap(Wrap { trim: false }),
         side_chunks[1],
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    #[test]
+    fn test_library_draw_shows_hints_when_enabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = true;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("1 Library"));
+    }
+
+    #[test]
+    fn test_library_draw_hides_hints_when_disabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = false;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(!content.contains("1 Library"));
+    }
 }

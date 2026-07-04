@@ -54,40 +54,11 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
         .block(block)
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, chunks[1]);
-    let total = state
-        .reader
-        .total_pages_for(chunks[1].width, chunks[1].height);
-    let show_page_controls = if total > 1 { true } else { false };
-    let prev_hint = if state.reader.current_chapter_idx > 0 {
-        "[<] Prev Chapter  "
-    } else {
-        ""
-    };
-    let next_hint = if state
-        .library
-        .selected_book()
-        .map(|b| state.reader.current_chapter_idx + 1 < b.chapters.len())
-        .unwrap_or(false)
-    {
-        "  [>] Next Chapter"
-    } else {
-        ""
-    };
-    let page_ctrls = if show_page_controls {
-        format!(
-            "Page {}/{}  [h/←] [l/→] Turn Page",
-            state.reader.page + 1,
-            total
-        )
-    } else {
-        String::new()
-    };
-    let footer = Paragraph::new(format!(
-        " {}{}{}  [Esc] Library",
-        prev_hint, page_ctrls, next_hint,
-    ))
-    .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(footer, chunks[2]);
+    if state.show_hints {
+        let hints = Paragraph::new(" > Next  < Prev  h/l Page  j/k Scroll  PgDn/PgUp  Esc Back  : Palette")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hints, chunks[2]);
+    }
 }
 
 fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -117,33 +88,58 @@ fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
     let paragraph = Paragraph::new(content).block(block);
     frame.render_widget(paragraph, chunks[1]);
 
-    let total_visual = state.reader.total_visual_lines(chunks[1].width);
-    let progress = if total_visual == 0 {
-        0
-    } else {
-        let current = std::cmp::min(state.reader.visual_scroll, total_visual.saturating_sub(1));
-        (current * 100) / total_visual
-    };
+    if state.show_hints {
+        let hints = Paragraph::new(" > Next  < Prev  h/l Page  j/k Scroll  PgDn/PgUp  Esc Back  : Palette")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hints, chunks[2]);
+    }
+}
 
-    let prev_hint = if state.reader.current_chapter_idx > 0 {
-        "[<] Prev  "
-    } else {
-        ""
-    };
-    let next_hint = if state
-        .library
-        .selected_book()
-        .map(|b| state.reader.current_chapter_idx + 1 < b.chapters.len())
-        .unwrap_or(false)
-    {
-        "  [>] Next"
-    } else {
-        ""
-    };
-    let footer = Paragraph::new(format!(
-        " {}{}%  [j/↓] [k/↑] Scroll  [PgDn/PgUp]{}  [Esc] Library",
-        prev_hint, progress, next_hint,
-    ))
-    .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(footer, chunks[2]);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    #[test]
+    fn test_reader_draw_shows_hints_when_enabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = true;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains(": Palette"));
+    }
+
+    #[test]
+    fn test_reader_draw_hides_hints_when_disabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = false;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(!content.contains("Palette"));
+    }
 }
