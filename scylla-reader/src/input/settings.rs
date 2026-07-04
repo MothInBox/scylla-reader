@@ -16,7 +16,7 @@ pub fn handle_settings(state: &mut AppState, key: KeyEvent, cmd_tx: &std::sync::
 pub fn handle_settings_main(state: &mut AppState, key: KeyEvent, cmd_tx: &std::sync::mpsc::Sender<AppCommand>) -> bool {
     let num_fields = SettingsField::all().len();
     match key.code {
-        KeyCode::Tab | KeyCode::Esc => {
+        KeyCode::Esc => {
             state.current_page = Page::Library;
             true
         }
@@ -206,5 +206,172 @@ pub fn handle_plugin_field_edit(state: &mut AppState, key: KeyEvent) -> bool {
             true
         }
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use crate::settings::ReaderMode;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn test_state() -> AppState {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        AppState::from_parts(db, Library::new())
+    }
+
+    fn key_event(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn channel() -> (std::sync::mpsc::Sender<AppCommand>, std::sync::mpsc::Receiver<AppCommand>) {
+        std::sync::mpsc::channel()
+    }
+
+    #[test]
+    fn test_handle_settings_main_navigate() {
+        let mut state = test_state();
+        let (tx, _rx) = channel();
+        assert_eq!(state.settings.selected_field, 0);
+
+        handle_settings_main(&mut state, key_event(KeyCode::Down), &tx);
+        assert_eq!(state.settings.selected_field, 1);
+
+        handle_settings_main(&mut state, key_event(KeyCode::Down), &tx);
+        assert_eq!(state.settings.selected_field, 2);
+
+        handle_settings_main(&mut state, key_event(KeyCode::Up), &tx);
+        assert_eq!(state.settings.selected_field, 1);
+
+        handle_settings_main(&mut state, key_event(KeyCode::Up), &tx);
+        assert_eq!(state.settings.selected_field, 0);
+    }
+
+    #[test]
+    fn test_handle_settings_main_esc_goes_to_library() {
+        let mut state = test_state();
+        state.current_page = Page::Settings;
+        let (tx, _rx) = channel();
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Esc), &tx);
+        assert!(result);
+        assert_eq!(state.current_page, Page::Library);
+    }
+
+    #[test]
+    fn test_handle_settings_main_tab_does_not_navigate() {
+        let mut state = test_state();
+        state.current_page = Page::Settings;
+        let (tx, _rx) = channel();
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Tab), &tx);
+        assert!(result);
+        assert_eq!(state.current_page, Page::Settings);
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_edits_rate_limit() {
+        let mut state = test_state();
+        state.settings.selected_field = 0;
+        let (tx, _rx) = channel();
+        assert!(!state.settings.editing);
+
+        handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(state.settings.editing);
+        assert_eq!(state.settings.edit_buffer, "2");
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_saves_rate_limit() {
+        let mut state = test_state();
+        state.settings.selected_field = 0;
+        state.settings.editing = true;
+        state.settings.edit_buffer = "5".to_string();
+        let (tx, _rx) = channel();
+
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(result);
+        assert!(!state.settings.editing);
+        assert_eq!(state.settings.rate_limit_secs, 5);
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_debug_log() {
+        let mut state = test_state();
+        state.settings.selected_field = 1;
+        let (tx, _rx) = channel();
+
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(result);
+        assert_eq!(state.settings.settings_page, SettingsPage::DebugLog);
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_toggles_reader_mode() {
+        let mut state = test_state();
+        state.settings.selected_field = 2;
+        let (tx, _rx) = channel();
+        assert_eq!(state.settings.reader_mode, ReaderMode::Paged);
+
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(result);
+        assert_eq!(state.settings.reader_mode, ReaderMode::Scrollable);
+    }
+
+    #[test]
+    fn test_handle_debug_log_esc_goes_back() {
+        let mut state = test_state();
+        state.settings.settings_page = SettingsPage::DebugLog;
+        let result = handle_debug_log(&mut state, key_event(KeyCode::Esc));
+        assert!(result);
+        assert_eq!(state.settings.settings_page, SettingsPage::Main);
+    }
+
+    #[test]
+    fn test_handle_plugin_list_esc_goes_back() {
+        let mut state = test_state();
+        state.settings.settings_page = SettingsPage::PluginList;
+        let result = handle_plugin_list(&mut state, key_event(KeyCode::Esc));
+        assert!(result);
+        assert_eq!(state.settings.settings_page, SettingsPage::Main);
+    }
+
+    #[test]
+    fn test_handle_plugin_fields_esc_goes_back() {
+        let mut state = test_state();
+        state.settings.settings_page = SettingsPage::PluginFields;
+        let result = handle_plugin_fields(&mut state, key_event(KeyCode::Esc));
+        assert!(result);
+        assert_eq!(state.settings.settings_page, SettingsPage::PluginList);
+    }
+
+    #[test]
+    fn test_handle_plugin_field_edit_esc_goes_back() {
+        let mut state = test_state();
+        state.settings.settings_page = SettingsPage::PluginFieldEdit;
+        let result = handle_plugin_field_edit(&mut state, key_event(KeyCode::Esc));
+        assert!(result);
+        assert_eq!(state.settings.settings_page, SettingsPage::PluginFields);
+    }
+
+    #[test]
+    fn test_handle_plugin_field_edit_enter_saves_and_goes_back() {
+        let mut state = test_state();
+        state.settings.settings_page = SettingsPage::PluginFieldEdit;
+        let result = handle_plugin_field_edit(&mut state, key_event(KeyCode::Enter));
+        assert!(result);
+        assert_eq!(state.settings.settings_page, SettingsPage::PluginFields);
+    }
+
+    #[test]
+    fn test_handle_settings_dispatches_to_sub_handler() {
+        let mut state = test_state();
+        state.current_page = Page::Settings;
+        state.settings.settings_page = SettingsPage::DebugLog;
+        let (tx, _rx) = channel();
+        let result = handle_settings(&mut state, key_event(KeyCode::Esc), &tx);
+        assert!(result);
+        assert_eq!(state.settings.settings_page, SettingsPage::Main);
     }
 }
