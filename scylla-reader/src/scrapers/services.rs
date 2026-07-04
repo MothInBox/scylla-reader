@@ -94,6 +94,7 @@ impl ScraperRegistry {
             obj.remove("_cookies");
             obj.remove("_accepts_cookies");
         }
+        Some(json.to_string())
     }
 
     pub async fn scrape_url(
