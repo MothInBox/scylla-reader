@@ -1,6 +1,8 @@
 use crate::messenger::AppCommand;
 use crate::state::modal::PaletteAction;
-use crate::state::{Modal, Page};
+use crate::state::{AppState, Modal, Page};
+use ratatui::prelude::*;
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 use std::sync::mpsc;
 
 pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAction> {
@@ -193,9 +195,67 @@ pub fn filter_actions(actions: &[PaletteAction], query: &str) -> Vec<PaletteActi
         .collect()
 }
 
+pub fn draw_palette(frame: &mut Frame, area: Rect, state: &AppState) {
+    if let Modal::CommandPalette { query, filtered, selected } = &state.modal {
+        let popup_area = centered_rect(60, 40, area);
+        frame.render_widget(Clear, popup_area);
+
+        let items: Vec<ListItem> = filtered
+            .iter()
+            .map(|a| {
+                let keys = if a.keys.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", a.keys)
+                };
+                ListItem::new(format!("{}  {}{}", a.category, a.label, keys))
+            })
+            .collect();
+
+        let mut list_state = ListState::default();
+        list_state.select(Some(*selected));
+
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .title(format!(" Commands ({}): ", query))
+                    .borders(Borders::ALL),
+            )
+            .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
+            .highlight_symbol(">> ");
+
+        frame.render_stateful_widget(list, popup_area, &mut list_state);
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use crate::state::AppState;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
     use std::sync::mpsc;
 
     #[test]
@@ -222,5 +282,25 @@ mod tests {
         let actions = build_palette_actions(tx);
         let filtered = filter_actions(&actions, "lib");
         assert!(filtered.iter().any(|a| a.label.to_lowercase().contains("lib")));
+    }
+
+    #[test]
+    fn test_draw_palette_renders_without_panic() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.modal = Modal::CommandPalette {
+            query: "test".into(),
+            filtered: vec![],
+            selected: 0,
+        };
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_palette(f, f.area(), &state);
+            })
+            .unwrap();
     }
 }
