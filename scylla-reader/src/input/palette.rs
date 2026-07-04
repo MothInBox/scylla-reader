@@ -1,13 +1,22 @@
 //! Palette input handler.
 
 use crate::messenger::AppCommand;
-use crate::state::Modal;
 use crate::state::AppState;
+use crate::state::Modal;
 use crossterm::event::{KeyCode, KeyEvent};
 use std::sync::mpsc;
 
-pub fn handle_palette(state: &mut AppState, key: KeyEvent, cmd_tx: &mpsc::Sender<AppCommand>) -> bool {
-    if let Modal::CommandPalette { query, filtered, selected } = &mut state.modal {
+pub fn handle_palette(
+    state: &mut AppState,
+    key: KeyEvent,
+    cmd_tx: &mpsc::Sender<AppCommand>,
+) -> bool {
+    if let Modal::CommandPalette {
+        query,
+        filtered,
+        selected,
+    } = &mut state.modal
+    {
         match key.code {
             KeyCode::Esc => {
                 state.close_modal();
@@ -108,7 +117,10 @@ mod tests {
             Modal::CommandPalette { filtered, .. } => !filtered.is_empty(),
             _ => false,
         };
-        assert!(has_settings, "Expected at least 'Go to Settings' to match 'Settings'");
+        assert!(
+            has_settings,
+            "Expected at least 'Go to Settings' to match 'Settings'"
+        );
         handle_palette(&mut state, key_event(KeyCode::Enter), &tx);
         assert_eq!(state.current_page, Page::Settings);
         assert_eq!(state.modal, Modal::None);
@@ -181,7 +193,12 @@ mod tests {
         assert!(initial_count > 0);
 
         handle_palette(&mut state, key_event(KeyCode::Char('S')), &tx);
-        if let Modal::CommandPalette { query, filtered, selected } = &state.modal {
+        if let Modal::CommandPalette {
+            query,
+            filtered,
+            selected,
+        } = &state.modal
+        {
             assert_eq!(query, "S");
             assert_eq!(*selected, 0);
             // Only Settings-related items should match "S"
@@ -193,7 +210,10 @@ mod tests {
                     || a.keys.contains('S')
                     || a.keys.contains('s')
             }));
-            assert!(filtered.len() < initial_count, "Filtered should have fewer items");
+            assert!(
+                filtered.len() < initial_count,
+                "Filtered should have fewer items"
+            );
         } else {
             panic!("Expected CommandPalette");
         }
@@ -210,10 +230,18 @@ mod tests {
         };
 
         handle_palette(&mut state, key_event(KeyCode::Backspace), &tx);
-        if let Modal::CommandPalette { query, filtered, selected } = &state.modal {
+        if let Modal::CommandPalette {
+            query,
+            filtered,
+            selected,
+        } = &state.modal
+        {
             assert_eq!(query, "S");
             assert_eq!(*selected, 0);
-            assert!(filtered.len() >= count_after_two_chars, "Backspace should broaden results");
+            assert!(
+                filtered.len() >= count_after_two_chars,
+                "Backspace should broaden results"
+            );
         } else {
             panic!("Expected CommandPalette");
         }
@@ -226,7 +254,12 @@ mod tests {
         let result = handle_palette(&mut state, key_event(KeyCode::F(1)), &tx);
         assert!(result);
         // State should remain unchanged
-        if let Modal::CommandPalette { query, filtered, selected } = &state.modal {
+        if let Modal::CommandPalette {
+            query,
+            filtered,
+            selected,
+        } = &state.modal
+        {
             assert_eq!(query, "");
             assert_eq!(*selected, 0);
             assert!(!filtered.is_empty());

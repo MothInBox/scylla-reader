@@ -131,8 +131,8 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use crate::library::Library;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn test_draw_modal_command_palette_renders() {

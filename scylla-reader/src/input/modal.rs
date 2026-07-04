@@ -22,12 +22,24 @@ pub fn handle_adding_book(
             };
 
             if urls.is_empty() {
-                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", "No valid URLs to scrape");
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    "No valid URLs to scrape",
+                );
             } else {
-                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Submitting {} URLs", urls.len()));
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    &format!("Submitting {} URLs", urls.len()),
+                );
                 for url in urls {
                     if let Err(e) = cmd_tx.send(AppCommand::Scrape(url)) {
-                        crate::settings::log(crate::settings::LogLevel::Error, "INPUT", &format!("Failed to queue scrape: {}", e));
+                        crate::settings::log(
+                            crate::settings::LogLevel::Error,
+                            "INPUT",
+                            &format!("Failed to queue scrape: {}", e),
+                        );
                     }
                 }
             }
@@ -125,7 +137,11 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
                     .db
                     .update_progress(&book.url, book.progress.current, book.progress.total)
             {
-                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Failed to update book progress. e: {}", err));
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    &format!("Failed to update book progress. e: {}", err),
+                );
             }
         }
         state.modal = Modal::None;
@@ -157,7 +173,10 @@ mod tests {
         KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
     }
 
-    fn channel() -> (std::sync::mpsc::Sender<AppCommand>, std::sync::mpsc::Receiver<AppCommand>) {
+    fn channel() -> (
+        std::sync::mpsc::Sender<AppCommand>,
+        std::sync::mpsc::Receiver<AppCommand>,
+    ) {
         std::sync::mpsc::channel()
     }
 
@@ -333,8 +352,16 @@ mod tests {
     #[test]
     fn test_handle_jump_chapter_enter_selects_and_updates_progress() {
         let chapters = vec![
-            Chapter { title: "Ch1".into(), url: "u1".into(), order: 0 },
-            Chapter { title: "Ch2".into(), url: "u2".into(), order: 1 },
+            Chapter {
+                title: "Ch1".into(),
+                url: "u1".into(),
+                order: 0,
+            },
+            Chapter {
+                title: "Ch2".into(),
+                url: "u2".into(),
+                order: 1,
+            },
         ];
         let mut state = setup_jump_chapter_state(chapters, 1);
         let result = handle_jumping_chapter(&mut state, key_event(KeyCode::Enter));
@@ -350,7 +377,11 @@ mod tests {
 
     #[test]
     fn test_handle_jump_chapter_esc_cancels() {
-        let chapters = vec![Chapter { title: "Ch1".into(), url: "u1".into(), order: 0 }];
+        let chapters = vec![Chapter {
+            title: "Ch1".into(),
+            url: "u1".into(),
+            order: 0,
+        }];
         let mut state = setup_jump_chapter_state(chapters, 0);
         let result = handle_jumping_chapter(&mut state, key_event(KeyCode::Esc));
         assert!(result);
@@ -361,9 +392,21 @@ mod tests {
     #[test]
     fn test_handle_jump_chapter_up_down_navigates() {
         let chapters = vec![
-            Chapter { title: "Ch1".into(), url: "u1".into(), order: 0 },
-            Chapter { title: "Ch2".into(), url: "u2".into(), order: 1 },
-            Chapter { title: "Ch3".into(), url: "u3".into(), order: 2 },
+            Chapter {
+                title: "Ch1".into(),
+                url: "u1".into(),
+                order: 0,
+            },
+            Chapter {
+                title: "Ch2".into(),
+                url: "u2".into(),
+                order: 1,
+            },
+            Chapter {
+                title: "Ch3".into(),
+                url: "u3".into(),
+                order: 2,
+            },
         ];
         let mut state = setup_jump_chapter_state(chapters, 1);
         handle_jumping_chapter(&mut state, key_event(KeyCode::Up));
@@ -382,7 +425,11 @@ mod tests {
 
     #[test]
     fn test_handle_jump_chapter_t_toggles_show_titles() {
-        let chapters = vec![Chapter { title: "Ch1".into(), url: "u1".into(), order: 0 }];
+        let chapters = vec![Chapter {
+            title: "Ch1".into(),
+            url: "u1".into(),
+            order: 0,
+        }];
         let mut state = setup_jump_chapter_state(chapters, 0);
         handle_jumping_chapter(&mut state, key_event(KeyCode::Char('t')));
         if let Modal::JumpChapter { show_titles, .. } = &state.modal {
@@ -394,7 +441,11 @@ mod tests {
 
     #[test]
     fn test_handle_jump_chapter_up_stays_at_top() {
-        let chapters = vec![Chapter { title: "Ch1".into(), url: "u1".into(), order: 0 }];
+        let chapters = vec![Chapter {
+            title: "Ch1".into(),
+            url: "u1".into(),
+            order: 0,
+        }];
         let mut state = setup_jump_chapter_state(chapters, 0);
         handle_jumping_chapter(&mut state, key_event(KeyCode::Up));
         if let Modal::JumpChapter { cursor, .. } = &state.modal {
@@ -406,7 +457,11 @@ mod tests {
 
     #[test]
     fn test_handle_jump_chapter_down_stays_at_bottom() {
-        let chapters = vec![Chapter { title: "Ch1".into(), url: "u1".into(), order: 0 }];
+        let chapters = vec![Chapter {
+            title: "Ch1".into(),
+            url: "u1".into(),
+            order: 0,
+        }];
         let mut state = setup_jump_chapter_state(chapters, 0);
         handle_jumping_chapter(&mut state, key_event(KeyCode::Down));
         if let Modal::JumpChapter { cursor, .. } = &state.modal {

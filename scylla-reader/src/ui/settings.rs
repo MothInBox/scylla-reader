@@ -50,10 +50,18 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
 fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
         .split(area);
 
-    let toggle_status = if state.settings.debug_log { "ON" } else { "OFF" };
+    let toggle_status = if state.settings.debug_log {
+        "ON"
+    } else {
+        "OFF"
+    };
     let toggle_line = Paragraph::new(format!(
         " Debug Logging: {}    [Enter] Toggle",
         toggle_status,
@@ -89,7 +97,11 @@ fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().title(" Plugin Configs ").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" Plugin Configs ")
+                .borders(Borders::ALL),
+        )
         .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
         .highlight_symbol(">> ");
 
@@ -110,7 +122,11 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
-    let Some(config) = state.settings.plugin_configs.get(state.settings.selected_plugin) else {
+    let Some(config) = state
+        .settings
+        .plugin_configs
+        .get(state.settings.selected_plugin)
+    else {
         return;
     };
 
@@ -132,11 +148,16 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let cookie_extra = if config.accepts_cookies { 1 } else { 0 };
     let field_count = config.schema.len() + cookie_extra;
-    let clamped = state.settings.selected_plugin_field.min(field_count.saturating_sub(1));
+    let clamped = state
+        .settings
+        .selected_plugin_field
+        .min(field_count.saturating_sub(1));
     let list = List::new(items)
-        .block(Block::default()
-            .title(format!(" {} ", config.domain))
-            .borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(format!(" {} ", config.domain))
+                .borders(Borders::ALL),
+        )
         .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
         .highlight_symbol(">> ");
 
@@ -157,7 +178,10 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
-    let config = state.settings.plugin_configs.get(state.settings.selected_plugin);
+    let config = state
+        .settings
+        .plugin_configs
+        .get(state.settings.selected_plugin);
     let is_cookie = config
         .map(|c| state.settings.selected_plugin_field == c.schema.len() && c.accepts_cookies)
         .unwrap_or(false);
@@ -187,8 +211,8 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(paragraph, chunks[0]);
 
     if state.show_hints {
-        let hints =
-            Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette").style(Style::default().fg(Color::DarkGray));
+        let hints = Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette")
+            .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(hints, chunks[1]);
     }
 }
@@ -198,8 +222,8 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use crate::library::Library;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn test_settings_draw_shows_hints_when_enabled() {

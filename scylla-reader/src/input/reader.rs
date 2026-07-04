@@ -75,7 +75,9 @@ pub fn handle_reader(
                 true
             }
             KeyCode::PageDown => {
-                state.reader.scroll_down_visual_page(size.width, size.height);
+                state
+                    .reader
+                    .scroll_down_visual_page(size.width, size.height);
                 true
             }
             KeyCode::PageUp => {
@@ -106,7 +108,10 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    fn channel() -> (std::sync::mpsc::Sender<AppCommand>, std::sync::mpsc::Receiver<AppCommand>) {
+    fn channel() -> (
+        std::sync::mpsc::Sender<AppCommand>,
+        std::sync::mpsc::Receiver<AppCommand>,
+    ) {
         std::sync::mpsc::channel()
     }
 
@@ -118,9 +123,21 @@ mod tests {
         let mut state = test_state();
         state.library.add_book("Test Book".into(), "url".into(), 10);
         state.library.books[0].chapters.extend(vec![
-            Chapter { title: "Ch1".into(), url: "url-1".into(), order: 0 },
-            Chapter { title: "Ch2".into(), url: "url-2".into(), order: 1 },
-            Chapter { title: "Ch3".into(), url: "url-3".into(), order: 2 },
+            Chapter {
+                title: "Ch1".into(),
+                url: "url-1".into(),
+                order: 0,
+            },
+            Chapter {
+                title: "Ch2".into(),
+                url: "url-2".into(),
+                order: 1,
+            },
+            Chapter {
+                title: "Ch3".into(),
+                url: "url-3".into(),
+                order: 2,
+            },
         ]);
         state
     }
@@ -281,8 +298,13 @@ mod tests {
         let mut state = test_state();
         state.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
         state.reader.load(
-            "Book".into(), "url".into(), "Ch1".into(),
-            (0..50).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"),
+            "Book".into(),
+            "url".into(),
+            "Ch1".into(),
+            (0..50)
+                .map(|i| format!("line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n"),
             0,
         );
         let (tx, _rx) = channel();
@@ -296,8 +318,13 @@ mod tests {
         let mut state = test_state();
         state.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
         state.reader.load(
-            "Book".into(), "url".into(), "Ch1".into(),
-            (0..50).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"),
+            "Book".into(),
+            "url".into(),
+            "Ch1".into(),
+            (0..50)
+                .map(|i| format!("line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n"),
             0,
         );
         state.reader.visual_scroll = 10;
@@ -312,8 +339,13 @@ mod tests {
         let mut state = test_state();
         state.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
         state.reader.load(
-            "Book".into(), "url".into(), "Ch1".into(),
-            (0..200).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"),
+            "Book".into(),
+            "url".into(),
+            "Ch1".into(),
+            (0..200)
+                .map(|i| format!("line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n"),
             0,
         );
         let (tx, _rx) = channel();
@@ -328,8 +360,13 @@ mod tests {
         let mut state = test_state();
         state.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
         state.reader.load(
-            "Book".into(), "url".into(), "Ch1".into(),
-            (0..200).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"),
+            "Book".into(),
+            "url".into(),
+            "Ch1".into(),
+            (0..200)
+                .map(|i| format!("line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n"),
             0,
         );
         state.reader.visual_scroll = 100;

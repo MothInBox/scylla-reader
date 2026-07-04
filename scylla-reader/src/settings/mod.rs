@@ -11,8 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 pub fn log_file() -> std::path::PathBuf {
-    let base = dirs::state_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    let base = dirs::state_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
     base.join("scylla-reader").join("scylla-reader.log")
 }
 
@@ -188,8 +187,6 @@ impl Settings {
 pub fn set_debug(enabled: bool) {
     DEBUG_ENABLED.store(enabled, Ordering::Relaxed);
 }
-
-
 
 #[cfg(test)]
 mod tests {

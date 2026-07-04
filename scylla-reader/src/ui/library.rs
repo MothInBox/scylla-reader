@@ -130,8 +130,8 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use crate::library::Library;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn test_library_draw_shows_hints_when_enabled() {

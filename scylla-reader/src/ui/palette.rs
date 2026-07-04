@@ -196,7 +196,12 @@ pub fn filter_actions(actions: &[PaletteAction], query: &str) -> Vec<PaletteActi
 }
 
 pub fn draw_palette(frame: &mut Frame, area: Rect, state: &AppState) {
-    if let Modal::CommandPalette { query, filtered, selected } = &state.modal {
+    if let Modal::CommandPalette {
+        query,
+        filtered,
+        selected,
+    } = &state.modal
+    {
         let popup_area = centered_rect(60, 40, area);
         frame.render_widget(Clear, popup_area);
 
@@ -254,8 +259,8 @@ mod tests {
     use crate::db::Db;
     use crate::library::Library;
     use crate::state::AppState;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::sync::mpsc;
 
     #[test]
@@ -281,7 +286,11 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let actions = build_palette_actions(tx);
         let filtered = filter_actions(&actions, "lib");
-        assert!(filtered.iter().any(|a| a.label.to_lowercase().contains("lib")));
+        assert!(
+            filtered
+                .iter()
+                .any(|a| a.label.to_lowercase().contains("lib"))
+        );
     }
 
     #[test]

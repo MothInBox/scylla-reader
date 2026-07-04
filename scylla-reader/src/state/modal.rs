@@ -35,8 +35,6 @@ pub struct PaletteAction {
 
 impl PartialEq for PaletteAction {
     fn eq(&self, other: &Self) -> bool {
-        self.category == other.category
-            && self.label == other.label
-            && self.keys == other.keys
+        self.category == other.category && self.label == other.label && self.keys == other.keys
     }
 }

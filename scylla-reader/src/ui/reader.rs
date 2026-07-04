@@ -55,8 +55,9 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, chunks[1]);
     if state.show_hints {
-        let hints = Paragraph::new(" > Next  < Prev  h/l Page  j/k Scroll  PgDn/PgUp  Esc Back  : Palette")
-            .style(Style::default().fg(Color::DarkGray));
+        let hints =
+            Paragraph::new(" > Next  < Prev  h/l Page  j/k Scroll  PgDn/PgUp  Esc Back  : Palette")
+                .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(hints, chunks[2]);
     }
 }
@@ -89,8 +90,9 @@ fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(paragraph, chunks[1]);
 
     if state.show_hints {
-        let hints = Paragraph::new(" > Next  < Prev  h/l Page  j/k Scroll  PgDn/PgUp  Esc Back  : Palette")
-            .style(Style::default().fg(Color::DarkGray));
+        let hints =
+            Paragraph::new(" > Next  < Prev  h/l Page  j/k Scroll  PgDn/PgUp  Esc Back  : Palette")
+                .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(hints, chunks[2]);
     }
 }
@@ -100,8 +102,8 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use crate::library::Library;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn test_reader_draw_shows_hints_when_enabled() {

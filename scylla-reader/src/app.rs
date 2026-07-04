@@ -38,7 +38,9 @@ impl App {
             worker.run();
         });
 
-        let terminal = Terminal::new(CrosstermBackend::new(Box::new(stdout()) as Box<dyn std::io::Write>))?;
+        let terminal = Terminal::new(CrosstermBackend::new(
+            Box::new(stdout()) as Box<dyn std::io::Write>
+        ))?;
 
         let mut state = AppState::new();
         for book in state.db.load_books().unwrap_or_default() {
@@ -96,8 +98,18 @@ impl App {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 AppEvent::BookScraped(book) => {
-                    crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("UI received book: {}", book.title));
-                    if let Some(existing) = self.state.library.books.iter_mut().find(|b| b.url == book.url) {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "UI",
+                        &format!("UI received book: {}", book.title),
+                    );
+                    if let Some(existing) = self
+                        .state
+                        .library
+                        .books
+                        .iter_mut()
+                        .find(|b| b.url == book.url)
+                    {
                         existing.title = book.title.clone();
                         existing.progress.total = book.progress.total;
                         existing.cover_url = book.cover_url.clone();
@@ -108,13 +120,21 @@ impl App {
                     }
                     if let Some(b) = self.state.library.books.iter().find(|b| b.url == book.url) {
                         self.state.db.upsert_book(b).unwrap_or_else(|e| {
-                            crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("DB upsert failed: {}", e));
+                            crate::settings::log(
+                                crate::settings::LogLevel::Debug,
+                                "UI",
+                                &format!("DB upsert failed: {}", e),
+                            );
                         });
                     }
                     self.last_cover_url = None;
                 }
                 AppEvent::ChapterFetched(chapter) => {
-                    crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Chapter received: {}", chapter.title));
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "UI",
+                        &format!("Chapter received: {}", chapter.title),
+                    );
                     if let Some(book) = self.state.library.selected_book_mut() {
                         book.progress.current = chapter.chapter_idx as u32;
                     }
@@ -123,13 +143,22 @@ impl App {
                             .db
                             .update_progress(&book.url, book.progress.current, book.progress.total)
                             .unwrap_or_else(|e| {
-                                crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("DB progress update failed: {}", e));
+                                crate::settings::log(
+                                    crate::settings::LogLevel::Debug,
+                                    "UI",
+                                    &format!("DB progress update failed: {}", e),
+                                );
                             });
                     }
-                    self.state.open_reader_chapter(chapter.title, chapter.content, chapter.chapter_idx);
+                    self.state.open_reader_chapter(
+                        chapter.title,
+                        chapter.content,
+                        chapter.chapter_idx,
+                    );
                 }
                 AppEvent::CoverFetched(url, protocol) => {
-                    let current_url = self.state
+                    let current_url = self
+                        .state
                         .library
                         .selected_book()
                         .and_then(|b| b.cover_url.as_deref().map(str::to_owned));
@@ -142,7 +171,8 @@ impl App {
     }
 
     fn update_covers(&mut self) {
-        let current_cover_url = self.state
+        let current_cover_url = self
+            .state
             .library
             .selected_book()
             .and_then(|b| b.cover_url.clone());
@@ -220,7 +250,8 @@ impl App {
             _ => {}
         }
 
-        let pre_status = self.state
+        let pre_status = self
+            .state
             .library
             .selected_book()
             .map(|b| (b.url.clone(), b.status.clone()));
@@ -238,7 +269,11 @@ impl App {
         if let Some(url) = removed_url {
             if self.state.library.books.len() < pre_books_len {
                 self.state.db.delete_book(&url).unwrap_or_else(|e| {
-                    crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("DB delete failed: {}", e));
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "UI",
+                        &format!("DB delete failed: {}", e),
+                    );
                 });
             }
         }
@@ -250,7 +285,11 @@ impl App {
                         .db
                         .update_status(&book.url, &book.status)
                         .unwrap_or_else(|e| {
-                            crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("DB status update failed: {}", e));
+                            crate::settings::log(
+                                crate::settings::LogLevel::Debug,
+                                "UI",
+                                &format!("DB status update failed: {}", e),
+                            );
                         });
                 }
             }

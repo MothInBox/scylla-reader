@@ -29,7 +29,11 @@ impl AppState {
             settings: Settings::new(),
             reader: ReaderState::new(),
             db: Db::open().unwrap_or_else(|e| {
-                crate::settings::log(crate::settings::LogLevel::Error, "DB", &format!("DB open failed: {}", e));
+                crate::settings::log(
+                    crate::settings::LogLevel::Error,
+                    "DB",
+                    &format!("DB open failed: {}", e),
+                );
                 panic!("Could not open database");
             }),
             show_hints: true,
@@ -167,7 +171,11 @@ mod tests {
             selected: 0,
         };
         match modal {
-            Modal::CommandPalette { query, filtered, selected } => {
+            Modal::CommandPalette {
+                query,
+                filtered,
+                selected,
+            } => {
                 assert!(query.is_empty());
                 assert!(filtered.is_empty());
                 assert_eq!(selected, 0);

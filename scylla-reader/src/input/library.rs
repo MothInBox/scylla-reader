@@ -21,7 +21,11 @@ pub fn handle_library(
         }
         KeyCode::Char('j') => {
             if let Some(book) = state.library.selected_book() {
-                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Adding Book {} to modal", book.title));
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    &format!("Adding Book {} to modal", book.title),
+                );
                 state.modal = Modal::JumpChapter {
                     chapters: book.chapters.clone(),
                     cursor: 0,
@@ -52,7 +56,11 @@ pub fn handle_library(
                         .description
                         .clone()
                         .unwrap_or_else(|| "No content available.".to_string());
-                    crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("No chapters for: {}", book_title));
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "INPUT",
+                        &format!("No chapters for: {}", book_title),
+                    );
                     state.open_reader_chapter("Description".to_string(), desc, 0);
                 } else {
                     let idx = (book.progress.current as usize).min(book.chapters.len() - 1);
@@ -60,7 +68,11 @@ pub fn handle_library(
                     state.reader.loading = true;
                     state.current_page = Page::Reader;
                     if let Err(e) = cmd_tx.send(AppCommand::FetchChapter(chapter_url, idx)) {
-                        crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Failed to queue chapter: {}", e));
+                        crate::settings::log(
+                            crate::settings::LogLevel::Debug,
+                            "INPUT",
+                            &format!("Failed to queue chapter: {}", e),
+                        );
                     }
                 }
             }
@@ -75,9 +87,17 @@ pub fn handle_library(
                 .filter(|u| !u.is_empty())
                 .collect();
             if !urls.is_empty() {
-                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", "Attempting to update all books...");
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    "Attempting to update all books...",
+                );
                 if let Err(e) = cmd_tx.send(AppCommand::UpdateAll(urls)) {
-                    crate::settings::log(crate::settings::LogLevel::Error, "INPUT", &format!("Failed to queue update: {}", e));
+                    crate::settings::log(
+                        crate::settings::LogLevel::Error,
+                        "INPUT",
+                        &format!("Failed to queue update: {}", e),
+                    );
                 }
             }
             true
@@ -106,8 +126,8 @@ mod tests {
     use crate::db::Db;
     use crate::library::Library;
     use crate::library::LibraryFilter;
-    use crate::models::book::BookStatus;
     use crate::models::Chapter;
+    use crate::models::book::BookStatus;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn test_state() -> AppState {
@@ -120,7 +140,10 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    fn channel() -> (std::sync::mpsc::Sender<AppCommand>, std::sync::mpsc::Receiver<AppCommand>) {
+    fn channel() -> (
+        std::sync::mpsc::Sender<AppCommand>,
+        std::sync::mpsc::Receiver<AppCommand>,
+    ) {
         std::sync::mpsc::channel()
     }
 
@@ -145,9 +168,11 @@ mod tests {
     fn test_handle_library_j_opens_jump_chapter() {
         let mut state = test_state();
         state.library.add_book("Test".into(), "url".into(), 10);
-        state.library.books[0]
-            .chapters
-            .push(Chapter { title: "Ch1".into(), url: "u1".into(), order: 0 });
+        state.library.books[0].chapters.push(Chapter {
+            title: "Ch1".into(),
+            url: "u1".into(),
+            order: 0,
+        });
         let (tx, _rx) = channel();
         let result = handle_library(&mut state, key_event(KeyCode::Char('j')), &tx);
         assert!(result);
@@ -155,7 +180,11 @@ mod tests {
         assert_eq!(
             state.modal,
             Modal::JumpChapter {
-                chapters: vec![Chapter { title: "Ch1".into(), url: "u1".into(), order: 0 }],
+                chapters: vec![Chapter {
+                    title: "Ch1".into(),
+                    url: "u1".into(),
+                    order: 0
+                }],
                 cursor: 0,
                 scroll_offset: 0,
                 show_titles: true,
@@ -197,7 +226,10 @@ mod tests {
         let (tx, _rx) = channel();
         let result = handle_library(&mut state, key_event(KeyCode::Char('f')), &tx);
         assert!(result);
-        assert_eq!(state.library.filter, LibraryFilter::ByStatus(BookStatus::Reading));
+        assert_eq!(
+            state.library.filter,
+            LibraryFilter::ByStatus(BookStatus::Reading)
+        );
     }
 
     #[test]
@@ -215,9 +247,11 @@ mod tests {
     fn test_handle_library_enter_opens_reader_with_chapters() {
         let mut state = test_state();
         state.library.add_book("Test".into(), "url".into(), 10);
-        state.library.books[0]
-            .chapters
-            .push(Chapter { title: "Ch1".into(), url: "http://example.com".into(), order: 0 });
+        state.library.books[0].chapters.push(Chapter {
+            title: "Ch1".into(),
+            url: "http://example.com".into(),
+            order: 0,
+        });
         let (tx, _rx) = channel();
         let result = handle_library(&mut state, key_event(KeyCode::Enter), &tx);
         assert!(result);

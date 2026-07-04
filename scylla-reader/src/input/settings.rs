@@ -3,7 +3,11 @@ use crate::settings::{SettingsField, SettingsPage};
 use crate::state::{AppState, Page};
 use crossterm::event::{KeyCode, KeyEvent};
 
-pub fn handle_settings(state: &mut AppState, key: KeyEvent, cmd_tx: &std::sync::mpsc::Sender<AppCommand>) -> bool {
+pub fn handle_settings(
+    state: &mut AppState,
+    key: KeyEvent,
+    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
+) -> bool {
     match state.settings.settings_page.clone() {
         SettingsPage::Main => handle_settings_main(state, key, cmd_tx),
         SettingsPage::DebugLog => handle_debug_log(state, key),
@@ -13,7 +17,11 @@ pub fn handle_settings(state: &mut AppState, key: KeyEvent, cmd_tx: &std::sync::
     }
 }
 
-pub fn handle_settings_main(state: &mut AppState, key: KeyEvent, cmd_tx: &std::sync::mpsc::Sender<AppCommand>) -> bool {
+pub fn handle_settings_main(
+    state: &mut AppState,
+    key: KeyEvent,
+    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
+) -> bool {
     let num_fields = SettingsField::all().len();
     match key.code {
         KeyCode::Esc => {
@@ -85,7 +93,11 @@ fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 let _ = std::fs::write(&log_path, "");
-                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", "Debug logging enabled");
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    "Debug logging enabled",
+                );
             }
             state.settings.reload_log();
             state.settings.log_scroll = 0;
@@ -134,7 +146,11 @@ pub fn handle_plugin_list(state: &mut AppState, key: KeyEvent) -> bool {
 }
 
 pub fn handle_plugin_fields(state: &mut AppState, key: KeyEvent) -> bool {
-    let Some(config) = state.settings.plugin_configs.get(state.settings.selected_plugin) else {
+    let Some(config) = state
+        .settings
+        .plugin_configs
+        .get(state.settings.selected_plugin)
+    else {
         state.settings.settings_page = SettingsPage::PluginList;
         return true;
     };
@@ -163,11 +179,8 @@ pub fn handle_plugin_fields(state: &mut AppState, key: KeyEvent) -> bool {
             if is_cookie {
                 state.settings.plugin_field_buffer = config.cookies.clone();
             } else if let Some(field) = config.schema.get(state.settings.selected_plugin_field) {
-                state.settings.plugin_field_buffer = config
-                    .values
-                    .get(&field.key)
-                    .cloned()
-                    .unwrap_or_default();
+                state.settings.plugin_field_buffer =
+                    config.values.get(&field.key).cloned().unwrap_or_default();
             } else {
                 return true;
             }
@@ -190,7 +203,11 @@ pub fn handle_plugin_field_edit(state: &mut AppState, key: KeyEvent) -> bool {
         KeyCode::Enter => {
             let result = state.settings.save_current_field();
             if let Err(e) = result {
-                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Failed to save plugin field: {}", e));
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    &format!("Failed to save plugin field: {}", e),
+                );
             }
             state.settings.plugin_field_buffer.clear();
             state.settings.plugin_field_editing = false;
@@ -227,7 +244,10 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    fn channel() -> (std::sync::mpsc::Sender<AppCommand>, std::sync::mpsc::Receiver<AppCommand>) {
+    fn channel() -> (
+        std::sync::mpsc::Sender<AppCommand>,
+        std::sync::mpsc::Receiver<AppCommand>,
+    ) {
         std::sync::mpsc::channel()
     }
 
