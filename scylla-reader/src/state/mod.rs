@@ -160,6 +160,23 @@ mod tests {
     }
 
     #[test]
+    fn test_command_palette_modal_variant() {
+        let modal = Modal::CommandPalette {
+            query: String::new(),
+            filtered: Vec::new(),
+            selected: 0,
+        };
+        match modal {
+            Modal::CommandPalette { query, filtered, selected } => {
+                assert!(query.is_empty());
+                assert!(filtered.is_empty());
+                assert_eq!(selected, 0);
+            }
+            _ => panic!("Expected CommandPalette variant"),
+        }
+    }
+
+    #[test]
     fn test_page_transitions() {
         let mut state = test_state();
         assert_eq!(state.current_page, Page::Library);

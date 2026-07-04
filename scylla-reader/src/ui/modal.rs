@@ -77,6 +77,8 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 " [Enter] Set Current  [↑↓] Move  [t] Link/Title  [Esc] Cancel",
             );
         }
+
+        Modal::CommandPalette { .. } => {}
     }
 }
 
