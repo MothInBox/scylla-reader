@@ -2,12 +2,18 @@
 
 use crate::state::AppState;
 use crate::state::modal::Modal;
+use crate::ui::palette::draw_palette;
 use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 
 pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
+    if matches!(state.modal, Modal::CommandPalette { .. }) {
+        draw_palette(frame, area, state);
+        return;
+    }
+
     match &mut state.modal {
         Modal::None => {}
         Modal::AddBook {
@@ -78,7 +84,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
             );
         }
 
-        Modal::CommandPalette { .. } => {}
+        Modal::CommandPalette { .. } => unreachable!(),
     }
 }
 
