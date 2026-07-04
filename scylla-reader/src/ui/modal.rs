@@ -125,3 +125,32 @@ fn draw_scrollable_list(
     let hints = Paragraph::new(hints).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hints, chunks[1]);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    #[test]
+    fn test_draw_modal_command_palette_renders() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.modal = Modal::CommandPalette {
+            query: "test".into(),
+            filtered: vec![],
+            selected: 0,
+        };
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_modal(f, f.area(), &mut state);
+            })
+            .unwrap();
+    }
+}
