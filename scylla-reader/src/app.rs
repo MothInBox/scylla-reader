@@ -4,7 +4,7 @@
 use crate::input;
 use crate::messenger::{AppCommand, AppEvent};
 use crate::scrapers::services::ScraperRegistry;
-use crate::state::AppState;
+use crate::state::{AppState, Modal, Page};
 use crate::ui;
 use crate::worker;
 
@@ -19,7 +19,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 pub struct App {
-    terminal: Terminal<CrosstermBackend<std::io::Stdout>>,
+    terminal: Terminal<CrosstermBackend<Box<dyn std::io::Write>>>,
     state: AppState,
     cmd_tx: mpsc::Sender<AppCommand>,
     event_rx: mpsc::Receiver<AppEvent>,
@@ -38,7 +38,7 @@ impl App {
             worker.run();
         });
 
-        let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+        let terminal = Terminal::new(CrosstermBackend::new(Box::new(stdout()) as Box<dyn std::io::Write>))?;
 
         let mut state = AppState::new();
         for book in state.db.load_books().unwrap_or_default() {
@@ -157,7 +157,69 @@ impl App {
         }
     }
 
+    #[cfg(test)]
+    pub fn test_instance(state: AppState) -> Self {
+        let backend = CrosstermBackend::new(Box::new(std::io::sink()) as Box<dyn std::io::Write>);
+        let terminal = Terminal::new(backend).unwrap();
+        let (cmd_tx, _cmd_rx) = mpsc::channel::<AppCommand>();
+        let (_event_tx, event_rx) = mpsc::channel::<AppEvent>();
+        Self {
+            terminal,
+            state,
+            cmd_tx,
+            event_rx,
+            last_cover_url: None,
+        }
+    }
+
     fn handle_key(&mut self, key: crossterm::event::KeyEvent, area: Rect) -> bool {
+        // GLOBAL KEYS — handled before page-specific input dispatch
+        match key.code {
+            KeyCode::Char('1') => {
+                self.state.current_page = Page::Library;
+                return true;
+            }
+            KeyCode::Char('2') => {
+                self.state.current_page = Page::Reader;
+                return true;
+            }
+            KeyCode::Char('3') => {
+                self.state.current_page = Page::Settings;
+                return true;
+            }
+            KeyCode::Char(':') => {
+                let actions = crate::ui::palette::build_palette_actions(self.cmd_tx.clone());
+                let filtered = crate::ui::palette::filter_actions(&actions, "");
+                self.state.modal = Modal::CommandPalette {
+                    query: String::new(),
+                    filtered,
+                    selected: 0,
+                };
+                return true;
+            }
+            KeyCode::Char('?') => {
+                self.state.show_hints = !self.state.show_hints;
+                return true;
+            }
+            KeyCode::Char('q') if self.state.current_page == Page::Library => {
+                return false;
+            }
+            KeyCode::Esc => {
+                if self.state.modal != Modal::None {
+                    self.state.close_modal();
+                    return true;
+                }
+                match self.state.current_page {
+                    Page::Library => return false,
+                    _ => {
+                        self.state.current_page = Page::Library;
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+
         let pre_status = self.state
             .library
             .selected_book()
@@ -195,5 +257,112 @@ impl App {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn test_state() -> AppState {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        AppState::from_parts(db, Library::new())
+    }
+
+    fn key_event(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn test_global_key_1_switches_to_library() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Reader;
+        app.handle_key(key_event(KeyCode::Char('1')), Rect::default());
+        assert_eq!(app.state.current_page, Page::Library);
+    }
+
+    #[test]
+    fn test_global_key_2_switches_to_reader() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Library;
+        app.handle_key(key_event(KeyCode::Char('2')), Rect::default());
+        assert_eq!(app.state.current_page, Page::Reader);
+    }
+
+    #[test]
+    fn test_global_key_3_switches_to_settings() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Library;
+        app.handle_key(key_event(KeyCode::Char('3')), Rect::default());
+        assert_eq!(app.state.current_page, Page::Settings);
+    }
+
+    #[test]
+    fn test_colon_opens_command_palette() {
+        let mut app = App::test_instance(test_state());
+        assert_eq!(app.state.modal, Modal::None);
+        app.handle_key(key_event(KeyCode::Char(':')), Rect::default());
+        assert!(matches!(app.state.modal, Modal::CommandPalette { .. }));
+    }
+
+    #[test]
+    fn test_question_toggles_hints() {
+        let mut app = App::test_instance(test_state());
+        let initial = app.state.show_hints;
+        app.handle_key(key_event(KeyCode::Char('?')), Rect::default());
+        assert_eq!(app.state.show_hints, !initial);
+        app.handle_key(key_event(KeyCode::Char('?')), Rect::default());
+        assert_eq!(app.state.show_hints, initial);
+    }
+
+    #[test]
+    fn test_esc_closes_modal() {
+        let mut app = App::test_instance(test_state());
+        app.state.modal = Modal::CommandPalette {
+            query: "".into(),
+            filtered: vec![],
+            selected: 0,
+        };
+        app.state.current_page = Page::AddingBook;
+        let result = app.handle_key(key_event(KeyCode::Esc), Rect::default());
+        assert!(result);
+        assert_eq!(app.state.modal, Modal::None);
+    }
+
+    #[test]
+    fn test_esc_quits_from_library() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Library;
+        let result = app.handle_key(key_event(KeyCode::Esc), Rect::default());
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_esc_goes_to_library_from_other_pages() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Settings;
+        let result = app.handle_key(key_event(KeyCode::Esc), Rect::default());
+        assert!(result);
+        assert_eq!(app.state.current_page, Page::Library);
+    }
+
+    #[test]
+    fn test_q_quits_from_library() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Library;
+        let result = app.handle_key(key_event(KeyCode::Char('q')), Rect::default());
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_q_does_not_quit_from_other_pages() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Settings;
+        app.handle_key(key_event(KeyCode::Char('q')), Rect::default());
+        assert_eq!(app.state.current_page, Page::Settings);
     }
 }
