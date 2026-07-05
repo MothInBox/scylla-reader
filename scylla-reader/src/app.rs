@@ -101,7 +101,7 @@ impl App {
                         "UI",
                         &format!("UI received book: {}", book.title),
                     );
-                    if let Some(existing) = self
+if let Some(existing) = self
                         .state
                         .library
                         .books
@@ -119,6 +119,9 @@ impl App {
                                 &format!("DB upsert failed: {}", e),
                             );
                         });
+                        if let Ok(sessions) = self.state.db.load_sessions_for_book(&existing.url) {
+                            existing.sessions = sessions;
+                        }
                     } else {
                         self.state.db.upsert_book(&book).unwrap_or_else(|e| {
                             crate::settings::log(
@@ -127,7 +130,13 @@ impl App {
                                 &format!("DB upsert failed: {}", e),
                             );
                         });
+                        let book_url = book.url.clone();
                         self.state.library.books.push(book);
+                        if let Some(b) = self.state.library.books.iter_mut().find(|b| b.url == book_url) {
+                            if let Ok(sessions) = self.state.db.load_sessions_for_book(&book_url) {
+                                b.sessions = sessions;
+                            }
+                        }
                     }
                     self.last_cover_url = None;
                 }

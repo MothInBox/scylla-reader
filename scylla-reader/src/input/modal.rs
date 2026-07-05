@@ -229,16 +229,37 @@ pub fn handle_session_picker(
             }
         }
         KeyCode::Char('d') => {
-            if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
-                if book.sessions.len() > 1 && cursor < book.sessions.len() {
-                    let session_id = book.sessions[cursor].id;
-                    state.db.delete_session(session_id).ok();
-                    if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
-                        book.sessions = loaded;
-                    }
-                    let new_cursor = cursor.min(book.sessions.len().saturating_sub(1));
-                    if let Modal::SessionPicker { cursor: c, .. } = &mut state.modal {
-                        *c = new_cursor;
+            let session_count = state.library.books.iter()
+                .find(|b| b.url == book_url)
+                .map(|b| b.sessions.len())
+                .unwrap_or(0);
+            if cursor < session_count {
+                let session_id = state.library.books.iter()
+                    .find(|b| b.url == book_url)
+                    .and_then(|b| b.sessions.get(cursor))
+                    .map(|s| s.id);
+                if let Some(session_id) = session_id {
+                    if session_count > 1 {
+                        state.db.delete_session(session_id).ok();
+                        if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
+                            if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
+                                book.sessions = loaded;
+                            }
+                        }
+                        let new_cursor = cursor.min(session_count.saturating_sub(2));
+                        if let Modal::SessionPicker { cursor: c, .. } = &mut state.modal {
+                            *c = new_cursor;
+                        }
+                    } else {
+                        state.db.delete_book(&book_url).ok();
+                        state.library.books.retain(|b| b.url != book_url);
+                        let new_len = state.library.visible_indices().len();
+                        if state.library.selected_index > 0
+                            && state.library.selected_index >= new_len
+                        {
+                            state.library.selected_index -= 1;
+                        }
+                        state.modal = Modal::None;
                     }
                 }
             }
