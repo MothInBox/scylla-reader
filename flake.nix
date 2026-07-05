@@ -31,22 +31,8 @@
         rustc = rustToolchain;
       };
     in {
-      default = customRustPlatform.buildRustPackage {
-        pname = "scylla-reader";
-        version = "0.1.0";
-
-        src = ./.;
-
-        cargoRoot = "scylla-reader";
-
-        buildAndTestSubdir = "scylla-reader";
-
-        cargoLock = {
-          lockFile = ./scylla-reader/Cargo.lock;
-        };
-
-        nativeBuildInputs = [pkgs.pkg-config];
-        buildInputs = [pkgs.openssl pkgs.curl];
+      default = pkgs.callPackage ./scylla-reader/package.nix {
+        rustPlatform = customRustPlatform;
       };
     });
 
