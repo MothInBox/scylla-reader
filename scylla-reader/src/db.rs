@@ -111,7 +111,7 @@ impl Db {
         .collect()
     }
 
-    fn load_sessions_for_book(&self, book_url: &str) -> Result<Vec<Session>> {
+    pub fn load_sessions_for_book(&self, book_url: &str) -> Result<Vec<Session>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, book_url, name, current, total, created_at, updated_at
              FROM sessions WHERE book_url = ? ORDER BY updated_at DESC"

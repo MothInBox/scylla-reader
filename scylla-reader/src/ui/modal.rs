@@ -1,5 +1,6 @@
 //! Modal popup renderer — add-book form and jump-to-chapter list.
 
+use crate::models::Session;
 use crate::state::AppState;
 use crate::state::modal::Modal;
 use crate::ui::palette::draw_palette;
@@ -81,6 +82,51 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 *cursor,
                 scroll_offset,
                 " [Enter] Set Current  [↑↓] Move  [t] Link/Title  [Esc] Cancel",
+            );
+        }
+
+        Modal::SessionPicker {
+            book_url,
+            cursor,
+            scroll_offset,
+        } => {
+            let popup_area = centered_rect(60, 50, area);
+            frame.render_widget(Clear, popup_area);
+
+            let sessions: Vec<Session> = state
+                .library
+                .books
+                .iter()
+                .find(|b| b.url == *book_url)
+                .map(|b| b.sessions.clone())
+                .unwrap_or_default();
+
+            let count = sessions.len();
+            let items: Vec<ListItem> = sessions
+                .iter()
+                .map(|s| {
+                    let label = format!(
+                        "{} — {}/{}",
+                        s.name, s.progress.current, s.progress.total
+                    );
+                    ListItem::new(label)
+                })
+                .collect();
+
+            let title = format!(
+                " Sessions ({} Session{}) ",
+                count,
+                if count == 1 { "" } else { "s" }
+            );
+
+            draw_scrollable_list(
+                frame,
+                popup_area,
+                title,
+                items,
+                *cursor,
+                scroll_offset,
+                " [Enter] Open  [n] New  [r] Rename  [d] Delete  [↑↓] Move  [Esc] Cancel",
             );
         }
 

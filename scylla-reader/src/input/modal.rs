@@ -144,6 +144,113 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
     true
 }
 
+pub fn handle_session_picker(
+    state: &mut AppState,
+    key: KeyEvent,
+    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
+) -> bool {
+    let (book_url, cursor) = if let Modal::SessionPicker { book_url, cursor, .. } = &state.modal {
+        (book_url.clone(), *cursor)
+    } else {
+        return true;
+    };
+
+    match key.code {
+        KeyCode::Up => {
+            if let Modal::SessionPicker { cursor, .. } = &mut state.modal {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+            }
+        }
+        KeyCode::Down => {
+            if let Modal::SessionPicker { cursor, .. } = &mut state.modal {
+                if let Some(book) = state.library.books.iter().find(|b| b.url == book_url) {
+                    if *cursor < book.sessions.len().saturating_sub(1) {
+                        *cursor += 1;
+                    }
+                }
+            }
+        }
+        KeyCode::Enter => {
+            let session = state.library.books.iter()
+                .find(|b| b.url == book_url)
+                .and_then(|b| b.sessions.get(cursor))
+                .cloned();
+            if let Some(session) = session {
+                state.reader.session_id = session.id;
+                state.reader.session_name = session.name.clone();
+                if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
+                    book.active_session_id = Some(session.id);
+                }
+                state.db.set_active_session(&book_url, Some(session.id)).ok();
+                if let Some(book) = state.library.books.iter().find(|b| b.url == book_url) {
+                    if !book.chapters.is_empty() {
+                        let idx = (session.progress.current as usize).min(book.chapters.len() - 1);
+                        state.reader.loading = true;
+                        state.current_page = Page::Reader;
+                        if let Some(ch) = book.chapters.get(idx) {
+                            let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), idx));
+                        }
+                    }
+                }
+            }
+            state.modal = Modal::None;
+        }
+        KeyCode::Char('n') => {
+            if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
+                let name = format!("Session {}", book.sessions.len() + 1);
+                if let Ok(session) = state.db.create_session(&book_url, &name, book.chapters.len() as u32) {
+                    if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
+                        book.sessions = loaded;
+                    }
+                    if let Some(s) = book.sessions.iter().find(|s| s.id == session.id) {
+                        book.active_session_id = Some(s.id);
+                        state.reader.session_id = s.id;
+                        state.reader.session_name = s.name.clone();
+                        state.db.set_active_session(&book_url, Some(s.id)).ok();
+                    }
+                    if !book.chapters.is_empty() {
+                        state.reader.loading = true;
+                        state.current_page = Page::Reader;
+                        if let Some(ch) = book.chapters.first() {
+                            let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), 0));
+                        }
+                    }
+                    state.modal = Modal::None;
+                }
+            }
+        }
+        KeyCode::Char('r') => {
+            if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
+                if let Some(session) = book.sessions.get_mut(cursor) {
+                    let new_name = format!("{} (renamed)", session.name);
+                    session.name = new_name.clone();
+                    state.db.rename_session(session.id, &new_name).ok();
+                }
+            }
+        }
+        KeyCode::Char('d') => {
+            if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
+                if book.sessions.len() > 1 && cursor < book.sessions.len() {
+                    let session_id = book.sessions[cursor].id;
+                    state.db.delete_session(session_id).ok();
+                    if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
+                        book.sessions = loaded;
+                    }
+                    let new_cursor = cursor.min(book.sessions.len().saturating_sub(1));
+                    if let Modal::SessionPicker { cursor: c, .. } = &mut state.modal {
+                        *c = new_cursor;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
