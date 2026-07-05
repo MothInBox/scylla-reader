@@ -79,6 +79,8 @@ impl AppState {
         chapter_title: String,
         content: String,
         chapter_idx: usize,
+        session_id: i64,
+        session_name: String,
     ) {
         let book_title = self
             .library
@@ -92,6 +94,8 @@ impl AppState {
             .unwrap_or_default();
         self.reader
             .load(book_title, book_url, chapter_title, content, chapter_idx);
+        self.reader.session_id = session_id;
+        self.reader.session_name = session_name;
         self.current_page = Page::Reader;
     }
 }
@@ -141,16 +145,18 @@ mod tests {
     fn test_open_reader_chapter_with_selected_book() {
         let mut state = test_state();
         state.library.add_book("Test Book".into(), "url".into(), 10);
-        state.open_reader_chapter("Ch1".into(), "content".into(), 0);
+        state.open_reader_chapter("Ch1".into(), "content".into(), 0, 1, "default".into());
         assert_eq!(state.current_page, Page::Reader);
         assert_eq!(state.reader.book_title, "Test Book");
         assert_eq!(state.reader.chapter_title, "Ch1");
+        assert_eq!(state.reader.session_id, 1);
+        assert_eq!(state.reader.session_name, "default");
     }
 
     #[test]
     fn test_open_reader_chapter_without_selected_book() {
         let mut state = test_state();
-        state.open_reader_chapter("Ch1".into(), "content".into(), 0);
+        state.open_reader_chapter("Ch1".into(), "content".into(), 0, 1, "default".into());
         assert_eq!(state.current_page, Page::Reader);
         assert!(state.reader.book_title.is_empty());
     }

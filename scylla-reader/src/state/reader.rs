@@ -9,6 +9,8 @@ pub struct ReaderState {
     pub book_title: String,
     pub book_url: String,
     pub current_chapter_idx: usize,
+    pub session_id: i64,
+    pub session_name: String,
     pub loading: bool,
 }
 
@@ -29,6 +31,8 @@ impl ReaderState {
             book_title: String::new(),
             book_url: String::new(),
             current_chapter_idx: 0,
+            session_id: 0,
+            session_name: String::new(),
             loading: false,
         }
     }
