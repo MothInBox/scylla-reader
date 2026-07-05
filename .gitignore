@@ -5,7 +5,7 @@ target
 **/*.rs.bk
 
 *.pdb
-.superpowers*
+*superpowers*
 
 **/mutants.out*/
 rustc-ice-*.txt
