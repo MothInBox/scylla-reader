@@ -118,17 +118,23 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
 
     if let Some(cursor_val) = selected_cursor {
         if let Some(book) = state.library.selected_book_mut() {
-            book.progress.current = cursor_val as u32;
-            if let Err(err) =
-                state
-                    .db
-                    .update_progress(&book.url, book.progress.current, book.progress.total)
+            if let Some(session) = book
+                .sessions
+                .iter_mut()
+                .find(|s| s.id == state.reader.session_id)
             {
-                crate::settings::log(
-                    crate::settings::LogLevel::Debug,
-                    "INPUT",
-                    &format!("Failed to update book progress. e: {}", err),
-                );
+                session.progress.current = cursor_val as u32;
+                if let Err(err) =
+                    state
+                        .db
+                        .update_session_progress(session.id, session.progress.current)
+                {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "INPUT",
+                        &format!("Failed to update session progress: {}", err),
+                    );
+                }
             }
         }
         state.modal = Modal::None;
@@ -341,12 +347,28 @@ mod tests {
             },
         ];
         let mut state = setup_jump_chapter_state(chapters, 1);
+        state.reader.session_id = 0;
+        if let Some(book) = state.library.selected_book_mut() {
+            book.active_session_id = Some(0);
+            book.sessions.push(crate::models::Session {
+                id: 0,
+                book_url: "url".into(),
+                name: "default".into(),
+                progress: crate::models::Progress { current: 0, total: 2 },
+                created_at: String::new(),
+                updated_at: String::new(),
+            });
+        }
         let result = handle_jumping_chapter(&mut state, key_event(KeyCode::Enter));
         assert!(result);
         assert_eq!(state.modal, Modal::None);
         assert_eq!(state.current_page, Page::Library);
         if let Some(book) = state.library.selected_book() {
-            assert_eq!(book.progress.current, 1);
+            if let Some(session) = book.sessions.iter().find(|s| s.id == 0) {
+                assert_eq!(session.progress.current, 1);
+            } else {
+                panic!("Expected session 0");
+            }
         } else {
             panic!("Expected selected book");
         }

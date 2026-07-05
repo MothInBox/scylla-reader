@@ -50,7 +50,13 @@ pub fn handle_library(
         }
         KeyCode::Enter => {
             if let Some(book) = state.library.selected_book() {
-                if book.chapters.is_empty() {
+                if book.sessions.len() > 1 {
+                    state.modal = Modal::SessionPicker {
+                        book_url: book.url.clone(),
+                        cursor: 0,
+                        scroll_offset: 0,
+                    };
+                } else if book.chapters.is_empty() {
                     let book_title = book.title.clone();
                     let desc = book
                         .description
@@ -61,18 +67,27 @@ pub fn handle_library(
                         "INPUT",
                         &format!("No chapters for: {}", book_title),
                     );
-                    state.open_reader_chapter("Description".to_string(), desc, 0);
+                    state.open_reader_chapter("Description".to_string(), desc, 0, 0, String::new());
                 } else {
-                    let idx = (book.progress.current as usize).min(book.chapters.len() - 1);
-                    let chapter_url = book.chapters[idx].url.clone();
-                    state.reader.loading = true;
-                    state.current_page = Page::Reader;
-                    if let Err(e) = cmd_tx.send(AppCommand::FetchChapter(chapter_url, idx)) {
-                        crate::settings::log(
-                            crate::settings::LogLevel::Debug,
-                            "INPUT",
-                            &format!("Failed to queue chapter: {}", e),
-                        );
+                    let session_info = book.sessions.first().map(|s| (s.id, s.name.clone(), s.progress.current)).or_else(|| {
+                        state.db.create_session(&book.url, "Initial", book.chapters.len() as u32)
+                            .ok()
+                            .map(|s| (s.id, s.name, s.progress.current))
+                    });
+                    if let Some((session_id, session_name, progress_current)) = session_info {
+                        let idx = (progress_current as usize).min(book.chapters.len() - 1);
+                        let chapter_url = book.chapters[idx].url.clone();
+                        state.reader.loading = true;
+                        state.current_page = Page::Reader;
+                        state.reader.session_id = session_id;
+                        state.reader.session_name = session_name;
+                        if let Err(e) = cmd_tx.send(AppCommand::FetchChapter(chapter_url, idx)) {
+                            crate::settings::log(
+                                crate::settings::LogLevel::Debug,
+                                "INPUT",
+                                &format!("Failed to queue chapter: {}", e),
+                            );
+                        }
                     }
                 }
             }
