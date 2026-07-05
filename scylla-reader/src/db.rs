@@ -56,7 +56,37 @@ impl Db {
                 PRIMARY KEY (book_url, url)
             );
         ",
-        )
+        )?;
+
+        // v1: add active_session_id column for databases created with old schema
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE books ADD COLUMN active_session_id INTEGER;");
+
+        // v2: create Initial sessions for books that predate the sessions feature.
+        // Old schema has current/total columns; if they exist, migrate their values.
+        if let Err(e) = self.conn.execute(
+            "INSERT INTO sessions (book_url, name, current, total)
+             SELECT url, 'Initial', current, total FROM books
+             WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.book_url = books.url)",
+            [],
+        ) {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "DB",
+                &format!("Legacy session migration skipped (new schema): {}", e),
+            );
+        }
+
+        // v3: ensure every book has an active session set
+        let _ = self.conn.execute(
+            "UPDATE books SET active_session_id = (
+                SELECT id FROM sessions WHERE sessions.book_url = books.url ORDER BY updated_at DESC LIMIT 1
+             ) WHERE active_session_id IS NULL",
+            [],
+        );
+
+        Ok(())
     }
 
     pub fn load_books(&self) -> Result<Vec<Book>> {
@@ -534,6 +564,60 @@ mod tests {
 
         let books = db.load_books().unwrap();
         assert!(books[0].tags.is_empty());
+    }
+
+    #[test]
+    fn test_migrate_from_old_schema() {
+        // Simulate opening a database created with the old schema (has current/total cols)
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE books (
+                url         TEXT PRIMARY KEY,
+                title       TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'Reading',
+                current     INTEGER NOT NULL DEFAULT 0,
+                total       INTEGER NOT NULL DEFAULT 0,
+                cover_url   TEXT,
+                description TEXT
+            );
+            INSERT INTO books (url, title, current, total) VALUES ('url-1', 'Old Book', 3, 10);
+            INSERT INTO books (url, title, current, total) VALUES ('url-2', 'New Book', 0, 5);
+
+            CREATE TABLE tags (
+                book_url TEXT NOT NULL REFERENCES books(url) ON DELETE CASCADE,
+                tag      TEXT NOT NULL,
+                PRIMARY KEY (book_url, tag)
+            );
+
+            CREATE TABLE chapters (
+                book_url TEXT NOT NULL REFERENCES books(url) ON DELETE CASCADE,
+                url      TEXT NOT NULL,
+                title    TEXT NOT NULL,
+                ord      INTEGER NOT NULL,
+                PRIMARY KEY (book_url, url)
+            );",
+        ).unwrap();
+
+        let db = Db::open_conn(conn).unwrap();
+        let books = db.load_books().unwrap();
+        assert_eq!(books.len(), 2);
+
+        // Both books should have migrated sessions
+        for book in &books {
+            assert!(!book.sessions.is_empty(), "Book {} has no sessions", book.url);
+            assert_eq!(book.sessions[0].name, "Initial");
+            assert!(book.active_session_id.is_some(), "Book {} has no active session", book.url);
+        }
+
+        // Old book should have preserved current=3
+        let old = books.iter().find(|b| b.url == "url-1").unwrap();
+        assert_eq!(old.sessions[0].progress.current, 3);
+        assert_eq!(old.sessions[0].progress.total, 10);
+
+        // New book should have current=0, total=5
+        let new = books.iter().find(|b| b.url == "url-2").unwrap();
+        assert_eq!(new.sessions[0].progress.current, 0);
+        assert_eq!(new.sessions[0].progress.total, 5);
     }
 
     #[test]
