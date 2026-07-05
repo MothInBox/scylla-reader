@@ -48,11 +48,6 @@ pub fn handle_adding_book(
             state.current_page = Page::Library;
             return true;
         }
-        (_, KeyCode::Esc) => {
-            state.modal = Modal::None;
-            state.current_page = Page::Library;
-            return true;
-        }
         _ => {}
     }
 
@@ -114,11 +109,6 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
             }
             KeyCode::Enter => {
                 selected_cursor = Some(*cursor);
-            }
-            KeyCode::Esc => {
-                state.modal = Modal::None;
-                state.current_page = Page::Library;
-                return true;
             }
             KeyCode::Char('t') => {
                 if let Modal::JumpChapter { show_titles, .. } = &mut state.modal {
@@ -236,16 +226,6 @@ mod tests {
 
         let received: Vec<AppCommand> = rx.try_iter().collect();
         assert!(received.is_empty());
-    }
-
-    #[test]
-    fn test_handle_adding_book_esc_cancels() {
-        let mut state = setup_add_book_state(vec!["http://example.com".into()], 0);
-        let (tx, _rx) = channel();
-        let result = handle_adding_book(&mut state, key_event(KeyCode::Esc), &tx);
-        assert!(result);
-        assert_eq!(state.modal, Modal::None);
-        assert_eq!(state.current_page, Page::Library);
     }
 
     #[test]
@@ -373,20 +353,6 @@ mod tests {
         } else {
             panic!("Expected selected book");
         }
-    }
-
-    #[test]
-    fn test_handle_jump_chapter_esc_cancels() {
-        let chapters = vec![Chapter {
-            title: "Ch1".into(),
-            url: "u1".into(),
-            order: 0,
-        }];
-        let mut state = setup_jump_chapter_state(chapters, 0);
-        let result = handle_jumping_chapter(&mut state, key_event(KeyCode::Esc));
-        assert!(result);
-        assert_eq!(state.modal, Modal::None);
-        assert_eq!(state.current_page, Page::Library);
     }
 
     #[test]

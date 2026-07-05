@@ -18,10 +18,6 @@ pub fn handle_palette(
     } = &mut state.modal
     {
         match key.code {
-            KeyCode::Esc => {
-                state.close_modal();
-                true
-            }
             KeyCode::Enter => {
                 if let Some(action) = filtered.get(*selected) {
                     (action.handler)(state, cmd_tx);
@@ -98,15 +94,6 @@ mod tests {
         };
         state.current_page = Page::Library;
         state
-    }
-
-    #[test]
-    fn test_handle_palette_esc_closes() {
-        let mut state = setup_palette_state("", 0);
-        let (tx, _rx) = channel();
-        let result = handle_palette(&mut state, key_event(KeyCode::Esc), &tx);
-        assert!(result);
-        assert_eq!(state.modal, Modal::None);
     }
 
     #[test]

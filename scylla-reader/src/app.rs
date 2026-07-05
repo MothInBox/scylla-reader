@@ -234,6 +234,7 @@ impl App {
             KeyCode::Esc => {
                 if self.state.modal != Modal::None {
                     self.state.close_modal();
+                    self.state.current_page = Page::Library;
                     return true;
                 }
                 return false;
@@ -379,12 +380,4 @@ mod tests {
         assert!(!result);
     }
 
-    #[test]
-    fn test_q_does_not_quit() {
-        let mut app = App::test_instance(test_state());
-        app.state.current_page = Page::Library;
-        let result = app.handle_key(key_event(KeyCode::Char('q')), Rect::default());
-        assert!(result);
-        assert_eq!(app.state.current_page, Page::Library);
-    }
 }

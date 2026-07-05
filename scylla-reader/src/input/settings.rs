@@ -1,6 +1,6 @@
 use crate::messenger::AppCommand;
 use crate::settings::{SettingsField, SettingsPage};
-use crate::state::{AppState, Page};
+use crate::state::AppState;
 use crossterm::event::{KeyCode, KeyEvent};
 
 pub fn handle_settings(
@@ -24,10 +24,6 @@ pub fn handle_settings_main(
 ) -> bool {
     let num_fields = SettingsField::all().len();
     match key.code {
-        KeyCode::Esc => {
-            state.current_page = Page::Library;
-            true
-        }
         KeyCode::Down => {
             state.settings.selected_field = (state.settings.selected_field + 1).min(num_fields - 1);
             true
@@ -80,10 +76,6 @@ pub fn handle_settings_main(
 
 fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
     match key.code {
-        KeyCode::Esc => {
-            state.settings.settings_page = SettingsPage::Main;
-            true
-        }
         KeyCode::Enter => {
             state.settings.debug_log = !state.settings.debug_log;
             crate::settings::set_debug(state.settings.debug_log);
@@ -119,10 +111,6 @@ fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
 pub fn handle_plugin_list(state: &mut AppState, key: KeyEvent) -> bool {
     let num_plugins = state.settings.plugin_configs.len();
     match key.code {
-        KeyCode::Esc => {
-            state.settings.settings_page = SettingsPage::Main;
-            true
-        }
         KeyCode::Down => {
             if num_plugins > 0 {
                 state.settings.selected_plugin =
@@ -157,10 +145,6 @@ pub fn handle_plugin_fields(state: &mut AppState, key: KeyEvent) -> bool {
     let cookie_extra = if config.accepts_cookies { 1 } else { 0 };
     let total = config.schema.len() + cookie_extra;
     match key.code {
-        KeyCode::Esc => {
-            state.settings.settings_page = SettingsPage::PluginList;
-            true
-        }
         KeyCode::Down => {
             if total > 0 {
                 state.settings.selected_plugin_field =
@@ -194,12 +178,6 @@ pub fn handle_plugin_fields(state: &mut AppState, key: KeyEvent) -> bool {
 
 pub fn handle_plugin_field_edit(state: &mut AppState, key: KeyEvent) -> bool {
     match key.code {
-        KeyCode::Esc => {
-            state.settings.plugin_field_buffer.clear();
-            state.settings.plugin_field_editing = false;
-            state.settings.settings_page = SettingsPage::PluginFields;
-            true
-        }
         KeyCode::Enter => {
             let result = state.settings.save_current_field();
             if let Err(e) = result {
@@ -232,6 +210,7 @@ mod tests {
     use crate::db::Db;
     use crate::library::Library;
     use crate::settings::ReaderMode;
+    use crate::state::Page;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn test_state() -> AppState {
@@ -268,16 +247,6 @@ mod tests {
 
         handle_settings_main(&mut state, key_event(KeyCode::Up), &tx);
         assert_eq!(state.settings.selected_field, 0);
-    }
-
-    #[test]
-    fn test_handle_settings_main_esc_goes_to_library() {
-        let mut state = test_state();
-        state.current_page = Page::Settings;
-        let (tx, _rx) = channel();
-        let result = handle_settings_main(&mut state, key_event(KeyCode::Esc), &tx);
-        assert!(result);
-        assert_eq!(state.current_page, Page::Library);
     }
 
     #[test]
@@ -340,42 +309,6 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_debug_log_esc_goes_back() {
-        let mut state = test_state();
-        state.settings.settings_page = SettingsPage::DebugLog;
-        let result = handle_debug_log(&mut state, key_event(KeyCode::Esc));
-        assert!(result);
-        assert_eq!(state.settings.settings_page, SettingsPage::Main);
-    }
-
-    #[test]
-    fn test_handle_plugin_list_esc_goes_back() {
-        let mut state = test_state();
-        state.settings.settings_page = SettingsPage::PluginList;
-        let result = handle_plugin_list(&mut state, key_event(KeyCode::Esc));
-        assert!(result);
-        assert_eq!(state.settings.settings_page, SettingsPage::Main);
-    }
-
-    #[test]
-    fn test_handle_plugin_fields_esc_goes_back() {
-        let mut state = test_state();
-        state.settings.settings_page = SettingsPage::PluginFields;
-        let result = handle_plugin_fields(&mut state, key_event(KeyCode::Esc));
-        assert!(result);
-        assert_eq!(state.settings.settings_page, SettingsPage::PluginList);
-    }
-
-    #[test]
-    fn test_handle_plugin_field_edit_esc_goes_back() {
-        let mut state = test_state();
-        state.settings.settings_page = SettingsPage::PluginFieldEdit;
-        let result = handle_plugin_field_edit(&mut state, key_event(KeyCode::Esc));
-        assert!(result);
-        assert_eq!(state.settings.settings_page, SettingsPage::PluginFields);
-    }
-
-    #[test]
     fn test_handle_plugin_field_edit_enter_saves_and_goes_back() {
         let mut state = test_state();
         state.settings.settings_page = SettingsPage::PluginFieldEdit;
@@ -384,14 +317,4 @@ mod tests {
         assert_eq!(state.settings.settings_page, SettingsPage::PluginFields);
     }
 
-    #[test]
-    fn test_handle_settings_dispatches_to_sub_handler() {
-        let mut state = test_state();
-        state.current_page = Page::Settings;
-        state.settings.settings_page = SettingsPage::DebugLog;
-        let (tx, _rx) = channel();
-        let result = handle_settings(&mut state, key_event(KeyCode::Esc), &tx);
-        assert!(result);
-        assert_eq!(state.settings.settings_page, SettingsPage::Main);
-    }
 }

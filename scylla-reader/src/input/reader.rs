@@ -1,7 +1,7 @@
 //! Reader page input handler — paging, scrolling, chapter nav.
 
 use crate::messenger::AppCommand;
-use crate::state::{AppState, Page};
+use crate::state::AppState;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::Rect;
 
@@ -40,10 +40,6 @@ pub fn handle_reader(
                     }
                 }
             }
-            return true;
-        }
-        (_, KeyCode::Esc) => {
-            state.current_page = Page::Library;
             return true;
         }
         _ => {}
@@ -272,16 +268,6 @@ mod tests {
         assert!(result);
         assert!(state.reader.loading);
         assert!(rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn test_handle_reader_esc_back_to_library() {
-        let mut state = state_with_book_and_chapters();
-        state.current_page = Page::Reader;
-        let (tx, _rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Esc), &tx, rect());
-        assert!(result);
-        assert_eq!(state.current_page, Page::Library);
     }
 
     #[test]
