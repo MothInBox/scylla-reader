@@ -85,17 +85,30 @@ fn draw_book_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
             } else {
                 format!(" [{}]", b.tags.join(", "))
             };
+            let session_info = if b.sessions.len() > 1 {
+                format!(" [{} sessions]", b.sessions.len())
+            } else {
+                String::new()
+            };
             ListItem::new(format!(
-                "{} ({}) {}/{}{}",
+                "{} ({}) {}/{}{}{}",
                 b.title,
                 b.status,
-                if b.progress.total == 0 {
+                if b.sessions.first().map(|s| s.progress.total).unwrap_or(0) == 0 {
                     0
                 } else {
-                    (b.progress.current + 1).min(b.progress.total)
+                    let active = b
+                        .active_session_id
+                        .and_then(|id| b.sessions.iter().find(|s| s.id == id))
+                        .or_else(|| b.sessions.first());
+                    match active {
+                        Some(s) => (s.progress.current + 1).min(s.progress.total),
+                        None => 0,
+                    }
                 },
-                b.progress.total,
-                tags
+                b.sessions.first().map(|s| s.progress.total).unwrap_or(0),
+                tags,
+                session_info,
             ))
         })
         .collect();
@@ -119,13 +132,14 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, state: &mut AppState) {
         (
             b.title.clone(),
             b.status.clone(),
-            b.progress,
+            b.sessions.clone(),
+            b.active_session_id,
             b.tags.clone(),
             b.description.clone(),
         )
     });
 
-    let Some((title, status, progress, tags, description)) = book_data else {
+    let Some((title, status, sessions, active_session_id, tags, description)) = book_data else {
         frame.render_widget(Paragraph::new("No book selected"), inner);
         return;
     };
@@ -139,16 +153,32 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, state: &mut AppState) {
         frame.render_stateful_widget(StatefulImage::new(None), side_chunks[0], protocol);
     }
 
+    let active_session = active_session_id
+        .and_then(|id| sessions.iter().find(|s| s.id == id))
+        .or_else(|| sessions.first());
+
+    let progress_str = match active_session {
+        Some(s) => format!(
+            "{}/{} chapters [Session: {}]",
+            if s.progress.total == 0 {
+                0
+            } else {
+                (s.progress.current + 1).min(s.progress.total)
+            },
+            s.progress.total,
+            s.name,
+        ),
+        None => "No sessions".to_string(),
+    };
+
+    let session_count = format!("Sessions:  {}", sessions.len());
+
     let details = format!(
-        "Title:    {}\nStatus:   {}\nProgress: {}/{} chapters\nTags:     {}\n\n{}",
+        "Title:    {}\nStatus:   {}\nProgress: {}\n{}\nTags:     {}\n\n{}",
         title,
         status,
-        if progress.total == 0 {
-            0
-        } else {
-            (progress.current + 1).min(progress.total)
-        },
-        progress.total,
+        progress_str,
+        session_count,
         tags.join(", "),
         description.unwrap_or_default(),
     );

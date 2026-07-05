@@ -141,7 +141,7 @@ mod tests {
     use crate::db::Db;
     use crate::library::Library;
     use crate::library::LibraryFilter;
-    use crate::models::Chapter;
+    use crate::models::{Chapter, Progress, Session};
     use crate::models::book::BookStatus;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -267,6 +267,15 @@ mod tests {
             url: "http://example.com".into(),
             order: 0,
         });
+        state.library.books[0].sessions.push(Session {
+            id: 1,
+            book_url: "url".into(),
+            name: "default".into(),
+            progress: Progress { current: 0, total: 10 },
+            created_at: String::new(),
+            updated_at: String::new(),
+        });
+        state.library.books[0].active_session_id = Some(1);
         let (tx, _rx) = channel();
         let result = handle_library(&mut state, key_event(KeyCode::Enter), &tx);
         assert!(result);

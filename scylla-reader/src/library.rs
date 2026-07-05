@@ -165,7 +165,7 @@ mod tests {
         assert_eq!(lib.books.len(), 1);
         assert_eq!(lib.books[0].title, "Title");
         assert_eq!(lib.books[0].url, "url");
-        assert_eq!(lib.books[0].progress.total, 42);
+        assert!(lib.books[0].sessions.is_empty());
         assert_eq!(lib.books[0].status, BookStatus::Reading);
     }
 
@@ -177,7 +177,7 @@ mod tests {
         }
         assert_eq!(lib.books.len(), 5);
         assert_eq!(lib.books[0].title, "Book A");
-        assert_eq!(lib.books[4].progress.total, 100);
+        assert!(lib.books[4].sessions.is_empty());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::models::{Book, BookStatus, Chapter, Progress};
+use crate::models::{Book, BookStatus, Chapter, Progress, Session};
 use curl::easy::{Easy, List};
 use extism::{CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType, Wasm};
 use scylla_plugin_api::{ChapterOutput, PluginSchema, ScrapeInput, ScrapeOutput};
@@ -156,12 +156,20 @@ impl ScraperRegistry {
 
         Ok(Book {
             title: output.title,
-            url: output.url,
+            url: output.url.clone(),
             status: BookStatus::Reading,
-            progress: Progress {
-                current: 0,
-                total: output.total_chapters,
-            },
+            sessions: vec![Session {
+                id: 1,
+                book_url: output.url,
+                name: "default".into(),
+                progress: Progress {
+                    current: 0,
+                    total: output.total_chapters,
+                },
+                created_at: String::new(),
+                updated_at: String::new(),
+            }],
+            active_session_id: Some(1),
             tags: Vec::new(),
             cover_url: output.cover_url,
             description: output.description,

@@ -417,6 +417,9 @@ mod tests {
     fn test_delete_session() {
         let db = test_db();
         db.upsert_book(&sample_book("url")).unwrap();
+        // upsert_book created a default "Initial" session; remove it.
+        let books = db.load_books().unwrap();
+        db.delete_session(books[0].sessions[0].id).unwrap();
         let s1 = db.create_session("url", "S1", 10).unwrap();
         let s2 = db.create_session("url", "S2", 10).unwrap();
         db.delete_session(s1.id).unwrap();
