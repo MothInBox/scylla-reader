@@ -149,22 +149,11 @@ pub fn handle_session_picker(
     key: KeyEvent,
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
-    let (book_url, cursor, is_editing) =
-        if let Modal::SessionPicker {
-            book_url,
-            cursor,
-            input,
-            ..
-        } = &state.modal
-        {
-            (book_url.clone(), *cursor, input.is_some())
-        } else {
-            return true;
-        };
-
-    if is_editing {
-        return handle_session_picker_editing(state, key, cmd_tx);
-    }
+    let (book_url, cursor) = if let Modal::SessionPicker { book_url, cursor, .. } = &state.modal {
+        (book_url.clone(), *cursor)
+    } else {
+        return true;
+    };
 
     match key.code {
         KeyCode::Up => {
@@ -182,9 +171,6 @@ pub fn handle_session_picker(
                     }
                 }
             }
-        }
-        KeyCode::Esc => {
-            state.modal = Modal::None;
         }
         KeyCode::Enter => {
             let session = state.library.books.iter()
@@ -212,18 +198,20 @@ pub fn handle_session_picker(
             state.modal = Modal::None;
         }
         KeyCode::Char('n') => {
-            if let Modal::SessionPicker { input, editing_id, .. } = &mut state.modal {
-                *input = Some(String::new());
-                *editing_id = None;
-            }
+            state.modal = Modal::SessionNameInput {
+                book_url: book_url.clone(),
+                session_id: None,
+                input: String::new(),
+            };
         }
         KeyCode::Char('r') => {
             if let Some(book) = state.library.books.iter().find(|b| b.url == book_url) {
                 if let Some(session) = book.sessions.get(cursor) {
-                    if let Modal::SessionPicker { input, editing_id, .. } = &mut state.modal {
-                        *input = Some(session.name.clone());
-                        *editing_id = Some(session.id);
-                    }
+                    state.modal = Modal::SessionNameInput {
+                        book_url: book_url.clone(),
+                        session_id: Some(session.id),
+                        input: session.name.clone(),
+                    };
                 }
             }
         }
@@ -248,37 +236,37 @@ pub fn handle_session_picker(
     true
 }
 
-fn handle_session_picker_editing(
+pub fn handle_session_name_input(
     state: &mut AppState,
     key: KeyEvent,
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
-    let (book_url, editing_id, input) =
-        if let Modal::SessionPicker {
+    let (book_url, session_id, input) =
+        if let Modal::SessionNameInput {
             book_url,
-            editing_id,
+            session_id,
             input,
-            ..
         } = &state.modal
         {
-            (book_url.clone(), *editing_id, input.clone().unwrap_or_default())
+            (book_url.clone(), *session_id, input.clone())
         } else {
             return true;
         };
 
     match key.code {
         KeyCode::Esc => {
-            if let Modal::SessionPicker { input, editing_id, .. } = &mut state.modal {
-                *input = None;
-                *editing_id = None;
-            }
+            state.modal = Modal::SessionPicker {
+                book_url: book_url.clone(),
+                cursor: 0,
+                scroll_offset: 0,
+            };
         }
         KeyCode::Enter => {
             let name = input.trim().to_string();
             if name.is_empty() {
                 return true;
             }
-            if let Some(session_id) = editing_id {
+            if let Some(session_id) = session_id {
                 if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
                     if let Some(session) = book.sessions.iter_mut().find(|s| s.id == session_id) {
                         session.name = name.clone();
@@ -314,17 +302,13 @@ fn handle_session_picker_editing(
             state.modal = Modal::None;
         }
         KeyCode::Backspace => {
-            if let Modal::SessionPicker { input, .. } = &mut state.modal {
-                if let Some(text) = input {
-                    text.pop();
-                }
+            if let Modal::SessionNameInput { input, .. } = &mut state.modal {
+                input.pop();
             }
         }
         KeyCode::Char(c) => {
-            if let Modal::SessionPicker { input, .. } = &mut state.modal {
-                if let Some(text) = input {
-                    text.push(c);
-                }
+            if let Modal::SessionNameInput { input, .. } = &mut state.modal {
+                input.push(c);
             }
         }
         _ => {}

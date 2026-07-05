@@ -22,8 +22,11 @@ pub enum Modal {
         book_url: String,
         cursor: usize,
         scroll_offset: usize,
-        input: Option<String>,
-        editing_id: Option<i64>,
+    },
+    SessionNameInput {
+        book_url: String,
+        session_id: Option<i64>,
+        input: String,
     },
     CommandPalette {
         query: String,
