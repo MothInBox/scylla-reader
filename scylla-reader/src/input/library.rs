@@ -108,7 +108,7 @@ mod tests {
     use crate::db::Db;
     use crate::library::Library;
     use crate::library::LibraryFilter;
-    use crate::models::{Chapter, Progress, Session};
+    use crate::models::Chapter;
     use crate::models::book::BookStatus;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
