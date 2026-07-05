@@ -107,7 +107,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 .map(|s| {
                     let label = format!(
                         "{} — {}/{}",
-                        s.name, s.progress.current, s.progress.total
+                        s.name, (s.progress.current + 1).min(s.progress.total), s.progress.total
                     );
                     ListItem::new(label)
                 })
