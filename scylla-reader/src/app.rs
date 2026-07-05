@@ -101,7 +101,7 @@ impl App {
                         "UI",
                         &format!("UI received book: {}", book.title),
                     );
-                    if let Some(existing) = self
+if let Some(existing) = self
                         .state
                         .library
                         .books
@@ -109,7 +109,6 @@ impl App {
                         .find(|b| b.url == book.url)
                     {
                         existing.title = book.title.clone();
-                        existing.progress.total = book.progress.total;
                         existing.cover_url = book.cover_url.clone();
                         existing.description = book.description.clone();
                         existing.chapters = book.chapters.clone();
@@ -120,6 +119,9 @@ impl App {
                                 &format!("DB upsert failed: {}", e),
                             );
                         });
+                        if let Ok(sessions) = self.state.db.load_sessions_for_book(&existing.url) {
+                            existing.sessions = sessions;
+                        }
                     } else {
                         self.state.db.upsert_book(&book).unwrap_or_else(|e| {
                             crate::settings::log(
@@ -128,7 +130,13 @@ impl App {
                                 &format!("DB upsert failed: {}", e),
                             );
                         });
+                        let book_url = book.url.clone();
                         self.state.library.books.push(book);
+                        if let Some(b) = self.state.library.books.iter_mut().find(|b| b.url == book_url) {
+                            if let Ok(sessions) = self.state.db.load_sessions_for_book(&book_url) {
+                                b.sessions = sessions;
+                            }
+                        }
                     }
                     self.last_cover_url = None;
                 }
@@ -139,24 +147,40 @@ impl App {
                         &format!("Chapter received: {}", chapter.title),
                     );
                     if let Some(book) = self.state.library.selected_book_mut() {
-                        book.progress.current = chapter.chapter_idx as u32;
-                    }
-                    if let Some(book) = self.state.library.selected_book() {
-                        self.state
-                            .db
-                            .update_progress(&book.url, book.progress.current, book.progress.total)
-                            .unwrap_or_else(|e| {
-                                crate::settings::log(
-                                    crate::settings::LogLevel::Debug,
-                                    "UI",
-                                    &format!("DB progress update failed: {}", e),
-                                );
-                            });
+                        if let Some(session) = book
+                            .sessions
+                            .iter_mut()
+                            .find(|s| s.id == self.state.reader.session_id)
+                        {
+                            session.progress.current = chapter.chapter_idx as u32;
+                            self.state
+                                .db
+                                .update_session_progress(session.id, session.progress.current)
+                                .unwrap_or_else(|e| {
+                                    crate::settings::log(
+                                        crate::settings::LogLevel::Debug,
+                                        "UI",
+                                        &format!("DB session progress update failed: {}", e),
+                                    );
+                                });
+                            self.state
+                                .db
+                                .set_active_session(&book.url, Some(session.id))
+                                .unwrap_or_else(|e| {
+                                    crate::settings::log(
+                                        crate::settings::LogLevel::Debug,
+                                        "UI",
+                                        &format!("DB set active session failed: {}", e),
+                                    );
+                                });
+                        }
                     }
                     self.state.open_reader_chapter(
                         chapter.title,
                         chapter.content,
                         chapter.chapter_idx,
+                        self.state.reader.session_id,
+                        self.state.reader.session_name.clone(),
                     );
                 }
                 AppEvent::CoverFetched(url, protocol) => {
@@ -226,13 +250,21 @@ impl App {
                 self.state.current_page = Page::Reader;
                 if let Some(book) = self.state.library.selected_book()
                     && self.state.reader.book_url != book.url {
-                        let idx = book.progress.current as usize;
-                        if let Some(ch) = book.chapters.get(idx) {
-                            self.state.reader.loading = true;
-                            let _ = self.cmd_tx.send(AppCommand::FetchChapter(
-                                ch.url.clone(),
-                                idx,
-                            ));
+                        let session = book.active_session_id
+                            .and_then(|id| book.sessions.iter().find(|s| s.id == id))
+                            .or_else(|| book.sessions.first());
+                        if let Some(session) = session {
+                            self.state.reader.session_id = session.id;
+                            self.state.reader.session_name = session.name.clone();
+                            let idx = (session.progress.current as usize)
+                                .min(book.chapters.len().saturating_sub(1));
+                            if let Some(ch) = book.chapters.get(idx) {
+                                self.state.reader.loading = true;
+                                let _ = self.cmd_tx.send(AppCommand::FetchChapter(
+                                    ch.url.clone(),
+                                    idx,
+                                ));
+                            }
                         }
                     }
                 return true;

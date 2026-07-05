@@ -1,6 +1,6 @@
 //! SQLite persistence layer — books, tags, and chapters.
 
-use crate::models::{Book, BookStatus, Chapter, Progress};
+use crate::models::{Book, BookStatus, Chapter, Progress, Session};
 use rusqlite::{Connection, Result, params};
 
 pub struct Db {
@@ -24,13 +24,22 @@ impl Db {
         self.conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS books (
-                url         TEXT PRIMARY KEY,
-                title       TEXT NOT NULL,
-                status      TEXT NOT NULL DEFAULT 'Reading',
-                current     INTEGER NOT NULL DEFAULT 0,
-                total       INTEGER NOT NULL DEFAULT 0,
-                cover_url   TEXT,
-                description TEXT
+                url              TEXT PRIMARY KEY,
+                title            TEXT NOT NULL,
+                status           TEXT NOT NULL DEFAULT 'Reading',
+                active_session_id INTEGER,
+                cover_url        TEXT,
+                description      TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_url   TEXT NOT NULL REFERENCES books(url) ON DELETE CASCADE,
+                name       TEXT NOT NULL,
+                current    INTEGER NOT NULL DEFAULT 0,
+                total      INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS tags (
@@ -47,12 +56,42 @@ impl Db {
                 PRIMARY KEY (book_url, url)
             );
         ",
-        )
+        )?;
+
+        // v1: add active_session_id column for databases created with old schema
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE books ADD COLUMN active_session_id INTEGER;");
+
+        // v2: create Initial sessions for books that predate the sessions feature.
+        // Old schema has current/total columns; if they exist, migrate their values.
+        if let Err(e) = self.conn.execute(
+            "INSERT INTO sessions (book_url, name, current, total)
+             SELECT url, 'Initial', current, total FROM books
+             WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.book_url = books.url)",
+            [],
+        ) {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "DB",
+                &format!("Legacy session migration skipped (new schema): {}", e),
+            );
+        }
+
+        // v3: ensure every book has an active session set
+        let _ = self.conn.execute(
+            "UPDATE books SET active_session_id = (
+                SELECT id FROM sessions WHERE sessions.book_url = books.url ORDER BY updated_at DESC LIMIT 1
+             ) WHERE active_session_id IS NULL",
+            [],
+        );
+
+        Ok(())
     }
 
     pub fn load_books(&self) -> Result<Vec<Book>> {
         let mut stmt = self.conn.prepare(
-            "SELECT url, title, status, current, total, cover_url, description FROM books ORDER BY rowid"
+            "SELECT url, title, status, active_session_id, cover_url, description FROM books ORDER BY rowid"
         )?;
 
         let mut books: Vec<Book> = stmt
@@ -62,14 +101,12 @@ impl Db {
                     url: row.get(0)?,
                     title: row.get(1)?,
                     status: parse_status(&status_str),
-                    progress: Progress {
-                        current: row.get(3)?,
-                        total: row.get(4)?,
-                    },
-                    cover_url: row.get(5)?,
-                    description: row.get(6)?,
+                    active_session_id: row.get(3)?,
+                    cover_url: row.get(4)?,
+                    description: row.get(5)?,
                     tags: Vec::new(),
                     chapters: Vec::new(),
+                    sessions: Vec::new(),
                 })
             })?
             .collect::<Result<_>>()?;
@@ -77,6 +114,7 @@ impl Db {
         for book in &mut books {
             book.tags = self.load_tags(&book.url)?;
             book.chapters = self.load_chapters(&book.url)?;
+            book.sessions = self.load_sessions_for_book(&book.url)?;
         }
 
         Ok(books)
@@ -103,23 +141,41 @@ impl Db {
         .collect()
     }
 
+    pub fn load_sessions_for_book(&self, book_url: &str) -> Result<Vec<Session>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, book_url, name, current, total, created_at, updated_at
+             FROM sessions WHERE book_url = ? ORDER BY updated_at DESC"
+        )?;
+        stmt.query_map([book_url], |row| {
+            Ok(Session {
+                id: row.get(0)?,
+                book_url: row.get(1)?,
+                name: row.get(2)?,
+                progress: Progress {
+                    current: row.get(3)?,
+                    total: row.get(4)?,
+                },
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?.collect()
+    }
+
     pub fn upsert_book(&self, book: &Book) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO books (url, title, status, current, total, cover_url, description)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO books (url, title, status, active_session_id, cover_url, description)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(url) DO UPDATE SET
                title       = excluded.title,
                status      = excluded.status,
-               current     = excluded.current,
-               total       = excluded.total,
+               active_session_id = excluded.active_session_id,
                cover_url   = excluded.cover_url,
                description = excluded.description",
             params![
                 book.url,
                 book.title,
                 status_str(&book.status),
-                book.progress.current,
-                book.progress.total,
+                book.active_session_id,
                 book.cover_url,
                 book.description,
             ],
@@ -127,15 +183,68 @@ impl Db {
 
         self.sync_tags(&book.url, &book.tags)?;
         self.sync_chapters(&book.url, &book.chapters)?;
+        self.ensure_default_session(&book.url, book.chapters.len() as u32)?;
         Ok(())
     }
 
-    pub fn update_progress(&self, book_url: &str, current: u32, total: u32) -> Result<()> {
+    pub fn create_session(&self, book_url: &str, name: &str, total: u32) -> Result<Session> {
         self.conn.execute(
-            "UPDATE books SET current = ?1, total = ?2 WHERE url = ?3",
-            params![current, total, book_url],
+            "INSERT INTO sessions (book_url, name, current, total) VALUES (?1, ?2, 0, ?3)",
+            params![book_url, name, total],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        Ok(Session {
+            id,
+            book_url: book_url.to_string(),
+            name: name.to_string(),
+            progress: Progress { current: 0, total },
+            created_at: String::new(),
+            updated_at: String::new(),
+        })
+    }
+
+    pub fn rename_session(&self, id: i64, name: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![name, id],
         )?;
         Ok(())
+    }
+
+    pub fn delete_session(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM sessions WHERE id = ?", [id])?;
+        Ok(())
+    }
+
+    pub fn update_session_progress(&self, id: i64, current: u32) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET current = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![current, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_active_session(&self, book_url: &str, session_id: Option<i64>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE books SET active_session_id = ?1 WHERE url = ?2",
+            params![session_id, book_url],
+        )?;
+        if let Some(id) = session_id {
+            self.conn.execute(
+                "UPDATE sessions SET updated_at = datetime('now') WHERE id = ?1",
+                params![id],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn ensure_default_session(&self, book_url: &str, total: u32) -> Result<i64> {
+        let existing: Vec<Session> = self.load_sessions_for_book(book_url)?;
+        if let Some(s) = existing.first() {
+            return Ok(s.id);
+        }
+        let session = self.create_session(book_url, "Initial", total)?;
+        Ok(session.id)
     }
 
     pub fn update_status(&self, book_url: &str, status: &BookStatus) -> Result<()> {
@@ -234,10 +343,8 @@ mod tests {
             title: format!("Book {}", url),
             url: url.to_string(),
             status: BookStatus::Reading,
-            progress: Progress {
-                current: 0,
-                total: 10,
-            },
+            sessions: vec![],
+            active_session_id: None,
             tags: vec!["tag1".into()],
             cover_url: None,
             description: Some("desc".into()),
@@ -283,7 +390,8 @@ mod tests {
         assert_eq!(books.len(), 1);
         assert_eq!(books[0].url, "url-1");
         assert_eq!(books[0].title, "Book url-1");
-        assert_eq!(books[0].progress.total, 10);
+        assert_eq!(books[0].sessions.len(), 1);
+        assert_eq!(books[0].sessions[0].name, "Initial");
         assert_eq!(books[0].tags, vec!["tag1"]);
         assert_eq!(books[0].chapters.len(), 2);
     }
@@ -303,24 +411,57 @@ mod tests {
 
         let mut updated = sample_book("same-url");
         updated.title = "Updated".into();
-        updated.progress.current = 5;
         db.upsert_book(&updated).unwrap();
 
         let books = db.load_books().unwrap();
         assert_eq!(books.len(), 1);
         assert_eq!(books[0].title, "Updated");
-        assert_eq!(books[0].progress.current, 5);
     }
 
     #[test]
-    fn test_update_progress() {
+    fn test_create_session() {
         let db = test_db();
         db.upsert_book(&sample_book("url")).unwrap();
-        db.update_progress("url", 7, 10).unwrap();
+        let session = db.create_session("url", "Re-read", 10).unwrap();
+        assert_eq!(session.name, "Re-read");
+        assert_eq!(session.progress.current, 0);
+    }
 
+    #[test]
+    fn test_update_session_progress() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url")).unwrap();
+        let session = db.create_session("url", "Test", 10).unwrap();
+        db.update_session_progress(session.id, 5).unwrap();
         let books = db.load_books().unwrap();
-        assert_eq!(books[0].progress.current, 7);
-        assert_eq!(books[0].progress.total, 10);
+        let s = books[0].sessions.iter().find(|s| s.id == session.id).unwrap();
+        assert_eq!(s.progress.current, 5);
+    }
+
+    #[test]
+    fn test_rename_session() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url")).unwrap();
+        let session = db.create_session("url", "Old", 10).unwrap();
+        db.rename_session(session.id, "New").unwrap();
+        let books = db.load_books().unwrap();
+        let s = books[0].sessions.iter().find(|s| s.id == session.id).unwrap();
+        assert_eq!(s.name, "New");
+    }
+
+    #[test]
+    fn test_delete_session() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url")).unwrap();
+        // upsert_book created a default "Initial" session; remove it.
+        let books = db.load_books().unwrap();
+        db.delete_session(books[0].sessions[0].id).unwrap();
+        let s1 = db.create_session("url", "S1", 10).unwrap();
+        let s2 = db.create_session("url", "S2", 10).unwrap();
+        db.delete_session(s1.id).unwrap();
+        let books = db.load_books().unwrap();
+        assert_eq!(books[0].sessions.len(), 1);
+        assert_eq!(books[0].sessions[0].id, s2.id);
     }
 
     #[test]
@@ -429,6 +570,60 @@ mod tests {
 
         let books = db.load_books().unwrap();
         assert!(books[0].tags.is_empty());
+    }
+
+    #[test]
+    fn test_migrate_from_old_schema() {
+        // Simulate opening a database created with the old schema (has current/total cols)
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE books (
+                url         TEXT PRIMARY KEY,
+                title       TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'Reading',
+                current     INTEGER NOT NULL DEFAULT 0,
+                total       INTEGER NOT NULL DEFAULT 0,
+                cover_url   TEXT,
+                description TEXT
+            );
+            INSERT INTO books (url, title, current, total) VALUES ('url-1', 'Old Book', 3, 10);
+            INSERT INTO books (url, title, current, total) VALUES ('url-2', 'New Book', 0, 5);
+
+            CREATE TABLE tags (
+                book_url TEXT NOT NULL REFERENCES books(url) ON DELETE CASCADE,
+                tag      TEXT NOT NULL,
+                PRIMARY KEY (book_url, tag)
+            );
+
+            CREATE TABLE chapters (
+                book_url TEXT NOT NULL REFERENCES books(url) ON DELETE CASCADE,
+                url      TEXT NOT NULL,
+                title    TEXT NOT NULL,
+                ord      INTEGER NOT NULL,
+                PRIMARY KEY (book_url, url)
+            );",
+        ).unwrap();
+
+        let db = Db::open_conn(conn).unwrap();
+        let books = db.load_books().unwrap();
+        assert_eq!(books.len(), 2);
+
+        // Both books should have migrated sessions
+        for book in &books {
+            assert!(!book.sessions.is_empty(), "Book {} has no sessions", book.url);
+            assert_eq!(book.sessions[0].name, "Initial");
+            assert!(book.active_session_id.is_some(), "Book {} has no active session", book.url);
+        }
+
+        // Old book should have preserved current=3
+        let old = books.iter().find(|b| b.url == "url-1").unwrap();
+        assert_eq!(old.sessions[0].progress.current, 3);
+        assert_eq!(old.sessions[0].progress.total, 10);
+
+        // New book should have current=0, total=5
+        let new = books.iter().find(|b| b.url == "url-2").unwrap();
+        assert_eq!(new.sessions[0].progress.current, 0);
+        assert_eq!(new.sessions[0].progress.total, 5);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Modal popup renderer — add-book form and jump-to-chapter list.
 
+use crate::models::Session;
 use crate::state::AppState;
 use crate::state::modal::Modal;
 use crate::ui::palette::draw_palette;
@@ -81,6 +82,93 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 *cursor,
                 scroll_offset,
                 " [Enter] Set Current  [↑↓] Move  [t] Link/Title  [Esc] Cancel",
+            );
+        }
+
+        Modal::SessionPicker {
+            book_url,
+            cursor,
+            scroll_offset,
+            input,
+            editing_id,
+        } => {
+            let popup_area = centered_rect(60, 50, area);
+            frame.render_widget(Clear, popup_area);
+
+            let sessions: Vec<Session> = state
+                .library
+                .books
+                .iter()
+                .find(|b| b.url == *book_url)
+                .map(|b| b.sessions.clone())
+                .unwrap_or_default();
+
+            let session_label = |s: &Session| {
+                let ts = if s.updated_at.len() >= 16 {
+                    let d = &s.updated_at[..10];
+                    let h = &s.updated_at[11..13];
+                    let m = &s.updated_at[14..16];
+                    format!("{}@{}{}", d, h, m)
+                } else {
+                    s.updated_at.clone()
+                };
+                format!(
+                    "{:20} {:>4}/{}  {}",
+                    s.name,
+                    (s.progress.current + 1).min(s.progress.total),
+                    s.progress.total,
+                    ts,
+                )
+            };
+
+            let hints = if input.is_some() {
+                " [Enter] Confirm  [Esc] Cancel "
+            } else {
+                " [Enter] Open  [n] New  [r] Rename  [d] Delete  [↑↓] Move  [Esc] Cancel "
+            };
+
+            let items: Vec<ListItem> = if let Some(text) = input {
+                if editing_id.is_some() {
+                    sessions.iter().enumerate().map(|(i, s)| {
+                        let label = if i == *cursor {
+                            format!("Rename: {}", text)
+                        } else {
+                            session_label(s)
+                        };
+                        ListItem::new(label)
+                    }).collect()
+                } else {
+                    let mut items: Vec<ListItem> = Vec::with_capacity(sessions.len() + 1);
+                    items.push(ListItem::new(format!("Name: {}", text)));
+                    for s in &sessions {
+                        items.push(ListItem::new(session_label(s)));
+                    }
+                    items
+                }
+            } else {
+                sessions.iter().map(|s| ListItem::new(session_label(s))).collect()
+            };
+
+            let display_count = if input.is_some() && editing_id.is_none() {
+                sessions.len() + 1
+            } else {
+                sessions.len()
+            };
+
+            let title = format!(
+                " Sessions ({} Session{}) ",
+                display_count,
+                if display_count == 1 { "" } else { "s" }
+            );
+
+            draw_scrollable_list(
+                frame,
+                popup_area,
+                title,
+                items,
+                *cursor,
+                scroll_offset,
+                hints,
             );
         }
 

@@ -2,6 +2,7 @@
 
 use crate::messenger::AppCommand;
 use crate::state::AppState;
+use crate::state::Modal;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::Rect;
 
@@ -37,6 +38,18 @@ pub fn handle_reader(
                             let _ = cmd_tx.send(AppCommand::FetchChapter(url, prev_idx));
                         }
                 }
+            return true;
+        }
+        (_, KeyCode::Char('s')) => {
+            if let Some(book) = state.library.selected_book() {
+                state.modal = Modal::SessionPicker {
+                    book_url: book.url.clone(),
+                    cursor: 0,
+                    scroll_offset: 0,
+                    input: None,
+                    editing_id: None,
+                };
+            }
             return true;
         }
         _ => {}

@@ -1,6 +1,6 @@
 //! Book and Chapter structs.
 
-use crate::models::Progress;
+use crate::models::Session;
 use serde::{Deserialize, Serialize};
 
 #[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
@@ -66,7 +66,8 @@ pub struct Book {
     pub title: String,
     pub url: String,
     pub status: BookStatus,
-    pub progress: Progress,
+    pub sessions: Vec<Session>,
+    pub active_session_id: Option<i64>,
     pub tags: Vec<String>,
     pub cover_url: Option<String>,
     pub description: Option<String>,
