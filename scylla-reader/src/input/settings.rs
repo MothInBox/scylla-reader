@@ -1,9 +1,13 @@
 use crate::messenger::AppCommand;
 use crate::settings::{SettingsField, SettingsPage};
-use crate::state::{AppState, Page};
+use crate::state::AppState;
 use crossterm::event::{KeyCode, KeyEvent};
 
-pub fn handle_settings(state: &mut AppState, key: KeyEvent, cmd_tx: &std::sync::mpsc::Sender<AppCommand>) -> bool {
+pub fn handle_settings(
+    state: &mut AppState,
+    key: KeyEvent,
+    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
+) -> bool {
     match state.settings.settings_page.clone() {
         SettingsPage::Main => handle_settings_main(state, key, cmd_tx),
         SettingsPage::DebugLog => handle_debug_log(state, key),
@@ -13,13 +17,13 @@ pub fn handle_settings(state: &mut AppState, key: KeyEvent, cmd_tx: &std::sync::
     }
 }
 
-pub fn handle_settings_main(state: &mut AppState, key: KeyEvent, cmd_tx: &std::sync::mpsc::Sender<AppCommand>) -> bool {
+pub fn handle_settings_main(
+    state: &mut AppState,
+    key: KeyEvent,
+    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
+) -> bool {
     let num_fields = SettingsField::all().len();
     match key.code {
-        KeyCode::Tab | KeyCode::Esc => {
-            state.current_page = Page::Library;
-            true
-        }
         KeyCode::Down => {
             state.settings.selected_field = (state.settings.selected_field + 1).min(num_fields - 1);
             true
@@ -72,10 +76,6 @@ pub fn handle_settings_main(state: &mut AppState, key: KeyEvent, cmd_tx: &std::s
 
 fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
     match key.code {
-        KeyCode::Esc => {
-            state.settings.settings_page = SettingsPage::Main;
-            true
-        }
         KeyCode::Enter => {
             state.settings.debug_log = !state.settings.debug_log;
             crate::settings::set_debug(state.settings.debug_log);
@@ -85,7 +85,11 @@ fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 let _ = std::fs::write(&log_path, "");
-                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", "Debug logging enabled");
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    "Debug logging enabled",
+                );
             }
             state.settings.reload_log();
             state.settings.log_scroll = 0;
@@ -107,10 +111,6 @@ fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
 pub fn handle_plugin_list(state: &mut AppState, key: KeyEvent) -> bool {
     let num_plugins = state.settings.plugin_configs.len();
     match key.code {
-        KeyCode::Esc => {
-            state.settings.settings_page = SettingsPage::Main;
-            true
-        }
         KeyCode::Down => {
             if num_plugins > 0 {
                 state.settings.selected_plugin =
@@ -134,17 +134,17 @@ pub fn handle_plugin_list(state: &mut AppState, key: KeyEvent) -> bool {
 }
 
 pub fn handle_plugin_fields(state: &mut AppState, key: KeyEvent) -> bool {
-    let Some(config) = state.settings.plugin_configs.get(state.settings.selected_plugin) else {
+    let Some(config) = state
+        .settings
+        .plugin_configs
+        .get(state.settings.selected_plugin)
+    else {
         state.settings.settings_page = SettingsPage::PluginList;
         return true;
     };
     let cookie_extra = if config.accepts_cookies { 1 } else { 0 };
     let total = config.schema.len() + cookie_extra;
     match key.code {
-        KeyCode::Esc => {
-            state.settings.settings_page = SettingsPage::PluginList;
-            true
-        }
         KeyCode::Down => {
             if total > 0 {
                 state.settings.selected_plugin_field =
@@ -163,11 +163,8 @@ pub fn handle_plugin_fields(state: &mut AppState, key: KeyEvent) -> bool {
             if is_cookie {
                 state.settings.plugin_field_buffer = config.cookies.clone();
             } else if let Some(field) = config.schema.get(state.settings.selected_plugin_field) {
-                state.settings.plugin_field_buffer = config
-                    .values
-                    .get(&field.key)
-                    .cloned()
-                    .unwrap_or_default();
+                state.settings.plugin_field_buffer =
+                    config.values.get(&field.key).cloned().unwrap_or_default();
             } else {
                 return true;
             }
@@ -181,16 +178,14 @@ pub fn handle_plugin_fields(state: &mut AppState, key: KeyEvent) -> bool {
 
 pub fn handle_plugin_field_edit(state: &mut AppState, key: KeyEvent) -> bool {
     match key.code {
-        KeyCode::Esc => {
-            state.settings.plugin_field_buffer.clear();
-            state.settings.plugin_field_editing = false;
-            state.settings.settings_page = SettingsPage::PluginFields;
-            true
-        }
         KeyCode::Enter => {
             let result = state.settings.save_current_field();
             if let Err(e) = result {
-                crate::settings::log(crate::settings::LogLevel::Debug, "INPUT", &format!("Failed to save plugin field: {}", e));
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    &format!("Failed to save plugin field: {}", e),
+                );
             }
             state.settings.plugin_field_buffer.clear();
             state.settings.plugin_field_editing = false;
@@ -206,5 +201,119 @@ pub fn handle_plugin_field_edit(state: &mut AppState, key: KeyEvent) -> bool {
             true
         }
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use crate::settings::ReaderMode;
+    use crate::state::Page;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn test_state() -> AppState {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        AppState::from_parts(db, Library::new())
+    }
+
+    fn key_event(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn channel() -> (
+        std::sync::mpsc::Sender<AppCommand>,
+        std::sync::mpsc::Receiver<AppCommand>,
+    ) {
+        std::sync::mpsc::channel()
+    }
+
+    #[test]
+    fn test_handle_settings_main_navigate() {
+        let mut state = test_state();
+        let (tx, _rx) = channel();
+        assert_eq!(state.settings.selected_field, 0);
+
+        handle_settings_main(&mut state, key_event(KeyCode::Down), &tx);
+        assert_eq!(state.settings.selected_field, 1);
+
+        handle_settings_main(&mut state, key_event(KeyCode::Down), &tx);
+        assert_eq!(state.settings.selected_field, 2);
+
+        handle_settings_main(&mut state, key_event(KeyCode::Up), &tx);
+        assert_eq!(state.settings.selected_field, 1);
+
+        handle_settings_main(&mut state, key_event(KeyCode::Up), &tx);
+        assert_eq!(state.settings.selected_field, 0);
+    }
+
+    #[test]
+    fn test_handle_settings_main_tab_does_not_navigate() {
+        let mut state = test_state();
+        state.current_page = Page::Settings;
+        let (tx, _rx) = channel();
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Tab), &tx);
+        assert!(result);
+        assert_eq!(state.current_page, Page::Settings);
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_edits_rate_limit() {
+        let mut state = test_state();
+        state.settings.selected_field = 0;
+        let (tx, _rx) = channel();
+        assert!(!state.settings.editing);
+
+        handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(state.settings.editing);
+        assert_eq!(state.settings.edit_buffer, "2");
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_saves_rate_limit() {
+        let mut state = test_state();
+        state.settings.selected_field = 0;
+        state.settings.editing = true;
+        state.settings.edit_buffer = "5".to_string();
+        let (tx, _rx) = channel();
+
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(result);
+        assert!(!state.settings.editing);
+        assert_eq!(state.settings.rate_limit_secs, 5);
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_debug_log() {
+        let mut state = test_state();
+        state.settings.selected_field = 1;
+        let (tx, _rx) = channel();
+
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(result);
+        assert_eq!(state.settings.settings_page, SettingsPage::DebugLog);
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_toggles_reader_mode() {
+        let mut state = test_state();
+        state.settings.selected_field = 2;
+        let (tx, _rx) = channel();
+        assert_eq!(state.settings.reader_mode, ReaderMode::Paged);
+
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(result);
+        assert_eq!(state.settings.reader_mode, ReaderMode::Scrollable);
+    }
+
+    #[test]
+    fn test_handle_plugin_field_edit_enter_saves_and_goes_back() {
+        let mut state = test_state();
+        state.settings.settings_page = SettingsPage::PluginFieldEdit;
+        let result = handle_plugin_field_edit(&mut state, key_event(KeyCode::Enter));
+        assert!(result);
+        assert_eq!(state.settings.settings_page, SettingsPage::PluginFields);
     }
 }

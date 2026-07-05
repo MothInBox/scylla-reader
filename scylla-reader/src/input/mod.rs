@@ -2,11 +2,12 @@
 
 pub mod library;
 pub mod modal;
+pub mod palette;
 pub mod reader;
 pub mod settings;
 
 use crate::messenger::AppCommand;
-use crate::state::{AppState, Page};
+use crate::state::{AppState, Modal, Page};
 use crossterm::event::KeyEvent;
 use ratatui::prelude::Rect;
 
@@ -16,6 +17,9 @@ pub fn handle_input(
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
     size: Rect,
 ) -> bool {
+    if matches!(&state.modal, Modal::CommandPalette { .. }) {
+        return palette::handle_palette(state, key, cmd_tx);
+    }
     match &state.current_page {
         Page::AddingBook => modal::handle_adding_book(state, key, cmd_tx),
         Page::Library => library::handle_library(state, key, cmd_tx),

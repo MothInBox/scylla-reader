@@ -376,7 +376,9 @@ mod tests {
 
         lib.selected_index = 0;
         lib.select_next();
-        assert_eq!(lib.selected_index, 0, "should not navigate past visible items");
+        assert_eq!(
+            lib.selected_index, 0,
+            "should not navigate past visible items"
+        );
     }
-
 }

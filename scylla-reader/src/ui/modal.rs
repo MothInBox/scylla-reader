@@ -2,12 +2,18 @@
 
 use crate::state::AppState;
 use crate::state::modal::Modal;
+use crate::ui::palette::draw_palette;
 use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 
 pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
+    if matches!(state.modal, Modal::CommandPalette { .. }) {
+        draw_palette(frame, area, state);
+        return;
+    }
+
     match &mut state.modal {
         Modal::None => {}
         Modal::AddBook {
@@ -77,6 +83,8 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 " [Enter] Set Current  [↑↓] Move  [t] Link/Title  [Esc] Cancel",
             );
         }
+
+        Modal::CommandPalette { .. } => unreachable!(),
     }
 }
 
@@ -116,4 +124,33 @@ fn draw_scrollable_list(
 
     let hints = Paragraph::new(hints).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hints, chunks[1]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn test_draw_modal_command_palette_renders() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.modal = Modal::CommandPalette {
+            query: "test".into(),
+            filtered: vec![],
+            selected: 0,
+        };
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_modal(f, f.area(), &mut state);
+            })
+            .unwrap();
+    }
 }

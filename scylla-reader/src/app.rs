@@ -4,7 +4,7 @@
 use crate::input;
 use crate::messenger::{AppCommand, AppEvent};
 use crate::scrapers::services::ScraperRegistry;
-use crate::state::AppState;
+use crate::state::{AppState, Modal, Page};
 use crate::ui;
 use crate::worker;
 
@@ -19,7 +19,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 pub struct App {
-    terminal: Terminal<CrosstermBackend<std::io::Stdout>>,
+    terminal: Terminal<CrosstermBackend<Box<dyn std::io::Write>>>,
     state: AppState,
     cmd_tx: mpsc::Sender<AppCommand>,
     event_rx: mpsc::Receiver<AppEvent>,
@@ -38,7 +38,9 @@ impl App {
             worker.run();
         });
 
-        let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+        let terminal = Terminal::new(CrosstermBackend::new(
+            Box::new(stdout()) as Box<dyn std::io::Write>
+        ))?;
 
         let mut state = AppState::new();
         for book in state.db.load_books().unwrap_or_default() {
@@ -96,8 +98,18 @@ impl App {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 AppEvent::BookScraped(book) => {
-                    crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("UI received book: {}", book.title));
-                    if let Some(existing) = self.state.library.books.iter_mut().find(|b| b.url == book.url) {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "UI",
+                        &format!("UI received book: {}", book.title),
+                    );
+                    if let Some(existing) = self
+                        .state
+                        .library
+                        .books
+                        .iter_mut()
+                        .find(|b| b.url == book.url)
+                    {
                         existing.title = book.title.clone();
                         existing.progress.total = book.progress.total;
                         existing.cover_url = book.cover_url.clone();
@@ -108,13 +120,21 @@ impl App {
                     }
                     if let Some(b) = self.state.library.books.iter().find(|b| b.url == book.url) {
                         self.state.db.upsert_book(b).unwrap_or_else(|e| {
-                            crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("DB upsert failed: {}", e));
+                            crate::settings::log(
+                                crate::settings::LogLevel::Debug,
+                                "UI",
+                                &format!("DB upsert failed: {}", e),
+                            );
                         });
                     }
                     self.last_cover_url = None;
                 }
                 AppEvent::ChapterFetched(chapter) => {
-                    crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Chapter received: {}", chapter.title));
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "UI",
+                        &format!("Chapter received: {}", chapter.title),
+                    );
                     if let Some(book) = self.state.library.selected_book_mut() {
                         book.progress.current = chapter.chapter_idx as u32;
                     }
@@ -123,13 +143,22 @@ impl App {
                             .db
                             .update_progress(&book.url, book.progress.current, book.progress.total)
                             .unwrap_or_else(|e| {
-                                crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("DB progress update failed: {}", e));
+                                crate::settings::log(
+                                    crate::settings::LogLevel::Debug,
+                                    "UI",
+                                    &format!("DB progress update failed: {}", e),
+                                );
                             });
                     }
-                    self.state.open_reader_chapter(chapter.title, chapter.content, chapter.chapter_idx);
+                    self.state.open_reader_chapter(
+                        chapter.title,
+                        chapter.content,
+                        chapter.chapter_idx,
+                    );
                 }
                 AppEvent::CoverFetched(url, protocol) => {
-                    let current_url = self.state
+                    let current_url = self
+                        .state
                         .library
                         .selected_book()
                         .and_then(|b| b.cover_url.as_deref().map(str::to_owned));
@@ -142,7 +171,8 @@ impl App {
     }
 
     fn update_covers(&mut self) {
-        let current_cover_url = self.state
+        let current_cover_url = self
+            .state
             .library
             .selected_book()
             .and_then(|b| b.cover_url.clone());
@@ -157,8 +187,78 @@ impl App {
         }
     }
 
+    #[cfg(test)]
+    pub fn test_instance(state: AppState) -> Self {
+        let backend = CrosstermBackend::new(Box::new(std::io::sink()) as Box<dyn std::io::Write>);
+        let terminal = Terminal::new(backend).unwrap();
+        let (cmd_tx, _cmd_rx) = mpsc::channel::<AppCommand>();
+        let (_event_tx, event_rx) = mpsc::channel::<AppEvent>();
+        Self {
+            terminal,
+            state,
+            cmd_tx,
+            event_rx,
+            last_cover_url: None,
+        }
+    }
+
     fn handle_key(&mut self, key: crossterm::event::KeyEvent, area: Rect) -> bool {
-        let pre_status = self.state
+        if self.state.modal != Modal::None {
+            if key.code == KeyCode::Esc {
+                self.state.close_modal();
+                if matches!(self.state.current_page, Page::AddingBook | Page::BookChapterJump) {
+                    self.state.current_page = Page::Library;
+                }
+                return true;
+            }
+            return input::handle_input(&mut self.state, key, &self.cmd_tx, area);
+        }
+
+        match key.code {
+            KeyCode::Char('1') => {
+                self.state.current_page = Page::Library;
+                return true;
+            }
+            KeyCode::Char('2') => {
+                self.state.current_page = Page::Reader;
+                if let Some(book) = self.state.library.selected_book() {
+                    if self.state.reader.book_url != book.url {
+                        let idx = book.progress.current as usize;
+                        if let Some(ch) = book.chapters.get(idx) {
+                            self.state.reader.loading = true;
+                            let _ = self.cmd_tx.send(AppCommand::FetchChapter(
+                                ch.url.clone(),
+                                idx,
+                            ));
+                        }
+                    }
+                }
+                return true;
+            }
+            KeyCode::Char('3') => {
+                self.state.current_page = Page::Settings;
+                return true;
+            }
+            KeyCode::Char(':') => {
+                let actions = crate::ui::palette::build_palette_actions(self.cmd_tx.clone());
+                let filtered = crate::ui::palette::filter_actions(&actions, "");
+                self.state.modal = Modal::CommandPalette {
+                    query: String::new(),
+                    filtered,
+                    selected: 0,
+                };
+                return true;
+            }
+            KeyCode::Char('?') => {
+                self.state.show_hints = !self.state.show_hints;
+                return true;
+            }
+            KeyCode::Esc => return false,
+            _ => {}
+        }
+
+        let pre_status = self
+            .state
             .library
             .selected_book()
             .map(|b| (b.url.clone(), b.status.clone()));
@@ -176,7 +276,11 @@ impl App {
         if let Some(url) = removed_url {
             if self.state.library.books.len() < pre_books_len {
                 self.state.db.delete_book(&url).unwrap_or_else(|e| {
-                    crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("DB delete failed: {}", e));
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "UI",
+                        &format!("DB delete failed: {}", e),
+                    );
                 });
             }
         }
@@ -188,12 +292,131 @@ impl App {
                         .db
                         .update_status(&book.url, &book.status)
                         .unwrap_or_else(|e| {
-                            crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("DB status update failed: {}", e));
+                            crate::settings::log(
+                                crate::settings::LogLevel::Debug,
+                                "UI",
+                                &format!("DB status update failed: {}", e),
+                            );
                         });
                 }
             }
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn test_state() -> AppState {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        AppState::from_parts(db, Library::new())
+    }
+
+    fn key_event(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn test_global_key_1_switches_to_library() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Reader;
+        app.handle_key(key_event(KeyCode::Char('1')), Rect::default());
+        assert_eq!(app.state.current_page, Page::Library);
+    }
+
+    #[test]
+    fn test_global_key_2_switches_to_reader() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Library;
+        app.handle_key(key_event(KeyCode::Char('2')), Rect::default());
+        assert_eq!(app.state.current_page, Page::Reader);
+    }
+
+    #[test]
+    fn test_global_key_3_switches_to_settings() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Library;
+        app.handle_key(key_event(KeyCode::Char('3')), Rect::default());
+        assert_eq!(app.state.current_page, Page::Settings);
+    }
+
+    #[test]
+    fn test_colon_opens_command_palette() {
+        let mut app = App::test_instance(test_state());
+        assert_eq!(app.state.modal, Modal::None);
+        app.handle_key(key_event(KeyCode::Char(':')), Rect::default());
+        assert!(matches!(app.state.modal, Modal::CommandPalette { .. }));
+    }
+
+    #[test]
+    fn test_question_toggles_hints() {
+        let mut app = App::test_instance(test_state());
+        let initial = app.state.show_hints;
+        app.handle_key(key_event(KeyCode::Char('?')), Rect::default());
+        assert_eq!(app.state.show_hints, !initial);
+        app.handle_key(key_event(KeyCode::Char('?')), Rect::default());
+        assert_eq!(app.state.show_hints, initial);
+    }
+
+    #[test]
+    fn test_esc_closes_modal() {
+        let mut app = App::test_instance(test_state());
+        app.state.modal = Modal::CommandPalette {
+            query: "".into(),
+            filtered: vec![],
+            selected: 0,
+        };
+        app.state.current_page = Page::AddingBook;
+        let result = app.handle_key(key_event(KeyCode::Esc), Rect::default());
+        assert!(result);
+        assert_eq!(app.state.modal, Modal::None);
+    }
+
+    #[test]
+    fn test_esc_quits_from_library() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Library;
+        let result = app.handle_key(key_event(KeyCode::Esc), Rect::default());
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_esc_quits_from_any_page() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Settings;
+        let result = app.handle_key(key_event(KeyCode::Esc), Rect::default());
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_colon_does_not_open_palette_when_modal_open() {
+        let mut app = App::test_instance(test_state());
+        app.state.modal = Modal::AddBook {
+            inputs: vec![String::new()],
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        app.handle_key(key_event(KeyCode::Char(':')), Rect::default());
+        assert!(matches!(app.state.modal, Modal::AddBook { .. }));
+    }
+
+    #[test]
+    fn test_global_key_does_not_switch_page_when_modal_open() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Library;
+        app.state.modal = Modal::AddBook {
+            inputs: vec![String::new()],
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        app.handle_key(key_event(KeyCode::Char('2')), Rect::default());
+        assert_eq!(app.state.current_page, Page::Library);
     }
 }
