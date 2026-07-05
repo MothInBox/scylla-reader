@@ -229,6 +229,12 @@ impl Db {
             "UPDATE books SET active_session_id = ?1 WHERE url = ?2",
             params![session_id, book_url],
         )?;
+        if let Some(id) = session_id {
+            self.conn.execute(
+                "UPDATE sessions SET updated_at = datetime('now') WHERE id = ?1",
+                params![id],
+            )?;
+        }
         Ok(())
     }
 
