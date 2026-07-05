@@ -54,6 +54,8 @@ pub fn handle_library(
                     book_url: book.url.clone(),
                     cursor: 0,
                     scroll_offset: 0,
+                    input: None,
+                    editing_id: None,
                 };
             }
             true
