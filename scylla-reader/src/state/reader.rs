@@ -12,6 +12,12 @@ pub struct ReaderState {
     pub loading: bool,
 }
 
+impl Default for ReaderState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReaderState {
     pub fn new() -> Self {
         Self {
@@ -69,7 +75,7 @@ impl ReaderState {
             .iter()
             .map(|l| Self::wrap_line_count(l, width))
             .sum();
-        let pages = (visual_lines + lpp - 1) / lpp;
+        let pages = visual_lines.div_ceil(lpp);
         if pages == 0 { 1 } else { pages }
     }
 
@@ -95,7 +101,7 @@ impl ReaderState {
         if vlines.is_empty() {
             vlines.push(String::new());
         }
-        let total_pages = (vlines.len() + lpp - 1) / lpp;
+        let total_pages = vlines.len().div_ceil(lpp);
         let page_idx = std::cmp::min(self.page, total_pages.saturating_sub(1));
         let start = page_idx * lpp;
         let end = (start + lpp).min(vlines.len());

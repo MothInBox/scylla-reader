@@ -9,46 +9,43 @@ pub fn handle_adding_book(
     key: KeyEvent,
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
-    match (key.modifiers, key.code) {
-        (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
-            let urls: Vec<String> = if let Modal::AddBook { inputs, .. } = &state.modal {
-                inputs
-                    .iter()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            } else {
-                vec![]
-            };
+    if let (KeyModifiers::CONTROL, KeyCode::Char('s')) = (key.modifiers, key.code) {
+        let urls: Vec<String> = if let Modal::AddBook { inputs, .. } = &state.modal {
+            inputs
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        } else {
+            vec![]
+        };
 
-            if urls.is_empty() {
-                crate::settings::log(
-                    crate::settings::LogLevel::Debug,
-                    "INPUT",
-                    "No valid URLs to scrape",
-                );
-            } else {
-                crate::settings::log(
-                    crate::settings::LogLevel::Debug,
-                    "INPUT",
-                    &format!("Submitting {} URLs", urls.len()),
-                );
-                for url in urls {
-                    if let Err(e) = cmd_tx.send(AppCommand::Scrape(url)) {
-                        crate::settings::log(
-                            crate::settings::LogLevel::Error,
-                            "INPUT",
-                            &format!("Failed to queue scrape: {}", e),
-                        );
-                    }
+        if urls.is_empty() {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "INPUT",
+                "No valid URLs to scrape",
+            );
+        } else {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "INPUT",
+                &format!("Submitting {} URLs", urls.len()),
+            );
+            for url in urls {
+                if let Err(e) = cmd_tx.send(AppCommand::Scrape(url)) {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Error,
+                        "INPUT",
+                        &format!("Failed to queue scrape: {}", e),
+                    );
                 }
             }
-
-            state.modal = Modal::None;
-            state.current_page = Page::Library;
-            return true;
         }
-        _ => {}
+
+        state.modal = Modal::None;
+        state.current_page = Page::Library;
+        return true;
     }
 
     if let Modal::AddBook { inputs, cursor, .. } = &mut state.modal {

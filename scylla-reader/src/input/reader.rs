@@ -15,8 +15,8 @@ pub fn handle_reader(
 
     match (key.modifiers, key.code) {
         (_, KeyCode::Char('>')) => {
-            if !state.reader.loading {
-                if let Some(book) = state.library.selected_book() {
+            if !state.reader.loading
+                && let Some(book) = state.library.selected_book() {
                     let next_idx = state.reader.current_chapter_idx + 1;
                     if let Some(ch) = book.chapters.get(next_idx) {
                         let url = ch.url.clone();
@@ -24,22 +24,19 @@ pub fn handle_reader(
                         let _ = cmd_tx.send(AppCommand::FetchChapter(url, next_idx));
                     }
                 }
-            }
             return true;
         }
         (_, KeyCode::Char('<')) => {
-            if !state.reader.loading {
-                if let Some(book) = state.library.selected_book() {
+            if !state.reader.loading
+                && let Some(book) = state.library.selected_book() {
                     let prev_idx = state.reader.current_chapter_idx.saturating_sub(1);
-                    if prev_idx != state.reader.current_chapter_idx {
-                        if let Some(ch) = book.chapters.get(prev_idx) {
+                    if prev_idx != state.reader.current_chapter_idx
+                        && let Some(ch) = book.chapters.get(prev_idx) {
                             let url = ch.url.clone();
                             state.reader.loading = true;
                             let _ = cmd_tx.send(AppCommand::FetchChapter(url, prev_idx));
                         }
-                    }
                 }
-            }
             return true;
         }
         _ => {}

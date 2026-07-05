@@ -187,7 +187,7 @@ impl Worker {
 }
 
 fn clean_url(url: &str) -> String {
-    if let (Some(open), _) = (url.find("]("), url.rfind(')')) {
+    if let Some(open) = url.find("](") {
         let after = open + 2;
         let mut depth = 0i32;
         for (i, ch) in url[after..].char_indices() {

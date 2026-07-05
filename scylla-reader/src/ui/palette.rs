@@ -122,12 +122,11 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             handler: |s, tx| {
                 if let Some(b) = s.library.selected_book() {
                     let prev = s.reader.current_chapter_idx.saturating_sub(1);
-                    if prev != s.reader.current_chapter_idx {
-                        if let Some(ch) = b.chapters.get(prev) {
+                    if prev != s.reader.current_chapter_idx
+                        && let Some(ch) = b.chapters.get(prev) {
                             s.reader.loading = true;
                             let _ = tx.send(AppCommand::FetchChapter(ch.url.clone(), prev));
                         }
-                    }
                 }
             },
         },

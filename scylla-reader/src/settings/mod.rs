@@ -145,6 +145,12 @@ pub struct Settings {
     pub log_lines: Vec<String>,
 }
 
+impl Default for Settings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Settings {
     pub fn save(&self) {
         let persisted = PersistedSettings {
@@ -221,14 +227,13 @@ impl Settings {
         let Some(key) = key else {
             return Ok(());
         };
-        if let Some(field) = config.schema.get(self.selected_plugin_field) {
-            if field.field_type == "number"
+        if let Some(field) = config.schema.get(self.selected_plugin_field)
+            && field.field_type == "number"
                 && !self.plugin_field_buffer.is_empty()
                 && self.plugin_field_buffer.parse::<f64>().is_err()
             {
                 return Err("Invalid number".to_string());
             }
-        }
         config.update_value(&key, self.plugin_field_buffer.clone());
         config.save()
     }
@@ -319,5 +324,54 @@ mod tests {
         assert!(DEBUG_ENABLED.load(Ordering::Relaxed));
         set_debug(false);
         assert!(!DEBUG_ENABLED.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_persisted_settings_default() {
+        let p = PersistedSettings::default();
+        assert_eq!(p.rate_limit_secs, 2);
+        assert!(!p.debug_log);
+        assert_eq!(p.reader_mode, ReaderMode::Paged);
+    }
+
+    #[test]
+    fn test_persisted_settings_roundtrip() {
+        let p = PersistedSettings {
+            rate_limit_secs: 42,
+            debug_log: true,
+            reader_mode: ReaderMode::Scrollable,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: PersistedSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rate_limit_secs, 42);
+        assert!(back.debug_log);
+        assert_eq!(back.reader_mode, ReaderMode::Scrollable);
+    }
+
+    #[test]
+    fn test_compiled_defaults_fallback() {
+        let d = compiled_defaults();
+        assert_eq!(d.rate_limit_secs, 2);
+        assert!(!d.debug_log);
+        assert_eq!(d.reader_mode, ReaderMode::Paged);
+    }
+
+    #[test]
+    fn test_save_roundtrip() {
+        let mut settings = Settings::new();
+        settings.rate_limit_secs = 99;
+        settings.debug_log = true;
+        settings.reader_mode = ReaderMode::Scrollable;
+
+        let persisted = PersistedSettings {
+            rate_limit_secs: settings.rate_limit_secs,
+            debug_log: settings.debug_log,
+            reader_mode: settings.reader_mode.clone(),
+        };
+        let json = serde_json::to_string_pretty(&persisted).unwrap();
+        let back: PersistedSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rate_limit_secs, 99);
+        assert!(back.debug_log);
+        assert_eq!(back.reader_mode, ReaderMode::Scrollable);
     }
 }

@@ -111,7 +111,7 @@ pub fn handle_library(
             true
         }
         KeyCode::Up => {
-            if state.library.visible_indices().len() > 0 {
+            if !state.library.visible_indices().is_empty() {
                 state.library.selected_index = state.library.selected_index.saturating_sub(1);
             }
             true

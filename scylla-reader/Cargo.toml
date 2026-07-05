@@ -30,4 +30,3 @@ tempfile = "3"
 pretty_assertions = "1"
 
 [features]
-vhs-mode = []

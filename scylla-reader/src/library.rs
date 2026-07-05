@@ -28,6 +28,12 @@ pub struct Library {
     pub cached_protocol: Option<StatefulProtocol>,
 }
 
+impl Default for Library {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Library {
     pub fn new() -> Self {
         Self {

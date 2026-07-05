@@ -75,13 +75,11 @@ impl App {
 
             let area = self.draw()?;
 
-            if event::poll(Duration::from_millis(16))? {
-                if let Event::Key(key) = event::read()? {
-                    if !self.handle_key(key, area) {
+            if event::poll(Duration::from_millis(16))?
+                && let Event::Key(key) = event::read()?
+                    && !self.handle_key(key, area) {
                         break Ok(());
                     }
-                }
-            }
         }
     }
 
@@ -226,8 +224,8 @@ impl App {
             }
             KeyCode::Char('2') => {
                 self.state.current_page = Page::Reader;
-                if let Some(book) = self.state.library.selected_book() {
-                    if self.state.reader.book_url != book.url {
+                if let Some(book) = self.state.library.selected_book()
+                    && self.state.reader.book_url != book.url {
                         let idx = book.progress.current as usize;
                         if let Some(ch) = book.chapters.get(idx) {
                             self.state.reader.loading = true;
@@ -237,7 +235,6 @@ impl App {
                             ));
                         }
                     }
-                }
                 return true;
             }
             KeyCode::Char('3') => {
@@ -278,8 +275,8 @@ impl App {
             return false;
         }
 
-        if let Some(url) = removed_url {
-            if self.state.library.books.len() < pre_books_len {
+        if let Some(url) = removed_url
+            && self.state.library.books.len() < pre_books_len {
                 self.state.db.delete_book(&url).unwrap_or_else(|e| {
                     crate::settings::log(
                         crate::settings::LogLevel::Debug,
@@ -288,11 +285,10 @@ impl App {
                     );
                 });
             }
-        }
 
-        if let Some((url, old_status)) = pre_status {
-            if let Some(book) = self.state.library.books.iter().find(|b| b.url == url) {
-                if book.status != old_status {
+        if let Some((url, old_status)) = pre_status
+            && let Some(book) = self.state.library.books.iter().find(|b| b.url == url)
+                && book.status != old_status {
                     self.state
                         .db
                         .update_status(&book.url, &book.status)
@@ -304,8 +300,6 @@ impl App {
                             );
                         });
                 }
-            }
-        }
 
         true
     }

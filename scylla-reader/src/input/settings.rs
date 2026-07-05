@@ -319,4 +319,67 @@ mod tests {
         assert!(result);
         assert_eq!(state.settings.settings_page, SettingsPage::PluginFields);
     }
+
+    #[test]
+    fn test_handle_settings_main_char_while_editing() {
+        let mut state = test_state();
+        state.settings.selected_field = 0;
+        state.settings.editing = true;
+        state.settings.edit_buffer = "2".to_string();
+        let (tx, _rx) = channel();
+
+        handle_settings_main(&mut state, key_event(KeyCode::Char('5')), &tx);
+        assert_eq!(state.settings.edit_buffer, "25");
+    }
+
+    #[test]
+    fn test_handle_settings_main_backspace_while_editing() {
+        let mut state = test_state();
+        state.settings.selected_field = 0;
+        state.settings.editing = true;
+        state.settings.edit_buffer = "25".to_string();
+        let (tx, _rx) = channel();
+
+        handle_settings_main(&mut state, key_event(KeyCode::Backspace), &tx);
+        assert_eq!(state.settings.edit_buffer, "2");
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_invalid_rate_limit_keeps_old() {
+        let mut state = test_state();
+        state.settings.selected_field = 0;
+        state.settings.editing = true;
+        state.settings.edit_buffer = "not_a_number".to_string();
+        let old_rate = state.settings.rate_limit_secs;
+        let (tx, _rx) = channel();
+
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(result);
+        assert!(!state.settings.editing);
+        assert_eq!(state.settings.rate_limit_secs, old_rate);
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_toggles_reader_mode_and_saves() {
+        let mut state = test_state();
+        state.settings.selected_field = 2;
+        let (tx, _rx) = channel();
+
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(result);
+        assert_eq!(state.settings.reader_mode, ReaderMode::Scrollable);
+
+        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        assert!(result);
+        assert_eq!(state.settings.reader_mode, ReaderMode::Paged);
+    }
+
+    #[test]
+    fn test_handle_plugin_list_navigate() {
+        let mut state = test_state();
+
+        handle_plugin_list(&mut state, key_event(KeyCode::Down));
+        handle_plugin_list(&mut state, key_event(KeyCode::Up));
+        assert_eq!(state.settings.selected_plugin, 0);
+    }
 }

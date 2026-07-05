@@ -119,7 +119,7 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, state: &mut AppState) {
         (
             b.title.clone(),
             b.status.clone(),
-            b.progress.clone(),
+            b.progress,
             b.tags.clone(),
             b.description.clone(),
         )

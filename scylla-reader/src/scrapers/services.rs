@@ -9,6 +9,12 @@ pub struct ScraperRegistry {
     plugin_cache: RefCell<Vec<(String, Plugin)>>,
 }
 
+impl Default for ScraperRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScraperRegistry {
     pub fn new() -> Self {
         let plugin_dir = dirs::config_local_dir()
@@ -24,23 +30,21 @@ impl ScraperRegistry {
                 if path.extension().and_then(|e| e.to_str()) != Some("wasm") {
                     continue;
                 }
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if let Some(domain) = stem.strip_prefix("plugin-") {
-                        crate::settings::log(
-                            crate::settings::LogLevel::Debug,
-                            "SCRAPE",
-                            &format!("Discovered plugin: {} -> {}", domain, path.display()),
-                        );
+                if let Some(domain) = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.strip_prefix("plugin-")) {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "SCRAPE",
+                        &format!("Discovered plugin: {} -> {}", domain, path.display()),
+                    );
 
-                        let schema = Self::discover_schema(&path);
-                        crate::plugin_config::PluginConfig::init_config_file(
-                            domain,
-                            &schema.fields,
-                            schema.accepts_cookies,
-                        );
+                    let schema = Self::discover_schema(&path);
+                    crate::plugin_config::PluginConfig::init_config_file(
+                        domain,
+                        &schema.fields,
+                        schema.accepts_cookies,
+                    );
 
-                        plugins.push((domain.to_string(), path));
-                    }
+                    plugins.push((domain.to_string(), path));
                 }
             }
         } else {
@@ -79,7 +83,7 @@ impl ScraperRegistry {
                 accepts_cookies: true,
             };
         };
-        serde_json::from_slice(&result).unwrap_or(PluginSchema {
+        serde_json::from_slice(result).unwrap_or(PluginSchema {
             fields: vec![],
             accepts_cookies: true,
         })
@@ -226,10 +230,8 @@ impl ScraperRegistry {
         &self,
         url: &str,
     ) -> Result<(&str, &std::path::PathBuf), Box<dyn std::error::Error + Send + Sync>> {
-        if url.starts_with("template") {
-            if let Some((domain, path)) = self.plugins.iter().find(|(d, _)| d == "template") {
-                return Ok((domain.as_str(), path));
-            }
+        if url.starts_with("template") && let Some((domain, path)) = self.plugins.iter().find(|(d, _)| d == "template") {
+            return Ok((domain.as_str(), path));
         }
 
         self.plugins
@@ -333,47 +335,4 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
     String::from_utf8(data).map_err(|e| e.to_string())
 }
 
-#[allow(dead_code)]
-fn call_plugin(
-    wasm_path: &std::path::PathBuf,
-    function: &str,
-    input: &[u8],
-) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let plugin_name = wasm_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown");
 
-    let curl_fetch_fn = Function::new(
-        "curl_fetch",
-        [ValType::I64],
-        [ValType::I64],
-        UserData::<()>::default(),
-        host_curl_fetch,
-    );
-
-    let wasm = Wasm::file(wasm_path);
-    let manifest = Manifest::new([wasm]).with_allowed_host("*");
-    let mut plugin = Plugin::new(&manifest, [curl_fetch_fn], true)?;
-
-    let result = plugin.call::<&[u8], &[u8]>(function, input)?;
-    let bytes = result.to_vec();
-
-    crate::settings::log(
-        crate::settings::LogLevel::Debug,
-        "PLUGIN",
-        &format!(
-            "[{}::{}] input={}B output={}B: {}",
-            plugin_name,
-            function,
-            input.len(),
-            bytes.len(),
-            &String::from_utf8_lossy(&bytes)
-                .chars()
-                .take(300)
-                .collect::<String>()
-        ),
-    );
-
-    Ok(bytes)
-}
