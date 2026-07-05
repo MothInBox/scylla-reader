@@ -11,6 +11,10 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
         draw_loading(frame, area);
         return;
     }
+    if state.library.selected_book().is_none() {
+        draw_no_book(frame, area);
+        return;
+    }
     match state.settings.reader_mode {
         ReaderMode::Paged => draw_paged(frame, area, state),
         ReaderMode::Scrollable => draw_scrollable(frame, area, state),
@@ -22,6 +26,16 @@ fn draw_loading(frame: &mut Frame, area: Rect) {
         .title(" Loading Chapter... ")
         .borders(Borders::ALL);
     let para = Paragraph::new("Fetching chapter content, please wait...")
+        .block(block)
+        .alignment(Alignment::Center);
+    frame.render_widget(para, area);
+}
+
+fn draw_no_book(frame: &mut Frame, area: Rect) {
+    let block = Block::default()
+        .title(" No Book Selected ")
+        .borders(Borders::ALL);
+    let para = Paragraph::new("Select a book from the library.")
         .block(block)
         .alignment(Alignment::Center);
     frame.render_widget(para, area);
@@ -64,8 +78,8 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
             .split(hint_area);
         frame.render_widget(
             Paragraph::new(hint_line(
-                "Chapter",
-                &[(">", "Next"), ("<", "Prev"), ("l", "Page→"), ("h", "←Page")],
+                "Book",
+                &[("< >", "Change Chapter"), ("← →", "Change Page")],
             )),
             hint_chunks[0],
         );
@@ -122,13 +136,8 @@ fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
             .split(hint_area);
         frame.render_widget(
             Paragraph::new(hint_line(
-                "Scroll",
-                &[
-                    ("j", "↓Line"),
-                    ("k", "↑Line"),
-                    ("PgDn", "↓Page"),
-                    ("PgUp", "↑Page"),
-                ],
+                "Book",
+                &[("< >", "Change Chapter"), ("↑ ↓", "Scroll")],
             )),
             hint_chunks[0],
         );
@@ -157,11 +166,24 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    #[test]
-    fn test_reader_draw_shows_hints_when_enabled() {
+    fn state_with_reader_content() -> AppState {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
+        state.library.add_book("Test Book".into(), "url".into(), 10);
+        state.reader.load(
+            "Test Book".into(),
+            "url".into(),
+            "Ch1".into(),
+            "hello\nworld".into(),
+            0,
+        );
+        state
+    }
+
+    #[test]
+    fn test_reader_draw_shows_hints_when_enabled() {
+        let mut state = state_with_reader_content();
         state.show_hints = true;
 
         let backend = TestBackend::new(80, 24);
@@ -179,9 +201,7 @@ mod tests {
 
     #[test]
     fn test_reader_draw_hides_hints_when_disabled() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        let mut state = AppState::from_parts(db, Library::new());
+        let mut state = state_with_reader_content();
         state.show_hints = false;
 
         let backend = TestBackend::new(80, 24);

@@ -14,7 +14,7 @@ pub fn handle_reader(
     use crate::settings::ReaderMode;
 
     match (key.modifiers, key.code) {
-        (_, KeyCode::Char('>')) | (_, KeyCode::Right) | (_, KeyCode::Char('l')) => {
+        (_, KeyCode::Char('>')) => {
             if !state.reader.loading {
                 if let Some(book) = state.library.selected_book() {
                     let next_idx = state.reader.current_chapter_idx + 1;
@@ -27,7 +27,7 @@ pub fn handle_reader(
             }
             return true;
         }
-        (_, KeyCode::Char('<')) | (_, KeyCode::Left) | (_, KeyCode::Char('h')) => {
+        (_, KeyCode::Char('<')) => {
             if !state.reader.loading {
                 if let Some(book) = state.library.selected_book() {
                     let prev_idx = state.reader.current_chapter_idx.saturating_sub(1);
@@ -47,13 +47,13 @@ pub fn handle_reader(
 
     match state.settings.reader_mode {
         ReaderMode::Paged => match key.code {
-            KeyCode::Right | KeyCode::Char('l') => {
+            KeyCode::Right => {
                 state
                     .reader
                     .next_page(size.width, size.height.saturating_sub(2));
                 true
             }
-            KeyCode::Left | KeyCode::Char('h') => {
+            KeyCode::Left => {
                 state
                     .reader
                     .prev_page(size.width, size.height.saturating_sub(2));
@@ -62,22 +62,12 @@ pub fn handle_reader(
             _ => true,
         },
         ReaderMode::Scrollable => match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down => {
                 state.reader.scroll_down_visual(size.width);
                 true
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
                 state.reader.scroll_up_visual();
-                true
-            }
-            KeyCode::PageDown => {
-                state
-                    .reader
-                    .scroll_down_visual_page(size.width, size.height);
-                true
-            }
-            KeyCode::PageUp => {
-                state.reader.scroll_up_visual_page(size.height);
                 true
             }
             _ => true,
@@ -155,38 +145,6 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_reader_right_next_chapter() {
-        let mut state = state_with_book_and_chapters();
-        let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Right), &tx, rect());
-        assert!(result);
-        assert!(state.reader.loading);
-        match rx.try_recv() {
-            Ok(AppCommand::FetchChapter(url, idx)) => {
-                assert_eq!(url, "url-2");
-                assert_eq!(idx, 1);
-            }
-            _ => panic!("Expected FetchChapter"),
-        }
-    }
-
-    #[test]
-    fn test_handle_reader_l_next_chapter() {
-        let mut state = state_with_book_and_chapters();
-        let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Char('l')), &tx, rect());
-        assert!(result);
-        assert!(state.reader.loading);
-        match rx.try_recv() {
-            Ok(AppCommand::FetchChapter(url, idx)) => {
-                assert_eq!(url, "url-2");
-                assert_eq!(idx, 1);
-            }
-            _ => panic!("Expected FetchChapter"),
-        }
-    }
-
-    #[test]
     fn test_handle_reader_lt_prev_chapter() {
         let mut state = state_with_book_and_chapters();
         state.reader.current_chapter_idx = 1;
@@ -204,45 +162,10 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_reader_left_prev_chapter() {
-        let mut state = state_with_book_and_chapters();
-        state.reader.current_chapter_idx = 2;
-        let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Left), &tx, rect());
-        assert!(result);
-        assert!(state.reader.loading);
-        match rx.try_recv() {
-            Ok(AppCommand::FetchChapter(url, idx)) => {
-                assert_eq!(url, "url-2");
-                assert_eq!(idx, 1);
-            }
-            _ => panic!("Expected FetchChapter"),
-        }
-    }
-
-    #[test]
-    fn test_handle_reader_h_prev_chapter() {
-        let mut state = state_with_book_and_chapters();
-        state.reader.current_chapter_idx = 1;
-        let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Char('h')), &tx, rect());
-        assert!(result);
-        assert!(state.reader.loading);
-        match rx.try_recv() {
-            Ok(AppCommand::FetchChapter(url, idx)) => {
-                assert_eq!(url, "url-1");
-                assert_eq!(idx, 0);
-            }
-            _ => panic!("Expected FetchChapter"),
-        }
-    }
-
-    #[test]
     fn test_handle_reader_prev_chapter_clamps_at_zero() {
         let mut state = state_with_book_and_chapters();
-        // current_chapter_idx is already 0; pressing Left should not wrap around
         let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Left), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KeyCode::Char('<')), &tx, rect());
         assert!(result);
         assert!(!state.reader.loading);
         assert!(rx.try_recv().is_err());
@@ -251,9 +174,9 @@ mod tests {
     #[test]
     fn test_handle_reader_next_chapter_clamps_at_last() {
         let mut state = state_with_book_and_chapters();
-        state.reader.current_chapter_idx = 2; // last chapter
+        state.reader.current_chapter_idx = 2;
         let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Right), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KeyCode::Char('>')), &tx, rect());
         assert!(result);
         assert!(!state.reader.loading);
         assert!(rx.try_recv().is_err());
@@ -280,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_reader_scrollable_down_j() {
+    fn test_handle_reader_scrollable_down() {
         let mut state = test_state();
         state.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
         state.reader.load(
@@ -294,13 +217,13 @@ mod tests {
             0,
         );
         let (tx, _rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Char('j')), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KeyCode::Down), &tx, rect());
         assert!(result);
         assert_eq!(state.reader.visual_scroll, 1);
     }
 
     #[test]
-    fn test_handle_reader_scrollable_up_k() {
+    fn test_handle_reader_scrollable_up() {
         let mut state = test_state();
         state.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
         state.reader.load(
@@ -315,50 +238,8 @@ mod tests {
         );
         state.reader.visual_scroll = 10;
         let (tx, _rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Char('k')), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KeyCode::Up), &tx, rect());
         assert!(result);
         assert_eq!(state.reader.visual_scroll, 9);
-    }
-
-    #[test]
-    fn test_handle_reader_scrollable_page_down() {
-        let mut state = test_state();
-        state.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
-        state.reader.load(
-            "Book".into(),
-            "url".into(),
-            "Ch1".into(),
-            (0..200)
-                .map(|i| format!("line {}", i))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            0,
-        );
-        let (tx, _rx) = channel();
-        let scroll_before = state.reader.visual_scroll;
-        let result = handle_reader(&mut state, key_event(KeyCode::PageDown), &tx, rect());
-        assert!(result);
-        assert!(state.reader.visual_scroll > scroll_before);
-    }
-
-    #[test]
-    fn test_handle_reader_scrollable_page_up() {
-        let mut state = test_state();
-        state.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
-        state.reader.load(
-            "Book".into(),
-            "url".into(),
-            "Ch1".into(),
-            (0..200)
-                .map(|i| format!("line {}", i))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            0,
-        );
-        state.reader.visual_scroll = 100;
-        let (tx, _rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::PageUp), &tx, rect());
-        assert!(result);
-        assert_eq!(state.reader.visual_scroll, 80);
     }
 }

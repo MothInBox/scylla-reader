@@ -203,7 +203,15 @@ impl App {
     }
 
     fn handle_key(&mut self, key: crossterm::event::KeyEvent, area: Rect) -> bool {
-        // GLOBAL KEYS — handled before page-specific input dispatch
+        if self.state.modal != Modal::None {
+            if key.code == KeyCode::Esc {
+                self.state.close_modal();
+                self.state.current_page = Page::Library;
+                return true;
+            }
+            return input::handle_input(&mut self.state, key, &self.cmd_tx, area);
+        }
+
         match key.code {
             KeyCode::Char('1') => {
                 self.state.current_page = Page::Library;
@@ -211,6 +219,18 @@ impl App {
             }
             KeyCode::Char('2') => {
                 self.state.current_page = Page::Reader;
+                if self.state.reader.content.is_empty() {
+                    if let Some(book) = self.state.library.selected_book() {
+                        let idx = book.progress.current as usize;
+                        if let Some(ch) = book.chapters.get(idx) {
+                            self.state.reader.loading = true;
+                            let _ = self.cmd_tx.send(AppCommand::FetchChapter(
+                                ch.url.clone(),
+                                idx,
+                            ));
+                        }
+                    }
+                }
                 return true;
             }
             KeyCode::Char('3') => {
@@ -231,14 +251,7 @@ impl App {
                 self.state.show_hints = !self.state.show_hints;
                 return true;
             }
-            KeyCode::Esc => {
-                if self.state.modal != Modal::None {
-                    self.state.close_modal();
-                    self.state.current_page = Page::Library;
-                    return true;
-                }
-                return false;
-            }
+            KeyCode::Esc => return false,
             _ => {}
         }
 
@@ -380,4 +393,28 @@ mod tests {
         assert!(!result);
     }
 
+    #[test]
+    fn test_colon_does_not_open_palette_when_modal_open() {
+        let mut app = App::test_instance(test_state());
+        app.state.modal = Modal::AddBook {
+            inputs: vec![String::new()],
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        app.handle_key(key_event(KeyCode::Char(':')), Rect::default());
+        assert!(matches!(app.state.modal, Modal::AddBook { .. }));
+    }
+
+    #[test]
+    fn test_global_key_does_not_switch_page_when_modal_open() {
+        let mut app = App::test_instance(test_state());
+        app.state.current_page = Page::Library;
+        app.state.modal = Modal::AddBook {
+            inputs: vec![String::new()],
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        app.handle_key(key_event(KeyCode::Char('2')), Rect::default());
+        assert_eq!(app.state.current_page, Page::Library);
+    }
 }

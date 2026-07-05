@@ -316,5 +316,4 @@ mod tests {
         assert!(result);
         assert_eq!(state.settings.settings_page, SettingsPage::PluginFields);
     }
-
 }
