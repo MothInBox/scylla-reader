@@ -26,24 +26,35 @@ impl ScraperRegistry {
                 }
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     if let Some(domain) = stem.strip_prefix("plugin-") {
-                        crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!(
-                            "Discovered plugin: {} -> {}",
-                            domain,
-                            path.display()
-                        ));
+                        crate::settings::log(
+                            crate::settings::LogLevel::Debug,
+                            "SCRAPE",
+                            &format!("Discovered plugin: {} -> {}", domain, path.display()),
+                        );
 
                         let schema = Self::discover_schema(&path);
-                        crate::plugin_config::PluginConfig::init_config_file(domain, &schema.fields, schema.accepts_cookies);
+                        crate::plugin_config::PluginConfig::init_config_file(
+                            domain,
+                            &schema.fields,
+                            schema.accepts_cookies,
+                        );
 
                         plugins.push((domain.to_string(), path));
                     }
                 }
             }
         } else {
-            crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Plugin dir not found: {}", plugin_dir.display()));
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "SCRAPE",
+                &format!("Plugin dir not found: {}", plugin_dir.display()),
+            );
         }
 
-        Self { plugins, plugin_cache: RefCell::new(Vec::new()) }
+        Self {
+            plugins,
+            plugin_cache: RefCell::new(Vec::new()),
+        }
     }
 
     fn discover_schema(wasm_path: &std::path::PathBuf) -> PluginSchema {
@@ -57,12 +68,21 @@ impl ScraperRegistry {
         let wasm = Wasm::file(wasm_path);
         let manifest = Manifest::new([wasm]).with_allowed_host("*");
         let Ok(mut plugin) = Plugin::new(&manifest, [curl_fetch_fn], true) else {
-            return PluginSchema { fields: vec![], accepts_cookies: true };
+            return PluginSchema {
+                fields: vec![],
+                accepts_cookies: true,
+            };
         };
         let Ok(result) = plugin.call::<&[u8], &[u8]>("get_config_schema", b"null") else {
-            return PluginSchema { fields: vec![], accepts_cookies: true };
+            return PluginSchema {
+                fields: vec![],
+                accepts_cookies: true,
+            };
         };
-        serde_json::from_slice(&result).unwrap_or(PluginSchema { fields: vec![], accepts_cookies: true })
+        serde_json::from_slice(&result).unwrap_or(PluginSchema {
+            fields: vec![],
+            accepts_cookies: true,
+        })
     }
 
     fn load_cookies_for_domain(domain: &str) -> Option<String> {
@@ -77,10 +97,18 @@ impl ScraperRegistry {
             .collect::<Vec<_>>()
             .join("; ");
         if parsed.is_empty() {
-            crate::settings::log(crate::settings::LogLevel::Debug, "COOKIE", &format!("No cookies for {} (empty after parse)", domain));
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "COOKIE",
+                &format!("No cookies for {} (empty after parse)", domain),
+            );
             None
         } else {
-            crate::settings::log(crate::settings::LogLevel::Debug, "COOKIE", &format!("Loaded {} chars of cookies for {}", parsed.len(), domain));
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "COOKIE",
+                &format!("Loaded {} chars of cookies for {}", parsed.len(), domain),
+            );
             Some(parsed)
         }
     }
@@ -94,6 +122,7 @@ impl ScraperRegistry {
             obj.remove("_cookies");
             obj.remove("_accepts_cookies");
         }
+        Some(json.to_string())
     }
 
     pub async fn scrape_url(
@@ -101,7 +130,11 @@ impl ScraperRegistry {
         url: &str,
     ) -> Result<Book, Box<dyn std::error::Error + Send + Sync>> {
         let (domain, wasm_path) = self.find_plugin(url)?;
-        crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Using plugin '{}' for: {}", domain, url));
+        crate::settings::log(
+            crate::settings::LogLevel::Debug,
+            "SCRAPE",
+            &format!("Using plugin '{}' for: {}", domain, url),
+        );
 
         let cookies = Self::load_cookies_for_domain(domain);
         let config = Self::load_plugin_config(domain);
@@ -113,7 +146,8 @@ impl ScraperRegistry {
         };
         let input_json = serde_json::to_vec(&input)?;
 
-        let output_bytes = self.call_cached_plugin(domain, wasm_path, "scrape_book", &input_json)?;
+        let output_bytes =
+            self.call_cached_plugin(domain, wasm_path, "scrape_book", &input_json)?;
         let output: ScrapeOutput = serde_json::from_slice(&output_bytes)?;
 
         Ok(Book {
@@ -151,7 +185,8 @@ impl ScraperRegistry {
             cookies,
             config,
         })?;
-        let output_bytes = self.call_cached_plugin(domain, wasm_path, "scrape_chapter", &input_json)?;
+        let output_bytes =
+            self.call_cached_plugin(domain, wasm_path, "scrape_chapter", &input_json)?;
         let output: ChapterOutput = serde_json::from_slice(&output_bytes)?;
         Ok((output.title, output.content))
     }
@@ -223,7 +258,11 @@ fn host_curl_fetch(
     let url = parts.next().unwrap_or("").to_string();
     let cookies = parts.next().unwrap_or("").to_string();
 
-    crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Fetching: {}", url));
+    crate::settings::log(
+        crate::settings::LogLevel::Debug,
+        "SCRAPE",
+        &format!("Fetching: {}", url),
+    );
 
     if !cookies.is_empty() {
         let has_equals = cookies.contains('=');
@@ -279,13 +318,17 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
 
     let elapsed = start.elapsed();
     let status = handle.response_code().unwrap_or(0);
-    crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!(
-        "HTTP {} — {}B — {:?} — {}",
-        status,
-        data.len(),
-        elapsed,
-        url,
-    ));
+    crate::settings::log(
+        crate::settings::LogLevel::Debug,
+        "SCRAPE",
+        &format!(
+            "HTTP {} — {}B — {:?} — {}",
+            status,
+            data.len(),
+            elapsed,
+            url,
+        ),
+    );
 
     String::from_utf8(data).map_err(|e| e.to_string())
 }
@@ -316,17 +359,21 @@ fn call_plugin(
     let result = plugin.call::<&[u8], &[u8]>(function, input)?;
     let bytes = result.to_vec();
 
-    crate::settings::log(crate::settings::LogLevel::Debug, "PLUGIN", &format!(
-        "[{}::{}] input={}B output={}B: {}",
-        plugin_name,
-        function,
-        input.len(),
-        bytes.len(),
-        &String::from_utf8_lossy(&bytes)
-            .chars()
-            .take(300)
-            .collect::<String>()
-    ));
+    crate::settings::log(
+        crate::settings::LogLevel::Debug,
+        "PLUGIN",
+        &format!(
+            "[{}::{}] input={}B output={}B: {}",
+            plugin_name,
+            function,
+            input.len(),
+            bytes.len(),
+            &String::from_utf8_lossy(&bytes)
+                .chars()
+                .take(300)
+                .collect::<String>()
+        ),
+    );
 
     Ok(bytes)
 }

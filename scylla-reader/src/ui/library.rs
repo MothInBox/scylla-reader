@@ -6,13 +6,16 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui_image::StatefulImage;
 
+use crate::ui::widgets::hint_line;
+
 pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
-            Constraint::Length(1),
+            Constraint::Length(hint_height),
         ])
         .split(area);
 
@@ -28,9 +31,41 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
     draw_book_list(frame, main_chunks[0], state);
     draw_side_panel(frame, main_chunks[1], state);
 
-    let hints = Paragraph::new(" [i] Add  [d] Delete [j] Jump  [Space] Status  [f] Filter  [u] Update  [Tab] Settings  [q] Quit")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[2]);
+    if state.show_hints {
+        let hint_area = chunks[2];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[
+                    ("i", "Add"),
+                    ("j", "Jump"),
+                    ("d", "Delete"),
+                    ("u", "Update"),
+                    ("f", "Filter"),
+                    ("Space", "Status"),
+                ],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("?", "Hide"),
+                    ("Esc", "Quit"),
+                ],
+            )),
+            hint_chunks[1],
+        );
+    }
 
     crate::ui::modal::draw_modal(frame, area, state);
 }
@@ -121,4 +156,53 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, state: &mut AppState) {
         Paragraph::new(details).wrap(Wrap { trim: false }),
         side_chunks[1],
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn test_library_draw_shows_hints_when_enabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = true;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("[1]"));
+    }
+
+    #[test]
+    fn test_library_draw_hides_hints_when_disabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = false;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(!content.contains("[1]"));
+    }
 }

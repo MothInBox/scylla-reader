@@ -1,5 +1,6 @@
 use crate::settings::{SettingsField, SettingsPage};
 use crate::state::AppState;
+use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
@@ -14,9 +15,10 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
     let fields = SettingsField::all();
@@ -40,18 +42,52 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
     list_state.select(Some(state.settings.selected_field));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    let hints = Paragraph::new(" [↑↓] Navigate  [Enter] Select  [Tab] Back to Library")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[1]);
+    if state.show_hints {
+        let hint_area = chunks[1];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("?", "Hide"),
+                    ("Esc", "Quit"),
+                ],
+            )),
+            hint_chunks[1],
+        );
+    }
 }
 
 fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(hint_height),
+        ])
         .split(area);
 
-    let toggle_status = if state.settings.debug_log { "ON" } else { "OFF" };
+    let toggle_status = if state.settings.debug_log {
+        "ON"
+    } else {
+        "OFF"
+    };
     let toggle_line = Paragraph::new(format!(
         " Debug Logging: {}    [Enter] Toggle",
         toggle_status,
@@ -66,15 +102,41 @@ fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
         .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(log_widget, chunks[1]);
 
-    let hints = Paragraph::new(" [↑↓] Scroll  [Enter] Toggle  [Esc] Back")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[2]);
+    if state.show_hints {
+        let hint_area = chunks[2];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
+    }
 }
 
 fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
     let items: Vec<ListItem> = state
@@ -85,7 +147,11 @@ fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().title(" Plugin Configs ").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" Plugin Configs ")
+                .borders(Borders::ALL),
+        )
         .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
         .highlight_symbol(">> ");
 
@@ -93,18 +159,48 @@ fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
     list_state.select(Some(state.settings.selected_plugin));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    let hints = Paragraph::new(" [↑↓] Navigate  [Enter] Select  [Esc] Back")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[1]);
+    if state.show_hints {
+        let hint_area = chunks[1];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
+    }
 }
 
 fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
-    let Some(config) = state.settings.plugin_configs.get(state.settings.selected_plugin) else {
+    let Some(config) = state
+        .settings
+        .plugin_configs
+        .get(state.settings.selected_plugin)
+    else {
         return;
     };
 
@@ -126,11 +222,16 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let cookie_extra = if config.accepts_cookies { 1 } else { 0 };
     let field_count = config.schema.len() + cookie_extra;
-    let clamped = state.settings.selected_plugin_field.min(field_count.saturating_sub(1));
+    let clamped = state
+        .settings
+        .selected_plugin_field
+        .min(field_count.saturating_sub(1));
     let list = List::new(items)
-        .block(Block::default()
-            .title(format!(" {} ", config.domain))
-            .borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(format!(" {} ", config.domain))
+                .borders(Borders::ALL),
+        )
         .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
         .highlight_symbol(">> ");
 
@@ -138,18 +239,47 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
     list_state.select(Some(clamped));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    let hints = Paragraph::new(" [↑↓] Navigate  [Enter] Edit  [Esc] Back")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[1]);
+    if state.show_hints {
+        let hint_area = chunks[1];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
+    }
 }
 
 fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
-    let config = state.settings.plugin_configs.get(state.settings.selected_plugin);
+    let config = state
+        .settings
+        .plugin_configs
+        .get(state.settings.selected_plugin);
     let is_cookie = config
         .map(|c| state.settings.selected_plugin_field == c.schema.len() && c.accepts_cookies)
         .unwrap_or(false);
@@ -178,7 +308,81 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
 
     frame.render_widget(paragraph, chunks[0]);
 
-    let hints =
-        Paragraph::new(" [Enter] Save  [Esc] Cancel").style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hints, chunks[1]);
+    if state.show_hints {
+        let hint_area = chunks[1];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::library::Library;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn test_settings_draw_shows_hints_when_enabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = true;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("[Enter]"));
+    }
+
+    #[test]
+    fn test_settings_draw_hides_hints_when_disabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = false;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(!content.contains("[Enter]"));
+    }
 }
