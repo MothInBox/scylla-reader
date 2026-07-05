@@ -42,13 +42,11 @@ pub fn handle_reader(
         }
         (_, KeyCode::Char('s')) => {
             if let Some(book) = state.library.selected_book() {
-                if book.sessions.len() > 1 {
-                    state.modal = Modal::SessionPicker {
-                        book_url: book.url.clone(),
-                        cursor: 0,
-                        scroll_offset: 0,
-                    };
-                }
+                state.modal = Modal::SessionPicker {
+                    book_url: book.url.clone(),
+                    cursor: 0,
+                    scroll_offset: 0,
+                };
             }
             return true;
         }
