@@ -6,13 +6,16 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui_image::StatefulImage;
 
+use crate::ui::widgets::hint_line;
+
 pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
-            Constraint::Length(1),
+            Constraint::Length(hint_height),
         ])
         .split(area);
 
@@ -29,9 +32,39 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
     draw_side_panel(frame, main_chunks[1], state);
 
     if state.show_hints {
-        let hints = Paragraph::new(" 1 Library  2 Reader  3 Settings  i Add  j Jump  u Update  d Delete  f Filter  Space Status  : Palette  q Quit")
-            .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(hints, chunks[2]);
+        let hint_area = chunks[2];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[
+                    ("i", "Add"),
+                    ("j", "Jump"),
+                    ("d", "Delete"),
+                    ("u", "Update"),
+                    ("f", "Filter"),
+                    ("Space", "Status"),
+                ],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("?", "Hide"),
+                    ("q", "Quit"),
+                ],
+            )),
+            hint_chunks[1],
+        );
     }
 
     crate::ui::modal::draw_modal(frame, area, state);
@@ -150,7 +183,7 @@ mod tests {
 
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
-        assert!(content.contains("1 Library"));
+        assert!(content.contains("[1]"));
     }
 
     #[test]
@@ -170,6 +203,6 @@ mod tests {
 
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
-        assert!(!content.contains("1 Library"));
+        assert!(!content.contains("[1]"));
     }
 }

@@ -1,5 +1,6 @@
 use crate::settings::{SettingsField, SettingsPage};
 use crate::state::AppState;
+use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
@@ -14,9 +15,10 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
     let fields = SettingsField::all();
@@ -41,19 +43,43 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
     if state.show_hints {
-        let hints = Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette")
-            .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(hints, chunks[1]);
+        let hint_area = chunks[1];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
     }
 }
 
 fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Min(0),
-            Constraint::Length(1),
+            Constraint::Length(hint_height),
         ])
         .split(area);
 
@@ -77,16 +103,40 @@ fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(log_widget, chunks[1]);
 
     if state.show_hints {
-        let hints = Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette")
-            .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(hints, chunks[2]);
+        let hint_area = chunks[2];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
     }
 }
 
 fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
     let items: Vec<ListItem> = state
@@ -110,16 +160,40 @@ fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
     if state.show_hints {
-        let hints = Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette")
-            .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(hints, chunks[1]);
+        let hint_area = chunks[1];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
     }
 }
 
 fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
     let Some(config) = state
@@ -166,16 +240,40 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
     if state.show_hints {
-        let hints = Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette")
-            .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(hints, chunks[1]);
+        let hint_area = chunks[1];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
     }
 }
 
 fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
     let config = state
@@ -211,9 +309,32 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(paragraph, chunks[0]);
 
     if state.show_hints {
-        let hints = Paragraph::new(" ↑/↓ Nav  Enter Select  Esc Back  : Palette")
-            .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(hints, chunks[1]);
+        let hint_area = chunks[1];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Actions",
+                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
     }
 }
 
@@ -242,7 +363,7 @@ mod tests {
 
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
-        assert!(content.contains("Enter Select"));
+        assert!(content.contains("[Enter]"));
     }
 
     #[test]
@@ -262,6 +383,6 @@ mod tests {
 
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
-        assert!(!content.contains("Enter Select"));
+        assert!(!content.contains("[Enter]"));
     }
 }

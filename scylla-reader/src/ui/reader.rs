@@ -2,6 +2,7 @@
 
 use crate::settings::ReaderMode;
 use crate::state::AppState;
+use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
@@ -27,12 +28,13 @@ fn draw_loading(frame: &mut Frame, area: Rect) {
 }
 
 fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
-            Constraint::Length(1),
+            Constraint::Length(hint_height),
         ])
         .split(area);
 
@@ -55,20 +57,43 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, chunks[1]);
     if state.show_hints {
-        let hints =
-            Paragraph::new(" > Next  < Prev  h/l Page  j/k Scroll  PgDn/PgUp  Esc Back  : Palette")
-                .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(hints, chunks[2]);
+        let hint_area = chunks[2];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Chapter",
+                &[(">", "Next"), ("<", "Prev"), ("l", "Page→"), ("h", "←Page")],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
     }
 }
 
 fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
+    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
-            Constraint::Length(1),
+            Constraint::Length(hint_height),
         ])
         .split(area);
 
@@ -90,10 +115,37 @@ fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(paragraph, chunks[1]);
 
     if state.show_hints {
-        let hints =
-            Paragraph::new(" > Next  < Prev  h/l Page  j/k Scroll  PgDn/PgUp  Esc Back  : Palette")
-                .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(hints, chunks[2]);
+        let hint_area = chunks[2];
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(hint_area);
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Scroll",
+                &[
+                    ("j", "↓Line"),
+                    ("k", "↑Line"),
+                    ("PgDn", "↓Page"),
+                    ("PgUp", "↑Page"),
+                ],
+            )),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line(
+                "Nav",
+                &[
+                    ("1", "Library"),
+                    ("2", "Reader"),
+                    ("3", "Settings"),
+                    (":", "Command"),
+                    ("Esc", "Back"),
+                    ("?", "Hide"),
+                ],
+            )),
+            hint_chunks[1],
+        );
     }
 }
 
@@ -122,7 +174,7 @@ mod tests {
 
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
-        assert!(content.contains(": Palette"));
+        assert!(content.contains("[1]"));
     }
 
     #[test]
@@ -142,6 +194,6 @@ mod tests {
 
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
-        assert!(!content.contains("Palette"));
+        assert!(!content.contains("[1]"));
     }
 }

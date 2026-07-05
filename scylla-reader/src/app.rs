@@ -239,13 +239,7 @@ impl App {
                     self.state.close_modal();
                     return true;
                 }
-                match self.state.current_page {
-                    Page::Library => return false,
-                    _ => {
-                        self.state.current_page = Page::Library;
-                        return true;
-                    }
-                }
+                return false;
             }
             _ => {}
         }
@@ -381,12 +375,11 @@ mod tests {
     }
 
     #[test]
-    fn test_esc_goes_to_library_from_other_pages() {
+    fn test_esc_quits_from_any_page() {
         let mut app = App::test_instance(test_state());
         app.state.current_page = Page::Settings;
         let result = app.handle_key(key_event(KeyCode::Esc), Rect::default());
-        assert!(result);
-        assert_eq!(app.state.current_page, Page::Library);
+        assert!(!result);
     }
 
     #[test]
