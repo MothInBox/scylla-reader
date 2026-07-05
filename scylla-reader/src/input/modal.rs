@@ -117,17 +117,28 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
     }
 
     if let Some(cursor_val) = selected_cursor {
+        crate::settings::log(
+            crate::settings::LogLevel::Debug,
+            "INPUT",
+            &format!("Attempting jump: {}", cursor_val),
+        );
         if let Some(book) = state.library.selected_book_mut() {
-            if let Some(session) = book
-                .sessions
-                .iter_mut()
-                .find(|s| s.id == state.reader.session_id)
-            {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "INPUT",
+                &format!("On Book: {}", book.title),
+            );
+            let active_id = book.active_session_id;
+            if let Some(session) = book.sessions.iter_mut().find(|s| Some(s.id) == active_id) {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    &format!("On Session: {}@{}", session.id, session.name),
+                );
                 session.progress.current = cursor_val as u32;
-                if let Err(err) =
-                    state
-                        .db
-                        .update_session_progress(session.id, session.progress.current)
+                if let Err(err) = state
+                    .db
+                    .update_session_progress(session.id, session.progress.current)
                 {
                     crate::settings::log(
                         crate::settings::LogLevel::Debug,
@@ -135,6 +146,12 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
                         &format!("Failed to update session progress: {}", err),
                     );
                 }
+            } else {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "INPUT",
+                    "No active session found for book",
+                );
             }
         }
         state.modal = Modal::None;
@@ -149,18 +166,17 @@ pub fn handle_session_picker(
     key: KeyEvent,
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
-    let (book_url, cursor, is_editing) =
-        if let Modal::SessionPicker {
-            book_url,
-            cursor,
-            input,
-            ..
-        } = &state.modal
-        {
-            (book_url.clone(), *cursor, input.is_some())
-        } else {
-            return true;
-        };
+    let (book_url, cursor, is_editing) = if let Modal::SessionPicker {
+        book_url,
+        cursor,
+        input,
+        ..
+    } = &state.modal
+    {
+        (book_url.clone(), *cursor, input.is_some())
+    } else {
+        return true;
+    };
 
     if is_editing {
         return handle_session_picker_editing(state, key, cmd_tx);
@@ -187,7 +203,10 @@ pub fn handle_session_picker(
             state.modal = Modal::None;
         }
         KeyCode::Enter => {
-            let session = state.library.books.iter()
+            let session = state
+                .library
+                .books
+                .iter()
                 .find(|b| b.url == book_url)
                 .and_then(|b| b.sessions.get(cursor))
                 .cloned();
@@ -197,7 +216,10 @@ pub fn handle_session_picker(
                 if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
                     book.active_session_id = Some(session.id);
                 }
-                state.db.set_active_session(&book_url, Some(session.id)).ok();
+                state
+                    .db
+                    .set_active_session(&book_url, Some(session.id))
+                    .ok();
                 if let Some(book) = state.library.books.iter().find(|b| b.url == book_url) {
                     if !book.chapters.is_empty() {
                         let idx = (session.progress.current as usize).min(book.chapters.len() - 1);
@@ -212,7 +234,13 @@ pub fn handle_session_picker(
             state.modal = Modal::None;
         }
         KeyCode::Char('n') => {
-            if let Modal::SessionPicker { cursor, input, editing_id, .. } = &mut state.modal {
+            if let Modal::SessionPicker {
+                cursor,
+                input,
+                editing_id,
+                ..
+            } = &mut state.modal
+            {
                 *cursor = 0;
                 *input = Some(String::new());
                 *editing_id = None;
@@ -221,7 +249,10 @@ pub fn handle_session_picker(
         KeyCode::Char('r') => {
             if let Some(book) = state.library.books.iter().find(|b| b.url == book_url) {
                 if let Some(session) = book.sessions.get(cursor) {
-                    if let Modal::SessionPicker { input, editing_id, .. } = &mut state.modal {
+                    if let Modal::SessionPicker {
+                        input, editing_id, ..
+                    } = &mut state.modal
+                    {
                         *input = Some(session.name.clone());
                         *editing_id = Some(session.id);
                     }
@@ -229,12 +260,18 @@ pub fn handle_session_picker(
             }
         }
         KeyCode::Char('d') => {
-            let session_count = state.library.books.iter()
+            let session_count = state
+                .library
+                .books
+                .iter()
                 .find(|b| b.url == book_url)
                 .map(|b| b.sessions.len())
                 .unwrap_or(0);
             if cursor < session_count {
-                let session_id = state.library.books.iter()
+                let session_id = state
+                    .library
+                    .books
+                    .iter()
                     .find(|b| b.url == book_url)
                     .and_then(|b| b.sessions.get(cursor))
                     .map(|s| s.id);
@@ -242,7 +279,9 @@ pub fn handle_session_picker(
                     if session_count > 1 {
                         state.db.delete_session(session_id).ok();
                         if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
-                            if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
+                            if let Some(book) =
+                                state.library.books.iter_mut().find(|b| b.url == book_url)
+                            {
                                 book.sessions = loaded;
                             }
                         }
@@ -275,22 +314,28 @@ fn handle_session_picker_editing(
     key: KeyEvent,
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
-    let (book_url, editing_id, input) =
-        if let Modal::SessionPicker {
-            book_url,
-            editing_id,
-            input,
-            ..
-        } = &state.modal
-        {
-            (book_url.clone(), *editing_id, input.clone().unwrap_or_default())
-        } else {
-            return true;
-        };
+    let (book_url, editing_id, input) = if let Modal::SessionPicker {
+        book_url,
+        editing_id,
+        input,
+        ..
+    } = &state.modal
+    {
+        (
+            book_url.clone(),
+            *editing_id,
+            input.clone().unwrap_or_default(),
+        )
+    } else {
+        return true;
+    };
 
     match key.code {
         KeyCode::Esc => {
-            if let Modal::SessionPicker { input, editing_id, .. } = &mut state.modal {
+            if let Modal::SessionPicker {
+                input, editing_id, ..
+            } = &mut state.modal
+            {
                 *input = None;
                 *editing_id = None;
             }
@@ -338,7 +383,13 @@ fn handle_session_picker_editing(
                     }
                 }
             }
-            if let Modal::SessionPicker { input, editing_id, cursor, .. } = &mut state.modal {
+            if let Modal::SessionPicker {
+                input,
+                editing_id,
+                cursor,
+                ..
+            } = &mut state.modal
+            {
                 *input = None;
                 *editing_id = None;
                 *cursor = 0;
@@ -574,7 +625,10 @@ mod tests {
                 id: 0,
                 book_url: "url".into(),
                 name: "default".into(),
-                progress: crate::models::Progress { current: 0, total: 2 },
+                progress: crate::models::Progress {
+                    current: 0,
+                    total: 2,
+                },
                 created_at: String::new(),
                 updated_at: String::new(),
             });
