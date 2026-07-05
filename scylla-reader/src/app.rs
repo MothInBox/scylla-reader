@@ -206,7 +206,9 @@ impl App {
         if self.state.modal != Modal::None {
             if key.code == KeyCode::Esc {
                 self.state.close_modal();
-                self.state.current_page = Page::Library;
+                if matches!(self.state.current_page, Page::AddingBook | Page::BookChapterJump) {
+                    self.state.current_page = Page::Library;
+                }
                 return true;
             }
             return input::handle_input(&mut self.state, key, &self.cmd_tx, area);
