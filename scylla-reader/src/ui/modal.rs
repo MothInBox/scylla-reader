@@ -103,7 +103,14 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 .map(|b| b.sessions.clone())
                 .unwrap_or_default();
 
-            let count = sessions.len();
+            let session_label = |s: &Session| {
+                format!(
+                    "{} — {}/{}",
+                    s.name,
+                    (s.progress.current + 1).min(s.progress.total),
+                    s.progress.total
+                )
+            };
 
             let hints = if input.is_some() {
                 " [Enter] Confirm  [Esc] Cancel "
@@ -111,38 +118,38 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 " [Enter] Open  [n] New  [r] Rename  [d] Delete  [↑↓] Move  [Esc] Cancel "
             };
 
-            let items: Vec<ListItem> = sessions
-                .iter()
-                .enumerate()
-                .map(|(i, s)| {
-                    let label = if let Some(text) = input {
-                        if i == *cursor {
-                            let prefix = if editing_id.is_some() { "Rename:" } else { "Name:" };
-                            format!("{} {}", prefix, text)
+            let items: Vec<ListItem> = if let Some(text) = input {
+                if editing_id.is_some() {
+                    sessions.iter().enumerate().map(|(i, s)| {
+                        let label = if i == *cursor {
+                            format!("Rename: {}", text)
                         } else {
-                            format!(
-                                "{} — {}/{}",
-                                s.name,
-                                (s.progress.current + 1).min(s.progress.total),
-                                s.progress.total
-                            )
-                        }
-                    } else {
-                        format!(
-                            "{} — {}/{}",
-                            s.name,
-                            (s.progress.current + 1).min(s.progress.total),
-                            s.progress.total
-                        )
-                    };
-                    ListItem::new(label)
-                })
-                .collect();
+                            session_label(s)
+                        };
+                        ListItem::new(label)
+                    }).collect()
+                } else {
+                    let mut items: Vec<ListItem> = Vec::with_capacity(sessions.len() + 1);
+                    items.push(ListItem::new(format!("Name: {}", text)));
+                    for s in &sessions {
+                        items.push(ListItem::new(session_label(s)));
+                    }
+                    items
+                }
+            } else {
+                sessions.iter().map(|s| ListItem::new(session_label(s))).collect()
+            };
+
+            let display_count = if input.is_some() && editing_id.is_none() {
+                sessions.len() + 1
+            } else {
+                sessions.len()
+            };
 
             let title = format!(
                 " Sessions ({} Session{}) ",
-                count,
-                if count == 1 { "" } else { "s" }
+                display_count,
+                if display_count == 1 { "" } else { "s" }
             );
 
             draw_scrollable_list(

@@ -212,7 +212,8 @@ pub fn handle_session_picker(
             state.modal = Modal::None;
         }
         KeyCode::Char('n') => {
-            if let Modal::SessionPicker { input, editing_id, .. } = &mut state.modal {
+            if let Modal::SessionPicker { cursor, input, editing_id, .. } = &mut state.modal {
+                *cursor = 0;
                 *input = Some(String::new());
                 *editing_id = None;
             }
@@ -316,7 +317,11 @@ fn handle_session_picker_editing(
                     }
                 }
             }
-            state.modal = Modal::None;
+            if let Modal::SessionPicker { input, editing_id, cursor, .. } = &mut state.modal {
+                *input = None;
+                *editing_id = None;
+                *cursor = 0;
+            }
         }
         KeyCode::Backspace => {
             if let Modal::SessionPicker { input, .. } = &mut state.modal {
