@@ -60,7 +60,6 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
                     ("3", "Settings"),
                     (":", "Command"),
                     ("?", "Hide"),
-                    ("q", "Quit"),
                 ],
             )),
             hint_chunks[1],

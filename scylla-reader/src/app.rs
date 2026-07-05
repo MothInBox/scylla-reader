@@ -231,9 +231,6 @@ impl App {
                 self.state.show_hints = !self.state.show_hints;
                 return true;
             }
-            KeyCode::Char('q') if self.state.current_page == Page::Library => {
-                return false;
-            }
             KeyCode::Esc => {
                 if self.state.modal != Modal::None {
                     self.state.close_modal();
@@ -383,18 +380,11 @@ mod tests {
     }
 
     #[test]
-    fn test_q_quits_from_library() {
+    fn test_q_does_not_quit() {
         let mut app = App::test_instance(test_state());
         app.state.current_page = Page::Library;
         let result = app.handle_key(key_event(KeyCode::Char('q')), Rect::default());
-        assert!(!result);
-    }
-
-    #[test]
-    fn test_q_does_not_quit_from_other_pages() {
-        let mut app = App::test_instance(test_state());
-        app.state.current_page = Page::Settings;
-        app.handle_key(key_event(KeyCode::Char('q')), Rect::default());
-        assert_eq!(app.state.current_page, Page::Settings);
+        assert!(result);
+        assert_eq!(app.state.current_page, Page::Library);
     }
 }
