@@ -4,6 +4,7 @@ pub mod fields;
 pub use fields::SettingsField;
 
 use crate::plugin_config::PluginConfig;
+use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,8 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 pub fn log_file() -> std::path::PathBuf {
-    let base = dirs::state_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    let base = dirs::state_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
     base.join("scylla-reader").join("scylla-reader.log")
 }
 
@@ -68,7 +68,7 @@ pub enum SettingsPage {
     PluginFieldEdit,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum ReaderMode {
     Paged,
     Scrollable,
@@ -92,6 +92,42 @@ impl std::fmt::Display for ReaderMode {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct PersistedSettings {
+    rate_limit_secs: u64,
+    debug_log: bool,
+    reader_mode: ReaderMode,
+}
+
+impl Default for PersistedSettings {
+    fn default() -> Self {
+        Self {
+            rate_limit_secs: 2,
+            debug_log: false,
+            reader_mode: ReaderMode::Paged,
+        }
+    }
+}
+
+fn settings_path() -> std::path::PathBuf {
+    crate::plugin_config::config_dir().join("settings.json")
+}
+
+fn compiled_defaults() -> PersistedSettings {
+    PersistedSettings {
+        rate_limit_secs: option_env!("SCYLLA_RATE_LIMIT")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2),
+        debug_log: option_env!("SCYLLA_DEBUG_LOG")
+            .map(|s| s == "true")
+            .unwrap_or(false),
+        reader_mode: match option_env!("SCYLLA_READER_MODE") {
+            Some("Scrollable") => ReaderMode::Scrollable,
+            _ => ReaderMode::Paged,
+        },
+    }
+}
+
 pub struct Settings {
     pub rate_limit_secs: u64,
     pub selected_field: usize,
@@ -109,16 +145,58 @@ pub struct Settings {
     pub log_lines: Vec<String>,
 }
 
+impl Default for Settings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Settings {
+    pub fn save(&self) {
+        let persisted = PersistedSettings {
+            rate_limit_secs: self.rate_limit_secs,
+            debug_log: self.debug_log,
+            reader_mode: self.reader_mode.clone(),
+        };
+        let path = settings_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(contents) = serde_json::to_string_pretty(&persisted) {
+            let _ = std::fs::write(&path, contents);
+        }
+    }
+
+    #[cfg(not(test))]
+    fn load() -> Option<PersistedSettings> {
+        let path = settings_path();
+        let contents = std::fs::read_to_string(&path).ok()?;
+        serde_json::from_str(&contents).ok()
+    }
+
     pub fn new() -> Self {
+        #[allow(unused_mut)]
+        let mut merged = compiled_defaults();
+
+        #[cfg(not(test))]
+        if let Some(user) = Self::load() {
+            merged.rate_limit_secs = user.rate_limit_secs;
+            merged.debug_log = user.debug_log;
+            merged.reader_mode = user.reader_mode;
+        }
+
+        if merged.debug_log {
+            set_debug(true);
+        }
+
         Self {
-            rate_limit_secs: 2,
+            rate_limit_secs: merged.rate_limit_secs,
             selected_field: 0,
             editing: false,
             edit_buffer: String::new(),
             settings_page: SettingsPage::Main,
-            debug_log: false,
-            reader_mode: ReaderMode::Paged,
+            debug_log: merged.debug_log,
+            reader_mode: merged.reader_mode,
             plugin_configs: PluginConfig::discover_all(),
             selected_plugin: 0,
             selected_plugin_field: 0,
@@ -149,14 +227,13 @@ impl Settings {
         let Some(key) = key else {
             return Ok(());
         };
-        if let Some(field) = config.schema.get(self.selected_plugin_field) {
-            if field.field_type == "number"
+        if let Some(field) = config.schema.get(self.selected_plugin_field)
+            && field.field_type == "number"
                 && !self.plugin_field_buffer.is_empty()
                 && self.plugin_field_buffer.parse::<f64>().is_err()
             {
                 return Err("Invalid number".to_string());
             }
-        }
         config.update_value(&key, self.plugin_field_buffer.clone());
         config.save()
     }
@@ -188,8 +265,6 @@ impl Settings {
 pub fn set_debug(enabled: bool) {
     DEBUG_ENABLED.store(enabled, Ordering::Relaxed);
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -249,5 +324,54 @@ mod tests {
         assert!(DEBUG_ENABLED.load(Ordering::Relaxed));
         set_debug(false);
         assert!(!DEBUG_ENABLED.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_persisted_settings_default() {
+        let p = PersistedSettings::default();
+        assert_eq!(p.rate_limit_secs, 2);
+        assert!(!p.debug_log);
+        assert_eq!(p.reader_mode, ReaderMode::Paged);
+    }
+
+    #[test]
+    fn test_persisted_settings_roundtrip() {
+        let p = PersistedSettings {
+            rate_limit_secs: 42,
+            debug_log: true,
+            reader_mode: ReaderMode::Scrollable,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: PersistedSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rate_limit_secs, 42);
+        assert!(back.debug_log);
+        assert_eq!(back.reader_mode, ReaderMode::Scrollable);
+    }
+
+    #[test]
+    fn test_compiled_defaults_fallback() {
+        let d = compiled_defaults();
+        assert_eq!(d.rate_limit_secs, 2);
+        assert!(!d.debug_log);
+        assert_eq!(d.reader_mode, ReaderMode::Paged);
+    }
+
+    #[test]
+    fn test_save_roundtrip() {
+        let mut settings = Settings::new();
+        settings.rate_limit_secs = 99;
+        settings.debug_log = true;
+        settings.reader_mode = ReaderMode::Scrollable;
+
+        let persisted = PersistedSettings {
+            rate_limit_secs: settings.rate_limit_secs,
+            debug_log: settings.debug_log,
+            reader_mode: settings.reader_mode.clone(),
+        };
+        let json = serde_json::to_string_pretty(&persisted).unwrap();
+        let back: PersistedSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rate_limit_secs, 99);
+        assert!(back.debug_log);
+        assert_eq!(back.reader_mode, ReaderMode::Scrollable);
     }
 }

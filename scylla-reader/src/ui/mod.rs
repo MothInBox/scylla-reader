@@ -2,6 +2,7 @@
 
 pub mod library;
 pub mod modal;
+pub mod palette;
 pub mod reader;
 pub mod settings;
 pub mod widgets;

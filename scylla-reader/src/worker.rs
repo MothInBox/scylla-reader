@@ -1,9 +1,9 @@
 //! Background worker thread that runs a Tokio runtime, owns the ScraperRegistry,
 //! and processes AppCommand messages, sending results back as AppEvents.
 
-use std::sync::mpsc;
 use crate::messenger::{AppCommand, AppEvent, ChapterContent};
 use crate::scrapers::services::ScraperRegistry;
+use std::sync::mpsc;
 
 pub struct Worker {
     cmd_rx: mpsc::Receiver<AppCommand>,
@@ -18,7 +18,12 @@ impl Worker {
         event_tx: mpsc::Sender<AppEvent>,
         registry: ScraperRegistry,
     ) -> Self {
-        Self { cmd_rx, event_tx, registry, rate_limit_secs: 2 }
+        Self {
+            cmd_rx,
+            event_tx,
+            registry,
+            rate_limit_secs: 2,
+        }
     }
 
     pub fn run(mut self) {
@@ -27,34 +32,58 @@ impl Worker {
         while let Ok(command) = self.cmd_rx.recv() {
             match command {
                 AppCommand::Scrape(url) => {
-                    Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
+                    Self::scrape_and_send(
+                        &runtime,
+                        &self.registry,
+                        &self.event_tx,
+                        &clean_url(&url),
+                    );
                 }
                 AppCommand::UpdateAll(urls) => {
                     let mut urls_iter = urls.into_iter();
                     if let Some(url) = urls_iter.next() {
-                        Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
+                        Self::scrape_and_send(
+                            &runtime,
+                            &self.registry,
+                            &self.event_tx,
+                            &clean_url(&url),
+                        );
                     }
                     'urls: for url in urls_iter {
-                        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(self.rate_limit_secs);
+                        let deadline = std::time::Instant::now()
+                            + std::time::Duration::from_secs(self.rate_limit_secs);
                         while std::time::Instant::now() < deadline {
-                            match self.cmd_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                            match self
+                                .cmd_rx
+                                .recv_timeout(std::time::Duration::from_millis(100))
+                            {
                                 Ok(cmd) => match cmd {
                                     AppCommand::FetchChapter(url, idx) => {
                                         let url = clean_url(&url);
                                         match runtime.block_on(self.registry.scrape_chapter(&url)) {
                                             Ok((title, content)) => {
-                                                let _ = self.event_tx.send(AppEvent::ChapterFetched(ChapterContent {
-                                                    chapter_idx: idx, title, content,
-                                                }));
+                                                let _ = self.event_tx.send(
+                                                    AppEvent::ChapterFetched(ChapterContent {
+                                                        chapter_idx: idx,
+                                                        title,
+                                                        content,
+                                                    }),
+                                                );
                                             }
                                             Err(e) => crate::settings::log(
-                                                crate::settings::LogLevel::Debug, "SCRAPE",
+                                                crate::settings::LogLevel::Debug,
+                                                "SCRAPE",
                                                 &format!("Chapter fetch failed: {}", e),
                                             ),
                                         }
                                     }
                                     AppCommand::Scrape(url) => {
-                                        Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
+                                        Self::scrape_and_send(
+                                            &runtime,
+                                            &self.registry,
+                                            &self.event_tx,
+                                            &clean_url(&url),
+                                        );
                                     }
                                     AppCommand::SetRateLimit(secs) => {
                                         self.rate_limit_secs = secs;
@@ -66,45 +95,69 @@ impl Worker {
                                 Err(mpsc::RecvTimeoutError::Disconnected) => break 'urls,
                             }
                         }
-                        Self::scrape_and_send(&runtime, &self.registry, &self.event_tx, &clean_url(&url));
+                        Self::scrape_and_send(
+                            &runtime,
+                            &self.registry,
+                            &self.event_tx,
+                            &clean_url(&url),
+                        );
                     }
                 }
                 AppCommand::SetRateLimit(secs) => {
                     self.rate_limit_secs = secs;
                 }
                 AppCommand::FetchChapter(url, idx) => {
-    let url = clean_url(&url);
-    match runtime.block_on(self.registry.scrape_chapter(&url)) {
-        Ok((title, content)) => {
-            let _ = self.event_tx.send(AppEvent::ChapterFetched(ChapterContent {
-                chapter_idx: idx,
-                title,
-                content,
-            }));
-        }
-        Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Chapter fetch failed: {}", e)),
-    }
-}
-AppCommand::FetchCover(url) => {
-    let event_tx = self.event_tx.clone();
-    std::thread::spawn(move || {
-        let mut picker = ratatui_image::picker::Picker::from_query_stdio()
-            .unwrap_or_else(|_| ratatui_image::picker::Picker::from_fontsize((8, 12)));
-        match reqwest::blocking::get(&url) {
-            Ok(resp) => match resp.bytes() {
-                Ok(bytes) => match image::load_from_memory(&bytes) {
-                    Ok(img) => {
-                        let protocol = picker.new_resize_protocol(img);
-                        let _ = event_tx.send(AppEvent::CoverFetched(url, protocol));
+                    let url = clean_url(&url);
+                    match runtime.block_on(self.registry.scrape_chapter(&url)) {
+                        Ok((title, content)) => {
+                            let _ = self.event_tx.send(AppEvent::ChapterFetched(ChapterContent {
+                                chapter_idx: idx,
+                                title,
+                                content,
+                            }));
+                        }
+                        Err(e) => crate::settings::log(
+                            crate::settings::LogLevel::Debug,
+                            "SCRAPE",
+                            &format!("Chapter fetch failed: {}", e),
+                        ),
                     }
-                    Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Image decode: {}", e)),
-                },
-                Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Cover bytes: {}", e)),
-            },
-            Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "UI", &format!("Cover fetch: {}", e)),
-        }
-    });
-}
+                }
+                AppCommand::FetchCover(url) => {
+                    let event_tx = self.event_tx.clone();
+                    std::thread::spawn(move || {
+                        let mut picker = ratatui_image::picker::Picker::from_query_stdio()
+                            .unwrap_or_else(|_| {
+                                ratatui_image::picker::Picker::from_fontsize((8, 12))
+                            });
+                        match reqwest::blocking::get(&url) {
+                            Ok(resp) => match resp.bytes() {
+                                Ok(bytes) => match image::load_from_memory(&bytes) {
+                                    Ok(img) => {
+                                        let protocol = picker.new_resize_protocol(img);
+                                        let _ =
+                                            event_tx.send(AppEvent::CoverFetched(url, protocol));
+                                    }
+                                    Err(e) => crate::settings::log(
+                                        crate::settings::LogLevel::Debug,
+                                        "UI",
+                                        &format!("Image decode: {}", e),
+                                    ),
+                                },
+                                Err(e) => crate::settings::log(
+                                    crate::settings::LogLevel::Debug,
+                                    "UI",
+                                    &format!("Cover bytes: {}", e),
+                                ),
+                            },
+                            Err(e) => crate::settings::log(
+                                crate::settings::LogLevel::Debug,
+                                "UI",
+                                &format!("Cover fetch: {}", e),
+                            ),
+                        }
+                    });
+                }
             }
         }
     }
@@ -117,16 +170,24 @@ AppCommand::FetchCover(url) => {
     ) {
         match runtime.block_on(registry.scrape_url(url)) {
             Ok(book) => {
-                crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Scraped: {}", book.title));
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "SCRAPE",
+                    &format!("Scraped: {}", book.title),
+                );
                 let _ = event_tx.send(AppEvent::BookScraped(book));
             }
-            Err(e) => crate::settings::log(crate::settings::LogLevel::Debug, "SCRAPE", &format!("Scrape failed: {}", e)),
+            Err(e) => crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "SCRAPE",
+                &format!("Scrape failed: {}", e),
+            ),
         }
     }
 }
 
 fn clean_url(url: &str) -> String {
-    if let (Some(open), _) = (url.find("]("), url.rfind(')')) {
+    if let Some(open) = url.find("](") {
         let after = open + 2;
         let mut depth = 0i32;
         for (i, ch) in url[after..].char_indices() {

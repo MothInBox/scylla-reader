@@ -1,7 +1,7 @@
 //! SQLite persistence layer — books, tags, and chapters.
 
-use rusqlite::{Connection, Result, params};
 use crate::models::{Book, BookStatus, Chapter, Progress};
+use rusqlite::{Connection, Result, params};
 
 pub struct Db {
     conn: Connection,
@@ -21,7 +21,8 @@ impl Db {
     }
 
     fn migrate(&self) -> Result<()> {
-        self.conn.execute_batch("
+        self.conn.execute_batch(
+            "
             CREATE TABLE IF NOT EXISTS books (
                 url         TEXT PRIMARY KEY,
                 title       TEXT NOT NULL,
@@ -45,7 +46,8 @@ impl Db {
                 ord         INTEGER NOT NULL,
                 PRIMARY KEY (book_url, url)
             );
-        ")
+        ",
+        )
     }
 
     pub fn load_books(&self) -> Result<Vec<Book>> {
@@ -53,22 +55,27 @@ impl Db {
             "SELECT url, title, status, current, total, cover_url, description FROM books ORDER BY rowid"
         )?;
 
-        let mut books: Vec<Book> = stmt.query_map([], |row| {
-            let status_str: String = row.get(2)?;
-            Ok(Book {
-                url:         row.get(0)?,
-                title:       row.get(1)?,
-                status:      parse_status(&status_str),
-                progress:    Progress { current: row.get(3)?, total: row.get(4)? },
-                cover_url:   row.get(5)?,
-                description: row.get(6)?,
-                tags:        Vec::new(),
-                chapters:    Vec::new(),
-            })
-        })?.collect::<Result<_>>()?;
+        let mut books: Vec<Book> = stmt
+            .query_map([], |row| {
+                let status_str: String = row.get(2)?;
+                Ok(Book {
+                    url: row.get(0)?,
+                    title: row.get(1)?,
+                    status: parse_status(&status_str),
+                    progress: Progress {
+                        current: row.get(3)?,
+                        total: row.get(4)?,
+                    },
+                    cover_url: row.get(5)?,
+                    description: row.get(6)?,
+                    tags: Vec::new(),
+                    chapters: Vec::new(),
+                })
+            })?
+            .collect::<Result<_>>()?;
 
         for book in &mut books {
-            book.tags     = self.load_tags(&book.url)?;
+            book.tags = self.load_tags(&book.url)?;
             book.chapters = self.load_chapters(&book.url)?;
         }
 
@@ -76,23 +83,24 @@ impl Db {
     }
 
     fn load_tags(&self, book_url: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT tag FROM tags WHERE book_url = ? ORDER BY tag"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT tag FROM tags WHERE book_url = ? ORDER BY tag")?;
         stmt.query_map([book_url], |row| row.get(0))?.collect()
     }
 
     fn load_chapters(&self, book_url: &str) -> Result<Vec<Chapter>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT url, title, ord FROM chapters WHERE book_url = ? ORDER BY ord"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT url, title, ord FROM chapters WHERE book_url = ? ORDER BY ord")?;
         stmt.query_map([book_url], |row| {
             Ok(Chapter {
-                url:   row.get(0)?,
+                url: row.get(0)?,
                 title: row.get(1)?,
                 order: row.get(2)?,
             })
-        })?.collect()
+        })?
+        .collect()
     }
 
     pub fn upsert_book(&self, book: &Book) -> Result<()> {
@@ -139,15 +147,17 @@ impl Db {
     }
 
     pub fn delete_book(&self, book_url: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM books WHERE url = ?", [book_url])?;
+        self.conn
+            .execute("DELETE FROM books WHERE url = ?", [book_url])?;
         Ok(())
     }
 
     fn sync_tags(&self, book_url: &str, tags: &[String]) -> Result<()> {
-        self.conn.execute("DELETE FROM tags WHERE book_url = ?", [book_url])?;
-        let mut stmt = self.conn.prepare(
-            "INSERT OR IGNORE INTO tags (book_url, tag) VALUES (?1, ?2)"
-        )?;
+        self.conn
+            .execute("DELETE FROM tags WHERE book_url = ?", [book_url])?;
+        let mut stmt = self
+            .conn
+            .prepare("INSERT OR IGNORE INTO tags (book_url, tag) VALUES (?1, ?2)")?;
         for tag in tags {
             stmt.execute(params![book_url, tag])?;
         }
@@ -155,9 +165,10 @@ impl Db {
     }
 
     fn sync_chapters(&self, book_url: &str, chapters: &[Chapter]) -> Result<()> {
-        self.conn.execute("DELETE FROM chapters WHERE book_url = ?", [book_url])?;
+        self.conn
+            .execute("DELETE FROM chapters WHERE book_url = ?", [book_url])?;
         let mut stmt = self.conn.prepare(
-            "INSERT OR IGNORE INTO chapters (book_url, url, title, ord) VALUES (?1, ?2, ?3, ?4)"
+            "INSERT OR IGNORE INTO chapters (book_url, url, title, ord) VALUES (?1, ?2, ?3, ?4)",
         )?;
         for ch in chapters {
             stmt.execute(params![book_url, ch.url, ch.title, ch.order])?;
@@ -193,19 +204,19 @@ fn data_path() -> std::path::PathBuf {
 
 fn status_str(s: &BookStatus) -> &'static str {
     match s {
-        BookStatus::Reading   => "Reading",
-        BookStatus::Paused    => "Paused",
-        BookStatus::Dropped   => "Dropped",
+        BookStatus::Reading => "Reading",
+        BookStatus::Paused => "Paused",
+        BookStatus::Dropped => "Dropped",
         BookStatus::Completed => "Completed",
     }
 }
 
 fn parse_status(s: &str) -> BookStatus {
     match s {
-        "Paused"    => BookStatus::Paused,
-        "Dropped"   => BookStatus::Dropped,
+        "Paused" => BookStatus::Paused,
+        "Dropped" => BookStatus::Dropped,
         "Completed" => BookStatus::Completed,
-        _           => BookStatus::Reading,
+        _ => BookStatus::Reading,
     }
 }
 
@@ -223,13 +234,24 @@ mod tests {
             title: format!("Book {}", url),
             url: url.to_string(),
             status: BookStatus::Reading,
-            progress: Progress { current: 0, total: 10 },
+            progress: Progress {
+                current: 0,
+                total: 10,
+            },
             tags: vec!["tag1".into()],
             cover_url: None,
             description: Some("desc".into()),
             chapters: vec![
-                Chapter { url: "ch1".into(), title: "Chapter 1".into(), order: 1 },
-                Chapter { url: "ch2".into(), title: "Chapter 2".into(), order: 2 },
+                Chapter {
+                    url: "ch1".into(),
+                    title: "Chapter 1".into(),
+                    order: 1,
+                },
+                Chapter {
+                    url: "ch2".into(),
+                    title: "Chapter 2".into(),
+                    order: 2,
+                },
             ],
         }
     }
@@ -350,7 +372,11 @@ mod tests {
         db.upsert_book(&sample_book("url")).unwrap();
 
         let mut book = sample_book("url");
-        book.chapters = vec![Chapter { url: "ch-new".into(), title: "New".into(), order: 99 }];
+        book.chapters = vec![Chapter {
+            url: "ch-new".into(),
+            title: "New".into(),
+            order: 99,
+        }];
         db.upsert_book(&book).unwrap();
 
         let books = db.load_books().unwrap();
@@ -360,7 +386,12 @@ mod tests {
 
     #[test]
     fn test_status_str_roundtrip() {
-        for status in &[BookStatus::Reading, BookStatus::Paused, BookStatus::Dropped, BookStatus::Completed] {
+        for status in &[
+            BookStatus::Reading,
+            BookStatus::Paused,
+            BookStatus::Dropped,
+            BookStatus::Completed,
+        ] {
             let s = status_str(status);
             assert_eq!(&parse_status(s), status);
         }

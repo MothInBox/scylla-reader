@@ -21,7 +21,14 @@ impl PluginConfig {
         } else {
             (Self::default_values(&schema), String::new())
         };
-        Self { domain: domain.to_string(), schema, accepts_cookies, values, cookies, path }
+        Self {
+            domain: domain.to_string(),
+            schema,
+            accepts_cookies,
+            values,
+            cookies,
+            path,
+        }
     }
 
     pub fn discover_all() -> Vec<PluginConfig> {
@@ -31,7 +38,12 @@ impl PluginConfig {
 
         if let Ok(entries) = fs::read_dir(&dir) {
             for entry in entries.flatten() {
-                if entry.path().extension().map(|x| x == "json").unwrap_or(false) {
+                if entry
+                    .path()
+                    .extension()
+                    .map(|x| x == "json")
+                    .unwrap_or(false)
+                {
                     let path = entry.path();
                     let contents = match fs::read_to_string(&path) {
                         Ok(c) => c,
@@ -54,14 +66,17 @@ impl PluginConfig {
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
                     let (values, cookies) = Self::load_from_disk(&path, &schema);
-                    configs.insert(domain.clone(), PluginConfig {
-                        domain,
-                        schema,
-                        accepts_cookies,
-                        values,
-                        cookies,
-                        path,
-                    });
+                    configs.insert(
+                        domain.clone(),
+                        PluginConfig {
+                            domain,
+                            schema,
+                            accepts_cookies,
+                            values,
+                            cookies,
+                            path,
+                        },
+                    );
                 }
             }
         }
@@ -70,21 +85,24 @@ impl PluginConfig {
         if let Ok(entries) = fs::read_dir(&plugin_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("wasm") { continue; }
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if let Some(domain) = stem.strip_prefix("plugin-") {
-                        if !configs.contains_key(domain) {
-                            configs.insert(domain.to_string(), PluginConfig {
-                                domain: domain.to_string(),
-                                schema: vec![],
-                                accepts_cookies: true,
-                                values: HashMap::new(),
-                                cookies: String::new(),
-                                path: config_dir().join(format!("{}.json", domain)),
-                            });
-                        }
-                    }
+                if path.extension().and_then(|e| e.to_str()) != Some("wasm") {
+                    continue;
                 }
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                    && let Some(domain) = stem.strip_prefix("plugin-")
+                        && !configs.contains_key(domain) {
+                            configs.insert(
+                                domain.to_string(),
+                                PluginConfig {
+                                    domain: domain.to_string(),
+                                    schema: vec![],
+                                    accepts_cookies: true,
+                                    values: HashMap::new(),
+                                    cookies: String::new(),
+                                    path: config_dir().join(format!("{}.json", domain)),
+                                },
+                            );
+                        }
             }
         }
 
@@ -107,8 +125,14 @@ impl PluginConfig {
         if let Ok(schema_json) = serde_json::to_value(&self.schema) {
             map.insert("_schema".into(), schema_json);
         }
-        map.insert("_accepts_cookies".into(), serde_json::Value::Bool(self.accepts_cookies));
-        map.insert("_cookies".into(), serde_json::Value::String(self.cookies.clone()));
+        map.insert(
+            "_accepts_cookies".into(),
+            serde_json::Value::Bool(self.accepts_cookies),
+        );
+        map.insert(
+            "_cookies".into(),
+            serde_json::Value::String(self.cookies.clone()),
+        );
         for (k, v) in &self.values {
             map.insert(k.clone(), serde_json::Value::String(v.clone()));
         }
@@ -173,51 +197,52 @@ impl PluginConfig {
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
             let mut changed = false;
 
-            if let Ok(s) = serde_json::to_value(schema) {
-                if json.get("_schema") != Some(&s) {
-                    if let Some(obj) = json.as_object_mut() {
+            if let Ok(s) = serde_json::to_value(schema)
+                && json.get("_schema") != Some(&s)
+                    && let Some(obj) = json.as_object_mut() {
                         obj.insert("_schema".into(), s);
                         changed = true;
                     }
-                }
-            }
 
             let current_ac = json.get("_accepts_cookies").and_then(|v| v.as_bool());
-            if current_ac != Some(accepts_cookies) {
-                if let Some(obj) = json.as_object_mut() {
-                    obj.insert("_accepts_cookies".into(), serde_json::Value::Bool(accepts_cookies));
+            if current_ac != Some(accepts_cookies)
+                && let Some(obj) = json.as_object_mut() {
+                    obj.insert(
+                        "_accepts_cookies".into(),
+                        serde_json::Value::Bool(accepts_cookies),
+                    );
                     changed = true;
                 }
-            }
 
             if json.get("_cookies").is_none() {
                 let txt_path = config_dir().join(format!("{}.txt", domain));
                 if txt_path.exists() {
                     let txt_content = fs::read_to_string(&txt_path).unwrap_or_default();
                     fs::remove_file(&txt_path).ok();
-                    if !txt_content.trim().is_empty() {
-                        if let Some(obj) = json.as_object_mut() {
+                    if !txt_content.trim().is_empty()
+                        && let Some(obj) = json.as_object_mut() {
                             obj.insert("_cookies".into(), serde_json::Value::String(txt_content));
                             changed = true;
                         }
-                    }
                 }
             }
 
             if let Some(obj) = json.as_object_mut() {
                 for field in schema {
                     if !obj.contains_key(&field.key) {
-                        obj.insert(field.key.clone(), serde_json::Value::String(field.default.clone()));
+                        obj.insert(
+                            field.key.clone(),
+                            serde_json::Value::String(field.default.clone()),
+                        );
                         changed = true;
                     }
                 }
             }
 
-            if changed {
-                if let Ok(contents) = serde_json::to_string_pretty(&json) {
+            if changed
+                && let Ok(contents) = serde_json::to_string_pretty(&json) {
                     fs::write(&path, contents).ok();
                 }
-            }
         } else {
             let mut map = serde_json::Map::new();
 
@@ -225,10 +250,16 @@ impl PluginConfig {
                 map.insert("_schema".into(), s);
             }
 
-            map.insert("_accepts_cookies".into(), serde_json::Value::Bool(accepts_cookies));
+            map.insert(
+                "_accepts_cookies".into(),
+                serde_json::Value::Bool(accepts_cookies),
+            );
 
             for field in schema {
-                map.insert(field.key.clone(), serde_json::Value::String(field.default.clone()));
+                map.insert(
+                    field.key.clone(),
+                    serde_json::Value::String(field.default.clone()),
+                );
             }
 
             let txt_path = config_dir().join(format!("{}.txt", domain));
@@ -248,17 +279,25 @@ impl PluginConfig {
 
     fn migrate_txt_files() {
         let dir = config_dir();
-        let Ok(entries) = fs::read_dir(&dir) else { return };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("txt") { continue; }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-            if stem == "library" { continue; }
+            if path.extension().and_then(|e| e.to_str()) != Some("txt") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if stem == "library" {
+                continue;
+            }
             let json_path = dir.join(format!("{}.json", stem));
             if json_path.exists() {
                 let contents = fs::read_to_string(&json_path).ok();
-                let json: Option<serde_json::Value> = contents
-                    .and_then(|c| serde_json::from_str(&c).ok());
+                let json: Option<serde_json::Value> =
+                    contents.and_then(|c| serde_json::from_str(&c).ok());
                 let has_cookies = json
                     .as_ref()
                     .and_then(|v| v.as_object())
@@ -270,7 +309,9 @@ impl PluginConfig {
                     let txt_content = fs::read_to_string(&path).unwrap_or_default();
                     if let Some(mut obj) = json.and_then(|v| v.as_object().cloned()) {
                         obj.insert("_cookies".into(), serde_json::Value::String(txt_content));
-                        if let Ok(updated) = serde_json::to_string_pretty(&serde_json::Value::Object(obj)) {
+                        if let Ok(updated) =
+                            serde_json::to_string_pretty(&serde_json::Value::Object(obj))
+                        {
                             fs::write(&json_path, updated).ok();
                         }
                     }
@@ -281,13 +322,15 @@ impl PluginConfig {
     }
 
     fn default_values(schema: &[ConfigField]) -> HashMap<String, String> {
-        schema.iter().map(|f| (f.key.clone(), f.default.clone())).collect()
+        schema
+            .iter()
+            .map(|f| (f.key.clone(), f.default.clone()))
+            .collect()
     }
 
     fn load_from_disk(path: &PathBuf, schema: &[ConfigField]) -> (HashMap<String, String>, String) {
         let contents = fs::read_to_string(path).ok();
-        let json: Option<serde_json::Value> =
-            contents.and_then(|c| serde_json::from_str(&c).ok());
+        let json: Option<serde_json::Value> = contents.and_then(|c| serde_json::from_str(&c).ok());
         let mut values = Self::default_values(schema);
         let mut cookies = String::new();
         if let Some(obj) = json.and_then(|v| v.as_object().cloned()) {
@@ -301,7 +344,11 @@ impl PluginConfig {
                     }
                 }
             }
-            cookies = obj.get("_cookies").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            cookies = obj
+                .get("_cookies")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
         }
         (values, cookies)
     }
@@ -440,16 +487,17 @@ mod tests {
 
     #[test]
     fn test_for_domain_new_creates_default_values() {
-        let schema = vec![
-            ConfigField {
-                key: "a".into(),
-                label: "A".into(),
-                field_type: "string".into(),
-                default: "default_a".into(),
-            },
-        ];
+        let schema = vec![ConfigField {
+            key: "a".into(),
+            label: "A".into(),
+            field_type: "string".into(),
+            default: "default_a".into(),
+        }];
         let config = PluginConfig::for_domain("nonexistent_test_domain", schema, true);
-        assert_eq!(config.values.get("a").map(|v| v.as_str()), Some("default_a"));
+        assert_eq!(
+            config.values.get("a").map(|v| v.as_str()),
+            Some("default_a")
+        );
         assert!(config.cookies.is_empty());
     }
 

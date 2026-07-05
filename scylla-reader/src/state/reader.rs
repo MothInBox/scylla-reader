@@ -12,6 +12,12 @@ pub struct ReaderState {
     pub loading: bool,
 }
 
+impl Default for ReaderState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReaderState {
     pub fn new() -> Self {
         Self {
@@ -69,7 +75,7 @@ impl ReaderState {
             .iter()
             .map(|l| Self::wrap_line_count(l, width))
             .sum();
-        let pages = (visual_lines + lpp - 1) / lpp;
+        let pages = visual_lines.div_ceil(lpp);
         if pages == 0 { 1 } else { pages }
     }
 
@@ -95,7 +101,7 @@ impl ReaderState {
         if vlines.is_empty() {
             vlines.push(String::new());
         }
-        let total_pages = (vlines.len() + lpp - 1) / lpp;
+        let total_pages = vlines.len().div_ceil(lpp);
         let page_idx = std::cmp::min(self.page, total_pages.saturating_sub(1));
         let start = page_idx * lpp;
         let end = (start + lpp).min(vlines.len());
@@ -113,6 +119,14 @@ impl ReaderState {
         let mut cur = 0usize;
         for word in line.split_whitespace() {
             let wlen = word.chars().count();
+            if wlen > width {
+                if cur > 0 {
+                    count += 1;
+                }
+                count += wlen / width;
+                cur = wlen % width;
+                continue;
+            }
             if cur == 0 {
                 cur = wlen;
             } else if cur + 1 + wlen <= width {
@@ -140,6 +154,25 @@ impl ReaderState {
         let mut cur_len = 0usize;
         for word in line.split_whitespace() {
             let wlen = word.chars().count();
+            if wlen > width {
+                if !cur.is_empty() {
+                    parts.push(cur);
+                    cur = String::new();
+                    cur_len = 0;
+                }
+                let mut chars = word.chars().peekable();
+                while chars.peek().is_some() {
+                    let chunk: String = chars.by_ref().take(width).collect();
+                    let chunk_len = chunk.chars().count();
+                    if chunk_len == width {
+                        parts.push(chunk);
+                    } else {
+                        cur = chunk;
+                        cur_len = chunk_len;
+                    }
+                }
+                continue;
+            }
             if cur.is_empty() {
                 cur.push_str(word);
                 cur_len = wlen;
@@ -286,7 +319,13 @@ mod tests {
     #[test]
     fn test_load_basic() {
         let mut r = ReaderState::new();
-        r.load("Book".into(), "url".into(), "Ch1".into(), "hello\nworld\n".into(), 0);
+        r.load(
+            "Book".into(),
+            "url".into(),
+            "Ch1".into(),
+            "hello\nworld\n".into(),
+            0,
+        );
         assert_eq!(r.content, vec!["hello", "world"]);
         assert_eq!(r.book_title, "Book");
         assert_eq!(r.chapter_title, "Ch1");
@@ -297,7 +336,13 @@ mod tests {
     #[test]
     fn test_load_strips_trailing_blanks() {
         let mut r = ReaderState::new();
-        r.load("".into(), "".into(), "".into(), "a\nb\n\n  \n\t\n".into(), 0);
+        r.load(
+            "".into(),
+            "".into(),
+            "".into(),
+            "a\nb\n\n  \n\t\n".into(),
+            0,
+        );
         assert_eq!(r.content, vec!["a", "b"]);
     }
 
@@ -341,7 +386,10 @@ mod tests {
     #[test]
     fn test_total_pages_for_multi_page() {
         let mut r = ReaderState::new();
-        let content = (0..50).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let content = (0..50)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
         r.load("".into(), "".into(), "".into(), content, 0);
         assert_eq!(r.total_pages_for(80, 20), 4);
     }
@@ -370,7 +418,7 @@ mod tests {
     #[test]
     fn test_wrap_line_count_very_long_word() {
         let long_word = "a".repeat(100);
-        assert_eq!(ReaderState::wrap_line_count(&long_word, 10), 1);
+        assert_eq!(ReaderState::wrap_line_count(&long_word, 10), 10);
     }
 
     #[test]
@@ -404,6 +452,16 @@ mod tests {
     }
 
     #[test]
+    fn test_wrap_line_very_long_word() {
+        let long_word = "a".repeat(100);
+        let result = ReaderState::wrap_line(&long_word, 10);
+        assert_eq!(result.len(), 10);
+        for line in &result {
+            assert_eq!(line.chars().count(), 10);
+        }
+    }
+
+    #[test]
     fn test_page_lines_wrapped_empty() {
         let r = ReaderState::new();
         let lines = r.page_lines_wrapped(80, 20);
@@ -423,7 +481,10 @@ mod tests {
     #[test]
     fn test_page_lines_wrapped_returns_correct_page() {
         let mut r = ReaderState::new();
-        let content = (0..10).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let content = (0..10)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
         r.load("".into(), "".into(), "".into(), content, 0);
         r.page = 0;
         let page0 = r.page_lines_wrapped(80, 6);
@@ -434,7 +495,16 @@ mod tests {
     #[test]
     fn test_next_page_increments() {
         let mut r = ReaderState::new();
-        r.load("".into(), "".into(), "".into(), (0..10).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"), 0);
+        r.load(
+            "".into(),
+            "".into(),
+            "".into(),
+            (0..10)
+                .map(|i| format!("line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            0,
+        );
         r.next_page(80, 6);
         assert_eq!(r.page, 1);
     }
@@ -450,7 +520,16 @@ mod tests {
     #[test]
     fn test_prev_page_decrements() {
         let mut r = ReaderState::new();
-        r.load("".into(), "".into(), "".into(), (0..10).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"), 0);
+        r.load(
+            "".into(),
+            "".into(),
+            "".into(),
+            (0..10)
+                .map(|i| format!("line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            0,
+        );
         r.page = 2;
         r.prev_page(80, 6);
         assert_eq!(r.page, 1);
@@ -467,7 +546,16 @@ mod tests {
     #[test]
     fn test_scroll_down_normal() {
         let mut r = ReaderState::new();
-        r.load("".into(), "".into(), "".into(), (0..10).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"), 0);
+        r.load(
+            "".into(),
+            "".into(),
+            "".into(),
+            (0..10)
+                .map(|i| format!("line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            0,
+        );
         r.scroll_down(3);
         assert_eq!(r.scroll, 3);
     }
@@ -475,7 +563,16 @@ mod tests {
     #[test]
     fn test_scroll_down_clamps() {
         let mut r = ReaderState::new();
-        r.load("".into(), "".into(), "".into(), (0..3).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"), 0);
+        r.load(
+            "".into(),
+            "".into(),
+            "".into(),
+            (0..3)
+                .map(|i| format!("line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            0,
+        );
         r.scroll_down(100);
         assert_eq!(r.scroll, 2);
     }
@@ -490,7 +587,16 @@ mod tests {
     #[test]
     fn test_scroll_up_normal() {
         let mut r = ReaderState::new();
-        r.load("".into(), "".into(), "".into(), (0..10).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"), 0);
+        r.load(
+            "".into(),
+            "".into(),
+            "".into(),
+            (0..10)
+                .map(|i| format!("line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            0,
+        );
         r.scroll = 5;
         r.scroll_up(2);
         assert_eq!(r.scroll, 3);
@@ -507,7 +613,16 @@ mod tests {
     #[test]
     fn test_total_pages_delegates() {
         let mut r = ReaderState::new();
-        r.load("".into(), "".into(), "".into(), (0..50).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"), 0);
+        r.load(
+            "".into(),
+            "".into(),
+            "".into(),
+            (0..50)
+                .map(|i| format!("line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            0,
+        );
         assert_eq!(r.total_pages(20), 4);
     }
 
@@ -517,6 +632,12 @@ mod tests {
         let width = 10;
         let count = ReaderState::wrap_line_count(line, width);
         let wrapped = ReaderState::wrap_line(line, width);
+        assert_eq!(count, wrapped.len());
+
+        let long_line = format!("a small word {} and another", "a".repeat(100));
+        let width = 10;
+        let count = ReaderState::wrap_line_count(&long_line, width);
+        let wrapped = ReaderState::wrap_line(&long_line, width);
         assert_eq!(count, wrapped.len());
     }
 }

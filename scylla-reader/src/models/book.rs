@@ -1,7 +1,7 @@
 //! Book and Chapter structs.
 
-use serde::{Deserialize, Serialize};
 use crate::models::Progress;
+use serde::{Deserialize, Serialize};
 
 #[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub enum BookStatus {
@@ -14,9 +14,9 @@ pub enum BookStatus {
 impl BookStatus {
     pub fn next(&self) -> BookStatus {
         match self {
-            BookStatus::Reading   => BookStatus::Paused,
-            BookStatus::Paused    => BookStatus::Dropped,
-            BookStatus::Dropped   => BookStatus::Completed,
+            BookStatus::Reading => BookStatus::Paused,
+            BookStatus::Paused => BookStatus::Dropped,
+            BookStatus::Dropped => BookStatus::Completed,
             BookStatus::Completed => BookStatus::Reading,
         }
     }
@@ -25,9 +25,9 @@ impl BookStatus {
 impl std::fmt::Display for BookStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            BookStatus::Reading   => write!(f, "Reading"),
-            BookStatus::Paused    => write!(f, "Paused"),
-            BookStatus::Dropped   => write!(f, "Dropped"),
+            BookStatus::Reading => write!(f, "Reading"),
+            BookStatus::Paused => write!(f, "Paused"),
+            BookStatus::Dropped => write!(f, "Dropped"),
             BookStatus::Completed => write!(f, "Completed"),
         }
     }

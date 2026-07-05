@@ -28,6 +28,12 @@ pub struct Library {
     pub cached_protocol: Option<StatefulProtocol>,
 }
 
+impl Default for Library {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Library {
     pub fn new() -> Self {
         Self {
@@ -376,7 +382,9 @@ mod tests {
 
         lib.selected_index = 0;
         lib.select_next();
-        assert_eq!(lib.selected_index, 0, "should not navigate past visible items");
+        assert_eq!(
+            lib.selected_index, 0,
+            "should not navigate past visible items"
+        );
     }
-
 }

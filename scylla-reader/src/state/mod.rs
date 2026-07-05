@@ -18,7 +18,14 @@ pub struct AppState {
     pub settings: Settings,
     pub reader: ReaderState,
     pub db: Db,
+    pub show_hints: bool,
 }
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self {
@@ -28,9 +35,14 @@ impl AppState {
             settings: Settings::new(),
             reader: ReaderState::new(),
             db: Db::open().unwrap_or_else(|e| {
-                crate::settings::log(crate::settings::LogLevel::Error, "DB", &format!("DB open failed: {}", e));
+                crate::settings::log(
+                    crate::settings::LogLevel::Error,
+                    "DB",
+                    &format!("DB open failed: {}", e),
+                );
                 panic!("Could not open database");
             }),
+            show_hints: true,
         }
     }
 
@@ -58,6 +70,7 @@ impl AppState {
             settings: Settings::new(),
             reader: ReaderState::new(),
             db,
+            show_hints: true,
         }
     }
 
@@ -140,6 +153,41 @@ mod tests {
         state.open_reader_chapter("Ch1".into(), "content".into(), 0);
         assert_eq!(state.current_page, Page::Reader);
         assert!(state.reader.book_title.is_empty());
+    }
+
+    #[test]
+    fn test_show_hints_defaults_to_true() {
+        let state = test_state();
+        assert!(state.show_hints);
+    }
+
+    #[test]
+    fn test_toggle_show_hints() {
+        let mut state = test_state();
+        assert!(state.show_hints);
+        state.show_hints = false;
+        assert!(!state.show_hints);
+    }
+
+    #[test]
+    fn test_command_palette_modal_variant() {
+        let modal = Modal::CommandPalette {
+            query: String::new(),
+            filtered: Vec::new(),
+            selected: 0,
+        };
+        match modal {
+            Modal::CommandPalette {
+                query,
+                filtered,
+                selected,
+            } => {
+                assert!(query.is_empty());
+                assert!(filtered.is_empty());
+                assert_eq!(selected, 0);
+            }
+            _ => panic!("Expected CommandPalette variant"),
+        }
     }
 
     #[test]
