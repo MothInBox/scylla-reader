@@ -104,11 +104,17 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 .unwrap_or_default();
 
             let session_label = |s: &Session| {
+                let date = if s.updated_at.len() >= 10 {
+                    &s.updated_at[..10]
+                } else {
+                    &s.updated_at
+                };
                 format!(
-                    "{} — {}/{}",
+                    "{:20} {:>4}/{}  {}",
                     s.name,
                     (s.progress.current + 1).min(s.progress.total),
-                    s.progress.total
+                    s.progress.total,
+                    date,
                 )
             };
 
