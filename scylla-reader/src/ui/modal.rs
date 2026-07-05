@@ -89,6 +89,8 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
             book_url,
             cursor,
             scroll_offset,
+            input,
+            editing_id,
         } => {
             let popup_area = centered_rect(60, 50, area);
             frame.render_widget(Clear, popup_area);
@@ -119,50 +121,39 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 if count == 1 { "" } else { "s" }
             );
 
-            draw_scrollable_list(
-                frame,
-                popup_area,
-                title,
-                items,
-                *cursor,
-                scroll_offset,
-                " [Enter] Open  [n] New  [r] Rename  [d] Delete  [↑↓] Move  [Esc] Cancel",
-            );
-        }
+            if let Some(text) = input {
+                let block = Block::default()
+                    .title(title)
+                    .borders(Borders::ALL);
+                let inner = block.inner(popup_area);
+                frame.render_widget(block, popup_area);
 
-        Modal::SessionNameInput {
-            book_url: _,
-            session_id,
-            input,
-        } => {
-            let popup_area = centered_rect(60, 20, area);
-            frame.render_widget(Clear, popup_area);
+                let input_label = if editing_id.is_some() { "Rename:" } else { "Name:" };
+                let display = format!("{} {}", input_label, text);
+                let input_para = Paragraph::new(display)
+                    .style(Style::default().fg(Color::Yellow));
+                frame.render_widget(input_para, inner);
 
-            let title = if session_id.is_some() {
-                " Rename Session "
+                let hints = Paragraph::new(" [Enter] Confirm  [Esc] Cancel ")
+                    .style(Style::default().fg(Color::DarkGray));
+                let hints_area = Rect {
+                    x: popup_area.x,
+                    y: popup_area.y + popup_area.height - 1,
+                    width: popup_area.width,
+                    height: 1,
+                };
+                frame.render_widget(hints, hints_area);
             } else {
-                " New Session Name "
-            };
-
-            let block = Block::default()
-                .title(title)
-                .borders(Borders::ALL);
-            let inner = block.inner(popup_area);
-            frame.render_widget(block, popup_area);
-
-            let input_para = Paragraph::new(input.as_str())
-                .style(Style::default().fg(Color::Yellow));
-            frame.render_widget(input_para, inner);
-
-            let hints = Paragraph::new(" [Enter] Confirm  [Esc] Cancel ")
-                .style(Style::default().fg(Color::DarkGray));
-            let hints_area = Rect {
-                x: popup_area.x,
-                y: popup_area.y + popup_area.height - 1,
-                width: popup_area.width,
-                height: 1,
-            };
-            frame.render_widget(hints, hints_area);
+                draw_scrollable_list(
+                    frame,
+                    popup_area,
+                    title,
+                    items,
+                    *cursor,
+                    scroll_offset,
+                    " [Enter] Open  [n] New  [r] Rename  [d] Delete  [↑↓] Move  [Esc] Cancel",
+                );
+            }
         }
 
         Modal::CommandPalette { .. } => unreachable!(),
