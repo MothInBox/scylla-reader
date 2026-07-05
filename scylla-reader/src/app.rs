@@ -219,8 +219,8 @@ impl App {
             }
             KeyCode::Char('2') => {
                 self.state.current_page = Page::Reader;
-                if self.state.reader.content.is_empty() {
-                    if let Some(book) = self.state.library.selected_book() {
+                if let Some(book) = self.state.library.selected_book() {
+                    if self.state.reader.book_url != book.url {
                         let idx = book.progress.current as usize;
                         if let Some(ch) = book.chapters.get(idx) {
                             self.state.reader.loading = true;
