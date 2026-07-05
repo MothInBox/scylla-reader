@@ -113,6 +113,14 @@ impl ReaderState {
         let mut cur = 0usize;
         for word in line.split_whitespace() {
             let wlen = word.chars().count();
+            if wlen > width {
+                if cur > 0 {
+                    count += 1;
+                }
+                count += wlen / width;
+                cur = wlen % width;
+                continue;
+            }
             if cur == 0 {
                 cur = wlen;
             } else if cur + 1 + wlen <= width {
@@ -140,6 +148,25 @@ impl ReaderState {
         let mut cur_len = 0usize;
         for word in line.split_whitespace() {
             let wlen = word.chars().count();
+            if wlen > width {
+                if !cur.is_empty() {
+                    parts.push(cur);
+                    cur = String::new();
+                    cur_len = 0;
+                }
+                let mut chars = word.chars().peekable();
+                while chars.peek().is_some() {
+                    let chunk: String = chars.by_ref().take(width).collect();
+                    let chunk_len = chunk.chars().count();
+                    if chunk_len == width {
+                        parts.push(chunk);
+                    } else {
+                        cur = chunk;
+                        cur_len = chunk_len;
+                    }
+                }
+                continue;
+            }
             if cur.is_empty() {
                 cur.push_str(word);
                 cur_len = wlen;
@@ -385,7 +412,7 @@ mod tests {
     #[test]
     fn test_wrap_line_count_very_long_word() {
         let long_word = "a".repeat(100);
-        assert_eq!(ReaderState::wrap_line_count(&long_word, 10), 1);
+        assert_eq!(ReaderState::wrap_line_count(&long_word, 10), 10);
     }
 
     #[test]
@@ -416,6 +443,16 @@ mod tests {
     fn test_wrap_line_single_word_fits() {
         let result = ReaderState::wrap_line("hello", 10);
         assert_eq!(result, vec!["hello"]);
+    }
+
+    #[test]
+    fn test_wrap_line_very_long_word() {
+        let long_word = "a".repeat(100);
+        let result = ReaderState::wrap_line(&long_word, 10);
+        assert_eq!(result.len(), 10);
+        for line in &result {
+            assert_eq!(line.chars().count(), 10);
+        }
     }
 
     #[test]
@@ -589,6 +626,12 @@ mod tests {
         let width = 10;
         let count = ReaderState::wrap_line_count(line, width);
         let wrapped = ReaderState::wrap_line(line, width);
+        assert_eq!(count, wrapped.len());
+
+        let long_line = format!("a small word {} and another", "a".repeat(100));
+        let width = 10;
+        let count = ReaderState::wrap_line_count(&long_line, width);
+        let wrapped = ReaderState::wrap_line(&long_line, width);
         assert_eq!(count, wrapped.len());
     }
 }

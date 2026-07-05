@@ -115,17 +115,22 @@ impl App {
                         existing.cover_url = book.cover_url.clone();
                         existing.description = book.description.clone();
                         existing.chapters = book.chapters.clone();
-                    } else {
-                        self.state.library.books.push(book.clone());
-                    }
-                    if let Some(b) = self.state.library.books.iter().find(|b| b.url == book.url) {
-                        self.state.db.upsert_book(b).unwrap_or_else(|e| {
+                        self.state.db.upsert_book(existing).unwrap_or_else(|e| {
                             crate::settings::log(
                                 crate::settings::LogLevel::Debug,
                                 "UI",
                                 &format!("DB upsert failed: {}", e),
                             );
                         });
+                    } else {
+                        self.state.db.upsert_book(&book).unwrap_or_else(|e| {
+                            crate::settings::log(
+                                crate::settings::LogLevel::Debug,
+                                "UI",
+                                &format!("DB upsert failed: {}", e),
+                            );
+                        });
+                        self.state.library.books.push(book);
                     }
                     self.last_cover_url = None;
                 }

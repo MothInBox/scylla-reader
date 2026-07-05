@@ -38,6 +38,7 @@ pub fn handle_settings_main(
                     if state.settings.editing {
                         if let Ok(rate) = state.settings.edit_buffer.parse::<u64>() {
                             state.settings.rate_limit_secs = rate;
+                            state.settings.save();
                             let _ = cmd_tx.send(AppCommand::SetRateLimit(rate));
                         }
                         state.settings.editing = false;
@@ -53,6 +54,7 @@ pub fn handle_settings_main(
                 }
                 SettingsField::ReaderMode => {
                     state.settings.reader_mode = state.settings.reader_mode.toggle();
+                    state.settings.save();
                 }
                 SettingsField::Plugins => {
                     state.settings.reload_plugins();
@@ -79,6 +81,7 @@ fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
         KeyCode::Enter => {
             state.settings.debug_log = !state.settings.debug_log;
             crate::settings::set_debug(state.settings.debug_log);
+            state.settings.save();
             if state.settings.debug_log {
                 let log_path = crate::settings::log_file();
                 if let Some(parent) = log_path.parent() {
