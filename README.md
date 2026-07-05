@@ -104,7 +104,7 @@ make
 | Key | Action |
 |-----|--------|
 | `1` | Library |
-| `2` | Reader |
+| `2` | Reader (skip session picker, open most recent) |
 | `3` | Settings |
 | `:` | Command Palette |
 | `?` | Toggle Hints |
@@ -119,7 +119,7 @@ make
 | `d` | Delete Book |
 | `f` | Cycle Filter |
 | `Space` | Cycle Status |
-| `Enter` | Open Book |
+| `Enter` | Session Picker |
 | `↑/↓` | Navigate |
 
 ### Reader
@@ -131,6 +131,7 @@ make
 | `←` | Prev Page (Paged) |
 | `↓` | Scroll Down (Scrollable) |
 | `↑` | Scroll Up (Scrollable) |
+| `s` | Session Picker |
 | `Esc` | Back to Library |
 ### Settings
 | Key | Action |
@@ -147,6 +148,9 @@ make
 | `↑/↓` | Navigate |
 | `Ctrl+S` | Submit (Add Book) |
 | `t` | Toggle Title/URL (Jump) |
+| `n` | New Session (Session Picker) |
+| `r` | Rename Session (Session Picker) |
+| `d` | Delete Session (Session Picker) |
 
 ## FAQ
 ### Where can I get plugins?
@@ -183,7 +187,7 @@ contains:
 ## Roadmap
 ### Features to Add
  - Easier way to install plugins. System to pull plugins from a git repo. Will require extension page.
- - Multiple "Reading Sessions" (imaybe youve completed a book but want to re-read and keep that progress, give them names too)
+ - ~~Multiple "Reading Sessions" (maybe you've completed a book but want to re-read and keep that progress, give them names too)~~
  - More customisation through settings
  - Persistent Settings
  - Seperation into a daemon/server and TUI client?

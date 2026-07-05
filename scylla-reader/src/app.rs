@@ -4,6 +4,7 @@
 use crate::input;
 use crate::messenger::{AppCommand, AppEvent};
 use crate::scrapers::services::ScraperRegistry;
+use crate::settings::SettingsPage;
 use crate::state::{AppState, Modal, Page};
 use crate::ui;
 use crate::worker;
@@ -77,9 +78,10 @@ impl App {
 
             if event::poll(Duration::from_millis(16))?
                 && let Event::Key(key) = event::read()?
-                    && !self.handle_key(key, area) {
-                        break Ok(());
-                    }
+                && !self.handle_key(key, area)
+            {
+                break Ok(());
+            }
         }
     }
 
@@ -109,7 +111,6 @@ impl App {
                         .find(|b| b.url == book.url)
                     {
                         existing.title = book.title.clone();
-                        existing.progress.total = book.progress.total;
                         existing.cover_url = book.cover_url.clone();
                         existing.description = book.description.clone();
                         existing.chapters = book.chapters.clone();
@@ -120,6 +121,9 @@ impl App {
                                 &format!("DB upsert failed: {}", e),
                             );
                         });
+                        if let Ok(sessions) = self.state.db.load_sessions_for_book(&existing.url) {
+                            existing.sessions = sessions;
+                        }
                     } else {
                         self.state.db.upsert_book(&book).unwrap_or_else(|e| {
                             crate::settings::log(
@@ -128,7 +132,19 @@ impl App {
                                 &format!("DB upsert failed: {}", e),
                             );
                         });
+                        let book_url = book.url.clone();
                         self.state.library.books.push(book);
+                        if let Some(b) = self
+                            .state
+                            .library
+                            .books
+                            .iter_mut()
+                            .find(|b| b.url == book_url)
+                        {
+                            if let Ok(sessions) = self.state.db.load_sessions_for_book(&book_url) {
+                                b.sessions = sessions;
+                            }
+                        }
                     }
                     self.last_cover_url = None;
                 }
@@ -139,24 +155,40 @@ impl App {
                         &format!("Chapter received: {}", chapter.title),
                     );
                     if let Some(book) = self.state.library.selected_book_mut() {
-                        book.progress.current = chapter.chapter_idx as u32;
-                    }
-                    if let Some(book) = self.state.library.selected_book() {
-                        self.state
-                            .db
-                            .update_progress(&book.url, book.progress.current, book.progress.total)
-                            .unwrap_or_else(|e| {
-                                crate::settings::log(
-                                    crate::settings::LogLevel::Debug,
-                                    "UI",
-                                    &format!("DB progress update failed: {}", e),
-                                );
-                            });
+                        if let Some(session) = book
+                            .sessions
+                            .iter_mut()
+                            .find(|s| s.id == self.state.reader.session_id)
+                        {
+                            session.progress.current = chapter.chapter_idx as u32;
+                            self.state
+                                .db
+                                .update_session_progress(session.id, session.progress.current)
+                                .unwrap_or_else(|e| {
+                                    crate::settings::log(
+                                        crate::settings::LogLevel::Debug,
+                                        "UI",
+                                        &format!("DB session progress update failed: {}", e),
+                                    );
+                                });
+                            self.state
+                                .db
+                                .set_active_session(&book.url, Some(session.id))
+                                .unwrap_or_else(|e| {
+                                    crate::settings::log(
+                                        crate::settings::LogLevel::Debug,
+                                        "UI",
+                                        &format!("DB set active session failed: {}", e),
+                                    );
+                                });
+                        }
                     }
                     self.state.open_reader_chapter(
                         chapter.title,
                         chapter.content,
                         chapter.chapter_idx,
+                        self.state.reader.session_id,
+                        self.state.reader.session_name.clone(),
                     );
                 }
                 AppEvent::CoverFetched(url, protocol) => {
@@ -209,7 +241,10 @@ impl App {
         if self.state.modal != Modal::None {
             if key.code == KeyCode::Esc {
                 self.state.close_modal();
-                if matches!(self.state.current_page, Page::AddingBook | Page::BookChapterJump) {
+                if matches!(
+                    self.state.current_page,
+                    Page::AddingBook | Page::BookChapterJump
+                ) {
                     self.state.current_page = Page::Library;
                 }
                 return true;
@@ -225,16 +260,25 @@ impl App {
             KeyCode::Char('2') => {
                 self.state.current_page = Page::Reader;
                 if let Some(book) = self.state.library.selected_book()
-                    && self.state.reader.book_url != book.url {
-                        let idx = book.progress.current as usize;
+                    && self.state.reader.book_url != book.url
+                {
+                    let session = book
+                        .active_session_id
+                        .and_then(|id| book.sessions.iter().find(|s| s.id == id))
+                        .or_else(|| book.sessions.first());
+                    if let Some(session) = session {
+                        self.state.reader.session_id = session.id;
+                        self.state.reader.session_name = session.name.clone();
+                        let idx = (session.progress.current as usize)
+                            .min(book.chapters.len().saturating_sub(1));
                         if let Some(ch) = book.chapters.get(idx) {
                             self.state.reader.loading = true;
-                            let _ = self.cmd_tx.send(AppCommand::FetchChapter(
-                                ch.url.clone(),
-                                idx,
-                            ));
+                            let _ = self
+                                .cmd_tx
+                                .send(AppCommand::FetchChapter(ch.url.clone(), idx));
                         }
                     }
+                }
                 return true;
             }
             KeyCode::Char('3') => {
@@ -255,7 +299,30 @@ impl App {
                 self.state.show_hints = !self.state.show_hints;
                 return true;
             }
-            KeyCode::Esc => return false,
+
+            KeyCode::Esc => {
+                if self.state.current_page == Page::Settings {
+                    match self.state.settings.settings_page {
+                        SettingsPage::Main => return false,
+                        SettingsPage::DebugLog => {
+                            self.state.settings.settings_page = SettingsPage::Main;
+                        }
+                        SettingsPage::PluginList => {
+                            self.state.settings.settings_page = SettingsPage::Main;
+                        }
+                        SettingsPage::PluginFields => {
+                            self.state.settings.settings_page = SettingsPage::PluginList;
+                        }
+                        SettingsPage::PluginFieldEdit => {
+                            self.state.settings.plugin_field_buffer.clear();
+                            self.state.settings.plugin_field_editing = false;
+                            self.state.settings.settings_page = SettingsPage::PluginFields;
+                        }
+                    }
+                    return true;
+                }
+                return false;
+            }
             _ => {}
         }
 
@@ -276,30 +343,32 @@ impl App {
         }
 
         if let Some(url) = removed_url
-            && self.state.library.books.len() < pre_books_len {
-                self.state.db.delete_book(&url).unwrap_or_else(|e| {
-                    crate::settings::log(
-                        crate::settings::LogLevel::Debug,
-                        "UI",
-                        &format!("DB delete failed: {}", e),
-                    );
-                });
-            }
+            && self.state.library.books.len() < pre_books_len
+        {
+            self.state.db.delete_book(&url).unwrap_or_else(|e| {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("DB delete failed: {}", e),
+                );
+            });
+        }
 
         if let Some((url, old_status)) = pre_status
             && let Some(book) = self.state.library.books.iter().find(|b| b.url == url)
-                && book.status != old_status {
-                    self.state
-                        .db
-                        .update_status(&book.url, &book.status)
-                        .unwrap_or_else(|e| {
-                            crate::settings::log(
-                                crate::settings::LogLevel::Debug,
-                                "UI",
-                                &format!("DB status update failed: {}", e),
-                            );
-                        });
-                }
+            && book.status != old_status
+        {
+            self.state
+                .db
+                .update_status(&book.url, &book.status)
+                .unwrap_or_else(|e| {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "UI",
+                        &format!("DB status update failed: {}", e),
+                    );
+                });
+        }
 
         true
     }

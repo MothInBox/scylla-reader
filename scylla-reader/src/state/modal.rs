@@ -18,6 +18,13 @@ pub enum Modal {
         scroll_offset: usize,
         show_titles: bool,
     },
+    SessionPicker {
+        book_url: String,
+        cursor: usize,
+        scroll_offset: usize,
+        input: Option<String>,
+        editing_id: Option<i64>,
+    },
     CommandPalette {
         query: String,
         filtered: Vec<PaletteAction>,

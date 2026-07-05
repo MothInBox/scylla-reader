@@ -1,7 +1,7 @@
 //! Book library — in-memory collection with filtering, selection, and
 //! cover-image caching.
 
-use crate::models::{Book, BookStatus, Progress};
+use crate::models::{Book, BookStatus};
 use ratatui_image::protocol::StatefulProtocol;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -70,15 +70,13 @@ impl Library {
         self.books.get_mut(real_idx)
     }
 
-    pub fn add_book(&mut self, title: String, url: String, total_pages: u32) {
+    pub fn add_book(&mut self, title: String, url: String, _total_pages: u32) {
         self.books.push(Book {
             title,
             url,
             status: BookStatus::Reading,
-            progress: Progress {
-                current: 0,
-                total: total_pages,
-            },
+            sessions: Vec::new(),
+            active_session_id: None,
             tags: Vec::new(),
             cover_url: None,
             description: None,
@@ -167,7 +165,7 @@ mod tests {
         assert_eq!(lib.books.len(), 1);
         assert_eq!(lib.books[0].title, "Title");
         assert_eq!(lib.books[0].url, "url");
-        assert_eq!(lib.books[0].progress.total, 42);
+        assert!(lib.books[0].sessions.is_empty());
         assert_eq!(lib.books[0].status, BookStatus::Reading);
     }
 
@@ -179,7 +177,7 @@ mod tests {
         }
         assert_eq!(lib.books.len(), 5);
         assert_eq!(lib.books[0].title, "Book A");
-        assert_eq!(lib.books[4].progress.total, 100);
+        assert!(lib.books[4].sessions.is_empty());
     }
 
     #[test]

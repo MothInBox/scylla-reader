@@ -50,31 +50,13 @@ pub fn handle_library(
         }
         KeyCode::Enter => {
             if let Some(book) = state.library.selected_book() {
-                if book.chapters.is_empty() {
-                    let book_title = book.title.clone();
-                    let desc = book
-                        .description
-                        .clone()
-                        .unwrap_or_else(|| "No content available.".to_string());
-                    crate::settings::log(
-                        crate::settings::LogLevel::Debug,
-                        "INPUT",
-                        &format!("No chapters for: {}", book_title),
-                    );
-                    state.open_reader_chapter("Description".to_string(), desc, 0);
-                } else {
-                    let idx = (book.progress.current as usize).min(book.chapters.len() - 1);
-                    let chapter_url = book.chapters[idx].url.clone();
-                    state.reader.loading = true;
-                    state.current_page = Page::Reader;
-                    if let Err(e) = cmd_tx.send(AppCommand::FetchChapter(chapter_url, idx)) {
-                        crate::settings::log(
-                            crate::settings::LogLevel::Debug,
-                            "INPUT",
-                            &format!("Failed to queue chapter: {}", e),
-                        );
-                    }
-                }
+                state.modal = Modal::SessionPicker {
+                    book_url: book.url.clone(),
+                    cursor: 0,
+                    scroll_offset: 0,
+                    input: None,
+                    editing_id: None,
+                };
             }
             true
         }
@@ -244,30 +226,14 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_library_enter_opens_reader_with_chapters() {
-        let mut state = test_state();
-        state.library.add_book("Test".into(), "url".into(), 10);
-        state.library.books[0].chapters.push(Chapter {
-            title: "Ch1".into(),
-            url: "http://example.com".into(),
-            order: 0,
-        });
-        let (tx, _rx) = channel();
-        let result = handle_library(&mut state, key_event(KeyCode::Enter), &tx);
-        assert!(result);
-        assert_eq!(state.current_page, Page::Reader);
-        assert!(state.reader.loading);
-    }
-
-    #[test]
-    fn test_handle_library_enter_shows_description_when_no_chapters() {
+    fn test_handle_library_enter_opens_session_picker() {
         let mut state = test_state();
         state.library.add_book("Test".into(), "url".into(), 10);
         let (tx, _rx) = channel();
         let result = handle_library(&mut state, key_event(KeyCode::Enter), &tx);
         assert!(result);
-        assert_eq!(state.current_page, Page::Reader);
-        assert_eq!(state.reader.chapter_title, "Description");
+        assert_eq!(state.current_page, Page::Library);
+        assert!(matches!(state.modal, Modal::SessionPicker { .. }));
     }
 
     #[test]

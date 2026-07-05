@@ -52,11 +52,17 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
         ])
         .split(area);
 
+    let session_label = if state.reader.session_name.is_empty() {
+        String::new()
+    } else {
+        format!(" [Session: {}]", state.reader.session_name)
+    };
     let header = Paragraph::new(format!(
-        " {} — Ch.{} {}",
+        " {} — Ch.{} {}{}",
         state.reader.book_title,
         state.reader.current_chapter_idx + 1,
         state.reader.chapter_title,
+        session_label,
     ))
     .style(Style::default().fg(Color::Yellow));
     frame.render_widget(header, chunks[0]);
@@ -111,11 +117,17 @@ fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
         ])
         .split(area);
 
+    let session_label = if state.reader.session_name.is_empty() {
+        String::new()
+    } else {
+        format!(" [Session: {}]", state.reader.session_name)
+    };
     let header = Paragraph::new(format!(
-        " {} — Ch.{} {}",
+        " {} — Ch.{} {}{}",
         state.reader.book_title,
         state.reader.current_chapter_idx + 1,
         state.reader.chapter_title,
+        session_label,
     ))
     .style(Style::default().fg(Color::Yellow));
     frame.render_widget(header, chunks[0]);
