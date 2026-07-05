@@ -1,6 +1,7 @@
 
 # Scylla Reader
 A TUI reader that interfaces with web assembly plugins to allow for an easily extensible Reader and Library manager.
+Your progress is kept for your books persistently, in local database.
 
 Features a scraper system, made to be extended by anyone via wasm:
 ![App Screenshot](extra/demo1.gif)
@@ -185,4 +186,5 @@ contains:
  - Multiple "Reading Sessions" (imaybe youve completed a book but want to re-read and keep that progress, give them names too)
  - More customisation through settings
  - Persistent Settings
+ - Seperation into a daemon/server and TUI client?
 Add all to dev branch then polish for main.

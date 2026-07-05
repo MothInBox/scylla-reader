@@ -126,7 +126,7 @@ impl ScraperRegistry {
             obj.remove("_cookies");
             obj.remove("_accepts_cookies");
         }
-        Some(json.to_string())
+    Some(serde_json::to_string(&json).ok()?)
     }
 
     pub async fn scrape_url(
