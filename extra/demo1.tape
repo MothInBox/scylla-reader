@@ -15,7 +15,7 @@ Show
 
 Type "scylla-reader"
 Enter
-Sleep 2s
+Sleep 1s
 
 Type "i"
 Sleep 500ms
@@ -28,10 +28,8 @@ Type "https://www.royalroad.com/fiction/117255/rend"
 Sleep 500ms
 
 Ctrl+S
-Sleep 1s
-
+Sleep 2s
 Down
 Sleep 1s
-
 Enter
 Sleep 2s

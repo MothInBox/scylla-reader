@@ -12,11 +12,12 @@ Enter
 
 Type "scylla-reader"
 Enter
-
+Sleep 500ms
 
 #Enter Book First time.
 Down
-Enter
+Sleep 500ms
+Type "2"
 
 #Show Book
 Show
@@ -31,17 +32,13 @@ Sleep 1s
 Left
 Sleep 1s
 
-Escape
+Type "3"
 Sleep 500ms
-Tab
-Sleep 500ms
-Down 3
+Down 2
 Sleep 500ms
 Enter
 Sleep 1s
-Tab
-Sleep 1s
-Enter
+Type "2"
 Sleep 500ms
 
 Down@20ms 30
