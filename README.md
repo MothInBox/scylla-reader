@@ -107,8 +107,7 @@ make
 | `3` | Settings |
 | `:` | Command Palette |
 | `?` | Toggle Hints |
-| `Esc` | Back / Close Modal |
-| `q` | Quit (from Library) |
+| `Esc` | Back / Quit (from Library) / Close Modal |
 
 ### Library
 | Key | Action |
