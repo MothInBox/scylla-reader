@@ -1,6 +1,7 @@
 use crate::messenger::AppCommand;
 use crate::state::modal::PaletteAction;
 use crate::state::{AppState, Modal, Page};
+use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 use std::sync::mpsc;
@@ -225,26 +226,6 @@ pub fn draw_palette(frame: &mut Frame, area: Rect, state: &AppState) {
 
         frame.render_stateful_widget(list, popup_area, &mut list_state);
     }
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }
 
 #[cfg(test)]
