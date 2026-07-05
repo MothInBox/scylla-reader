@@ -125,13 +125,13 @@ make
 ### Reader
 | Key | Action |
 |-----|--------|
-| `>` / `→` / `l` | Next Chapter |
-| `<` / `←` / `h` | Prev Chapter |
-| `j` / `↓` | Scroll Down / Next Page |
-| `k` / `↑` | Scroll Up / Prev Page |
-| `PgDn` / `PgUp` | Page Scroll |
+| `>` | Next Chapter |
+| `<` | Prev Chapter |
+| `→` | Next Page (Paged) |
+| `←` | Prev Page (Paged) |
+| `↓` | Scroll Down (Scrollable) |
+| `↑` | Scroll Up (Scrollable) |
 | `Esc` | Back to Library |
-
 ### Settings
 | Key | Action |
 |-----|--------|
