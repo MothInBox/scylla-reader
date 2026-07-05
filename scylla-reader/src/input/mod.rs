@@ -23,6 +23,9 @@ pub fn handle_input(
     if matches!(&state.modal, Modal::SessionPicker { .. }) {
         return modal::handle_session_picker(state, key, cmd_tx);
     }
+    if matches!(&state.modal, Modal::SessionNameInput { .. }) {
+        return modal::handle_session_name_input(state, key, cmd_tx);
+    }
     match &state.current_page {
         Page::AddingBook => modal::handle_adding_book(state, key, cmd_tx),
         Page::Library => library::handle_library(state, key, cmd_tx),

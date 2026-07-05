@@ -198,35 +198,20 @@ pub fn handle_session_picker(
             state.modal = Modal::None;
         }
         KeyCode::Char('n') => {
-            if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
-                let name = format!("Session {}", book.sessions.len() + 1);
-                if let Ok(session) = state.db.create_session(&book_url, &name, book.chapters.len() as u32) {
-                    if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
-                        book.sessions = loaded;
-                    }
-                    if let Some(s) = book.sessions.iter().find(|s| s.id == session.id) {
-                        book.active_session_id = Some(s.id);
-                        state.reader.session_id = s.id;
-                        state.reader.session_name = s.name.clone();
-                        state.db.set_active_session(&book_url, Some(s.id)).ok();
-                    }
-                    if !book.chapters.is_empty() {
-                        state.reader.loading = true;
-                        state.current_page = Page::Reader;
-                        if let Some(ch) = book.chapters.first() {
-                            let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), 0));
-                        }
-                    }
-                    state.modal = Modal::None;
-                }
-            }
+            state.modal = Modal::SessionNameInput {
+                book_url: book_url.clone(),
+                session_id: None,
+                input: String::new(),
+            };
         }
         KeyCode::Char('r') => {
-            if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
-                if let Some(session) = book.sessions.get_mut(cursor) {
-                    let new_name = format!("{} (renamed)", session.name);
-                    session.name = new_name.clone();
-                    state.db.rename_session(session.id, &new_name).ok();
+            if let Some(book) = state.library.books.iter().find(|b| b.url == book_url) {
+                if let Some(session) = book.sessions.get(cursor) {
+                    state.modal = Modal::SessionNameInput {
+                        book_url: book_url.clone(),
+                        session_id: Some(session.id),
+                        input: session.name.clone(),
+                    };
                 }
             }
         }
@@ -243,6 +228,87 @@ pub fn handle_session_picker(
                         *c = new_cursor;
                     }
                 }
+            }
+        }
+        _ => {}
+    }
+
+    true
+}
+
+pub fn handle_session_name_input(
+    state: &mut AppState,
+    key: KeyEvent,
+    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
+) -> bool {
+    let (book_url, session_id, input) =
+        if let Modal::SessionNameInput {
+            book_url,
+            session_id,
+            input,
+        } = &state.modal
+        {
+            (book_url.clone(), *session_id, input.clone())
+        } else {
+            return true;
+        };
+
+    match key.code {
+        KeyCode::Esc => {
+            state.modal = Modal::SessionPicker {
+                book_url: book_url.clone(),
+                cursor: 0,
+                scroll_offset: 0,
+            };
+        }
+        KeyCode::Enter => {
+            let name = input.trim().to_string();
+            if name.is_empty() {
+                return true;
+            }
+            if let Some(session_id) = session_id {
+                if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
+                    if let Some(session) = book.sessions.iter_mut().find(|s| s.id == session_id) {
+                        session.name = name.clone();
+                    }
+                }
+                state.db.rename_session(session_id, &name).ok();
+            } else {
+                if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
+                    if let Ok(session) =
+                        state
+                            .db
+                            .create_session(&book_url, &name, book.chapters.len() as u32)
+                    {
+                        if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
+                            book.sessions = loaded;
+                        }
+                        if let Some(s) = book.sessions.iter().find(|s| s.id == session.id) {
+                            book.active_session_id = Some(s.id);
+                            state.reader.session_id = s.id;
+                            state.reader.session_name = s.name.clone();
+                            state.db.set_active_session(&book_url, Some(s.id)).ok();
+                        }
+                        if !book.chapters.is_empty() {
+                            state.reader.loading = true;
+                            state.current_page = Page::Reader;
+                            if let Some(ch) = book.chapters.first() {
+                                let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), 0));
+                            }
+                        }
+                    }
+                }
+            }
+            state.modal = Modal::None;
+        }
+        KeyCode::Backspace => {
+            if let Modal::SessionNameInput { input, .. } = &mut state.modal {
+                input.pop();
+            }
+        }
+        KeyCode::Char(c) => {
+            if let Modal::SessionNameInput { input, .. } = &mut state.modal {
+                input.push(c);
             }
         }
         _ => {}

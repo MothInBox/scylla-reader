@@ -130,6 +130,41 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
             );
         }
 
+        Modal::SessionNameInput {
+            book_url: _,
+            session_id,
+            input,
+        } => {
+            let popup_area = centered_rect(60, 20, area);
+            frame.render_widget(Clear, popup_area);
+
+            let title = if session_id.is_some() {
+                " Rename Session "
+            } else {
+                " New Session Name "
+            };
+
+            let block = Block::default()
+                .title(title)
+                .borders(Borders::ALL);
+            let inner = block.inner(popup_area);
+            frame.render_widget(block, popup_area);
+
+            let input_para = Paragraph::new(input.as_str())
+                .style(Style::default().fg(Color::Yellow));
+            frame.render_widget(input_para, inner);
+
+            let hints = Paragraph::new(" [Enter] Confirm  [Esc] Cancel ")
+                .style(Style::default().fg(Color::DarkGray));
+            let hints_area = Rect {
+                x: popup_area.x,
+                y: popup_area.y + popup_area.height - 1,
+                width: popup_area.width,
+                height: 1,
+            };
+            frame.render_widget(hints, hints_area);
+        }
+
         Modal::CommandPalette { .. } => unreachable!(),
     }
 }

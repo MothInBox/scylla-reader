@@ -23,6 +23,11 @@ pub enum Modal {
         cursor: usize,
         scroll_offset: usize,
     },
+    SessionNameInput {
+        book_url: String,
+        session_id: Option<i64>,
+        input: String,
+    },
     CommandPalette {
         query: String,
         filtered: Vec<PaletteAction>,
