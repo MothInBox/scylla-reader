@@ -38,17 +38,6 @@ impl App {
         let picker_protocol_type = picker.protocol_type();
 
         let registry = ScraperRegistry::new();
-        let worker_event_tx = event_tx;
-        std::thread::spawn(move || {
-            let worker = worker::Worker::new(
-                cmd_rx,
-                worker_event_tx,
-                registry,
-                picker_font_size,
-                picker_protocol_type,
-            );
-            worker.run();
-        });
 
         let terminal = Terminal::new(CrosstermBackend::new(
             Box::new(stdout()) as Box<dyn std::io::Write>
@@ -58,6 +47,22 @@ impl App {
         for book in state.db.load_books().unwrap_or_default() {
             state.library.books.push(book);
         }
+
+        let worker_event_tx = event_tx;
+        let worker_max_workers = state.settings.max_workers;
+        let worker_rate_limit = state.settings.rate_limit_secs;
+        std::thread::spawn(move || {
+            let manager = worker::JobManager::new(
+                cmd_rx,
+                worker_event_tx,
+                registry,
+                picker_font_size,
+                picker_protocol_type,
+                worker_max_workers,
+                worker_rate_limit,
+            );
+            manager.run();
+        });
 
         Ok(Self {
             terminal,
