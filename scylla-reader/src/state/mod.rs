@@ -54,17 +54,6 @@ impl AppState {
         self.modal = Modal::None;
     }
 
-    pub fn valid_add_book_inputs(&self) -> Vec<String> {
-        if let Modal::AddBook { inputs, .. } = &self.modal {
-            inputs
-                .iter()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        } else {
-            vec![]
-        }
-    }
     #[cfg(test)]
     pub fn from_parts(db: crate::db::Db, library: crate::library::Library) -> Self {
         Self {
@@ -126,24 +115,6 @@ mod tests {
         };
         state.close_modal();
         assert_eq!(state.modal, Modal::None);
-    }
-
-    #[test]
-    fn test_valid_add_book_inputs_returns_filtered() {
-        let mut state = test_state();
-        state.modal = Modal::AddBook {
-            inputs: vec!["  url1  ".into(), "".into(), "url2".into()],
-            cursor: 0,
-            scroll_offset: 0,
-        };
-        let urls = state.valid_add_book_inputs();
-        assert_eq!(urls, vec!["url1", "url2"]);
-    }
-
-    #[test]
-    fn test_valid_add_book_inputs_not_add_book_modal() {
-        let state = test_state();
-        assert!(state.valid_add_book_inputs().is_empty());
     }
 
     #[test]

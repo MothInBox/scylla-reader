@@ -177,7 +177,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
             );
         }
 
-        Modal::CommandPalette { .. } => unreachable!(),
+        Modal::CommandPalette { .. } => {}
     }
 }
 

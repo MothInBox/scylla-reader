@@ -12,6 +12,8 @@ pub mod plugin_config;
 pub mod scrapers;
 pub mod settings;
 pub mod state;
+#[cfg(test)]
+pub mod test_helpers;
 pub mod ui;
 pub mod worker;
 

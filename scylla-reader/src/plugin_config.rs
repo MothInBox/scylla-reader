@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-pub use scylla_plugin_api::ConfigField;
+use scylla_plugin_api::ConfigField;
 
 pub struct PluginConfig {
     pub domain: String,
@@ -111,10 +111,6 @@ impl PluginConfig {
 
     pub fn is_pending(&self) -> bool {
         !self.path.as_os_str().is_empty() && !self.path.exists()
-    }
-
-    pub fn load_raw(&self) -> String {
-        fs::read_to_string(&self.path).unwrap_or_default()
     }
 
     pub fn save(&self) -> Result<(), String> {
