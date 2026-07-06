@@ -1,8 +1,10 @@
 //! Modal input handler — add-book form, jump-to-chapter list.
 
 use crate::messenger::AppCommand;
+use crate::models::Chapter;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::sync::mpsc;
 
 pub fn handle_adding_book(
     state: &mut AppState,
@@ -87,10 +89,20 @@ pub fn handle_adding_book(
     true
 }
 
-pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
+pub fn handle_jumping_chapter(
+    state: &mut AppState,
+    key: KeyEvent,
+    cmd_tx: &mpsc::Sender<AppCommand>,
+) -> bool {
     let mut selected_cursor = None;
+
     if let Modal::JumpChapter {
-        chapters, cursor, ..
+        chapters,
+        query,
+        filtered,
+        cursor,
+        show_titles,
+        ..
     } = &mut state.modal
     {
         match key.code {
@@ -100,7 +112,7 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
                 }
             }
             KeyCode::Down => {
-                if *cursor < chapters.len().saturating_sub(1) {
+                if *cursor < filtered.len().saturating_sub(1) {
                     *cursor += 1;
                 }
             }
@@ -108,57 +120,67 @@ pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
                 selected_cursor = Some(*cursor);
             }
             KeyCode::Char('t') => {
-                if let Modal::JumpChapter { show_titles, .. } = &mut state.modal {
-                    *show_titles = !*show_titles;
-                }
+                *show_titles = !*show_titles;
+            }
+            KeyCode::Char(c) => {
+                query.push(c);
+                *filtered = filter_chapters(chapters, query);
+                *cursor = 0;
+            }
+            KeyCode::Backspace => {
+                query.pop();
+                *filtered = filter_chapters(chapters, query);
+                *cursor = 0;
             }
             _ => {}
         }
     }
 
     if let Some(cursor_val) = selected_cursor {
-        crate::settings::log(
-            crate::settings::LogLevel::Debug,
-            "INPUT",
-            &format!("Attempting jump: {}", cursor_val),
-        );
-        if let Some(book) = state.library.selected_book_mut() {
+        // Get the real chapter index from filtered list
+        let real_idx = if let Modal::JumpChapter {
+            filtered, chapters, ..
+        } = &state.modal
+        {
+            filtered
+                .get(cursor_val)
+                .and_then(|ch| chapters.iter().position(|c| c.url == ch.url))
+        } else {
+            None
+        };
+
+        if let Some(idx) = real_idx {
             crate::settings::log(
                 crate::settings::LogLevel::Debug,
                 "INPUT",
-                &format!("On Book: {}", book.title),
+                &format!("Attempting jump: {}", idx),
             );
-            let active_id = book.active_session_id;
-            if let Some(session) = book.sessions.iter_mut().find(|s| Some(s.id) == active_id) {
-                crate::settings::log(
-                    crate::settings::LogLevel::Debug,
-                    "INPUT",
-                    &format!("On Session: {}@{}", session.id, session.name),
-                );
-                session.progress.current = cursor_val as u32;
-                if let Err(err) = state
-                    .db
-                    .update_session_progress(session.id, session.progress.current)
-                {
-                    crate::settings::log(
-                        crate::settings::LogLevel::Debug,
-                        "INPUT",
-                        &format!("Failed to update session progress: {}", err),
-                    );
+            if let Some(book) = state.library.selected_book_mut() {
+                let active_id = book.active_session_id;
+                if let Some(session) = book.sessions.iter_mut().find(|s| Some(s.id) == active_id) {
+                    session.progress.current = idx as u32;
+                    let _ = state
+                        .db
+                        .update_session_progress(session.id, session.progress.current);
                 }
-            } else {
-                crate::settings::log(
-                    crate::settings::LogLevel::Debug,
-                    "INPUT",
-                    "No active session found for book",
-                );
             }
         }
         state.modal = Modal::None;
         state.current_page = Page::Library;
     }
-
     true
+}
+
+fn filter_chapters(chapters: &[Chapter], query: &str) -> Vec<Chapter> {
+    if query.trim().is_empty() {
+        return chapters.to_vec();
+    }
+    let q = query.to_lowercase();
+    chapters
+        .iter()
+        .filter(|ch| ch.title.to_lowercase().contains(&q) || ch.url.to_lowercase().contains(&q))
+        .cloned()
+        .collect()
 }
 
 pub fn handle_session_picker(

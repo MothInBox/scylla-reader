@@ -28,6 +28,8 @@ pub fn handle_library(
                 );
                 state.modal = Modal::JumpChapter {
                     chapters: book.chapters.clone(),
+                    query: String::new(),
+                    filtered: book.chapters.clone(),
                     cursor: 0,
                     scroll_offset: 0,
                     show_titles: true,

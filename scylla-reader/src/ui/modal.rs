@@ -48,16 +48,17 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
         }
 
         Modal::JumpChapter {
-            chapters,
+            chapters: _,
+            query,
+            filtered,
             cursor,
             scroll_offset,
             show_titles,
         } => {
             let popup_area = centered_rect(70, 50, area);
             frame.render_widget(Clear, popup_area);
-
-            let count = chapters.len();
-            let items: Vec<ListItem> = chapters
+            let count = filtered.len();
+            let items: Vec<ListItem> = filtered
                 .iter()
                 .map(|ch| {
                     ListItem::new(if *show_titles {
@@ -67,13 +68,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                     })
                 })
                 .collect();
-
-            let title = format!(
-                " Jump to Chapter ({} Chapter{}) ",
-                count,
-                if count == 1 { "" } else { "s" }
-            );
-
+            let title = format!(" Jump to Chapter ({}) > {} ", count, query);
             draw_scrollable_list(
                 frame,
                 popup_area,
@@ -81,7 +76,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 items,
                 *cursor,
                 scroll_offset,
-                " [Enter] Set Current  [↑↓] Move  [t] Link/Title  [Esc] Cancel",
+                " [Enter] Jump  [↑↓] Move  [t] Link/Title  [Esc] Cancel",
             );
         }
 
@@ -129,14 +124,18 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
             let items: Vec<ListItem> = if let Some(text) = input {
                 if editing_id.is_some() {
-                    sessions.iter().enumerate().map(|(i, s)| {
-                        let label = if i == *cursor {
-                            format!("Rename: {}", text)
-                        } else {
-                            session_label(s)
-                        };
-                        ListItem::new(label)
-                    }).collect()
+                    sessions
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| {
+                            let label = if i == *cursor {
+                                format!("Rename: {}", text)
+                            } else {
+                                session_label(s)
+                            };
+                            ListItem::new(label)
+                        })
+                        .collect()
                 } else {
                     let mut items: Vec<ListItem> = Vec::with_capacity(sessions.len() + 1);
                     items.push(ListItem::new(format!("Name: {}", text)));
@@ -146,7 +145,10 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                     items
                 }
             } else {
-                sessions.iter().map(|s| ListItem::new(session_label(s))).collect()
+                sessions
+                    .iter()
+                    .map(|s| ListItem::new(session_label(s)))
+                    .collect()
             };
 
             let display_count = if input.is_some() && editing_id.is_none() {

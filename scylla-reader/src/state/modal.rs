@@ -14,6 +14,8 @@ pub enum Modal {
     },
     JumpChapter {
         chapters: Vec<Chapter>,
+        query: String,
+        filtered: Vec<Chapter>,
         cursor: usize,
         scroll_offset: usize,
         show_titles: bool,

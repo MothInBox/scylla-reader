@@ -51,6 +51,8 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
                 if let Some(b) = s.library.selected_book() {
                     s.modal = Modal::JumpChapter {
                         chapters: b.chapters.clone(),
+                        query: String::new(),
+                        filtered: b.chapters.clone(),
                         cursor: 0,
                         scroll_offset: 0,
                         show_titles: true,
@@ -123,10 +125,11 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
                 if let Some(b) = s.library.selected_book() {
                     let prev = s.reader.current_chapter_idx.saturating_sub(1);
                     if prev != s.reader.current_chapter_idx
-                        && let Some(ch) = b.chapters.get(prev) {
-                            s.reader.loading = true;
-                            let _ = tx.send(AppCommand::FetchChapter(ch.url.clone(), prev));
-                        }
+                        && let Some(ch) = b.chapters.get(prev)
+                    {
+                        s.reader.loading = true;
+                        let _ = tx.send(AppCommand::FetchChapter(ch.url.clone(), prev));
+                    }
                 }
             },
         },

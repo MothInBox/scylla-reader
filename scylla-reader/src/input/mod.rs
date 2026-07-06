@@ -28,6 +28,6 @@ pub fn handle_input(
         Page::Library => library::handle_library(state, key, cmd_tx),
         Page::Settings => settings::handle_settings(state, key, cmd_tx),
         Page::Reader => reader::handle_reader(state, key, cmd_tx, size),
-        Page::BookChapterJump => modal::handle_jumping_chapter(state, key),
+        Page::BookChapterJump => modal::handle_jumping_chapter(state, key, cmd_tx),
     }
 }
