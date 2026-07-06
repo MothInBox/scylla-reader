@@ -1,4 +1,5 @@
 use crate::messenger::{AppCommand, AppEvent};
+use crate::models::job::JobStatus;
 use crate::state::AppState;
 use std::sync::mpsc;
 
@@ -114,10 +115,19 @@ pub fn drain_events(
                     state.library.cached_protocol = Some(protocol);
                 }
             }
-            // TEMP: placeholder for new AppEvent variants (wired in Task 9)
-            AppEvent::JobEnqueued(_)
-            | AppEvent::JobStatusChanged(_, _)
-            | AppEvent::WorkersChanged(_) => {}
+            AppEvent::JobEnqueued(job) => {
+                state.jobs_state.jobs.push(job);
+            }
+            AppEvent::JobStatusChanged(id, status) => {
+                state.jobs_state.update_from_event(id, status);
+                state.jobs_state.active_count = state.jobs_state.jobs.iter()
+                    .filter(|j| matches!(j.status, JobStatus::Running))
+                    .count() as u8;
+            }
+            AppEvent::WorkersChanged(n) => {
+                state.jobs_state.max_workers = n;
+                state.settings.max_workers = n;
+            }
         }
     }
 }
