@@ -5,8 +5,8 @@ use crate::messenger::{AppCommand, AppEvent, ChapterContent};
 use crate::models::job::{Job, JobId, JobKind, JobPriority, JobStatus};
 use crate::scrapers::services::ScraperRegistry;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub struct JobManager {
@@ -67,7 +67,8 @@ impl JobManager {
     }
 
     fn check_completed_jobs(&mut self, runtime: &tokio::runtime::Runtime) {
-        let completed: Vec<JobId> = self.active_jobs
+        let completed: Vec<JobId> = self
+            .active_jobs
             .iter()
             .filter(|(_, h)| h.is_finished())
             .map(|(&id, _)| id)
@@ -84,7 +85,9 @@ impl JobManager {
         while self.active_jobs.len() < self.max_workers as usize && !self.job_queue.is_empty() {
             let domain = extract_domain(self.job_queue[0].kind.target());
             let cooled_down = match &domain {
-                Some(d) => self.last_request.get(d)
+                Some(d) => self
+                    .last_request
+                    .get(d)
                     .map(|last| last.elapsed() >= Duration::from_secs(self.rate_limit_secs))
                     .unwrap_or(true),
                 None => true,
@@ -99,7 +102,9 @@ impl JobManager {
             let mut job = self.job_queue.remove(0);
             let id = job.id;
             job.status = JobStatus::Running;
-            let _ = self.event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Running));
+            let _ = self
+                .event_tx
+                .send(AppEvent::JobStatusChanged(id, JobStatus::Running));
 
             if let Some(d) = &domain {
                 self.last_request.insert(d.clone(), Instant::now());
@@ -107,7 +112,7 @@ impl JobManager {
 
             let event_tx = self.event_tx.clone();
             let registry = self.registry.clone();
-            let runtime_ref = tokio::runtime::Handle::current();
+            let runtime_ref = runtime.handle().clone();
             let font_size = self.picker_font_size;
             let protocol_type = self.picker_protocol_type;
 
@@ -115,7 +120,8 @@ impl JobManager {
                 let result = match &job.kind {
                     JobKind::Scrape(url) => {
                         let reg = registry.lock().unwrap();
-                        runtime_ref.block_on(reg.scrape_url(url))
+                        runtime_ref
+                            .block_on(reg.scrape_url(url))
                             .map(|book| {
                                 let _ = event_tx.send(AppEvent::BookScraped(book));
                             })
@@ -123,7 +129,8 @@ impl JobManager {
                     }
                     JobKind::FetchChapter(url, idx) => {
                         let reg = registry.lock().unwrap();
-                        runtime_ref.block_on(reg.scrape_chapter(url))
+                        runtime_ref
+                            .block_on(reg.scrape_chapter(url))
                             .map(|(title, content)| {
                                 let _ = event_tx.send(AppEvent::ChapterFetched(ChapterContent {
                                     chapter_idx: *idx,
@@ -141,7 +148,8 @@ impl JobManager {
                                 Ok(bytes) => match image::load_from_memory(&bytes) {
                                     Ok(img) => {
                                         let protocol = picker.new_resize_protocol(img);
-                                        let _ = event_tx.send(AppEvent::CoverFetched(url.clone(), protocol));
+                                        let _ = event_tx
+                                            .send(AppEvent::CoverFetched(url.clone(), protocol));
                                         Ok(())
                                     }
                                     Err(e) => Err(format!("Image decode: {}", e)),
@@ -187,18 +195,26 @@ impl JobManager {
                 }
                 self.job_queue.retain(|j| j.id != id);
                 self.delayed_queue.retain(|j| j.id != id);
-                let _ = self.event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Cancelled));
+                let _ = self
+                    .event_tx
+                    .send(AppEvent::JobStatusChanged(id, JobStatus::Cancelled));
             }
             AppCommand::CancelAll => {
                 for (id, handle) in self.active_jobs.drain() {
                     handle.abort();
-                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Cancelled));
+                    let _ = self
+                        .event_tx
+                        .send(AppEvent::JobStatusChanged(id, JobStatus::Cancelled));
                 }
                 for job in self.job_queue.drain(..) {
-                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
+                    let _ = self
+                        .event_tx
+                        .send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
                 }
                 for job in self.delayed_queue.drain(..) {
-                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
+                    let _ = self
+                        .event_tx
+                        .send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
                 }
             }
             AppCommand::RetryJob(id) => {
@@ -212,10 +228,13 @@ impl JobManager {
                 }
             }
             AppCommand::RetryAllFailed => {
-                let all_jobs: Vec<&Job> = self.job_queue.iter()
+                let all_jobs: Vec<&Job> = self
+                    .job_queue
+                    .iter()
                     .chain(self.delayed_queue.iter())
                     .collect();
-                let failed_ids: Vec<JobId> = all_jobs.iter()
+                let failed_ids: Vec<JobId> = all_jobs
+                    .iter()
                     .filter(|j| matches!(j.status, JobStatus::Failed(_)))
                     .map(|j| j.id)
                     .collect();
@@ -231,20 +250,25 @@ impl JobManager {
                 }
             }
             AppCommand::FlushCompleted => {
-                self.job_queue.retain(|j| {
-                    !matches!(j.status, JobStatus::Completed | JobStatus::Cancelled)
-                });
+                self.job_queue
+                    .retain(|j| !matches!(j.status, JobStatus::Completed | JobStatus::Cancelled));
             }
             AppCommand::FlushAll => {
                 for (id, handle) in self.active_jobs.drain() {
                     handle.abort();
-                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Cancelled));
+                    let _ = self
+                        .event_tx
+                        .send(AppEvent::JobStatusChanged(id, JobStatus::Cancelled));
                 }
                 for job in self.job_queue.drain(..) {
-                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
+                    let _ = self
+                        .event_tx
+                        .send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
                 }
                 for job in self.delayed_queue.drain(..) {
-                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
+                    let _ = self
+                        .event_tx
+                        .send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
                 }
             }
             AppCommand::SetMaxWorkers(n) => {
@@ -273,7 +297,12 @@ impl JobManager {
                 let id = self.next_job_id;
                 self.next_job_id += 1;
                 let target = format!("{} ch{}", cleaned, idx);
-                let job = Job::new(id, JobKind::FetchChapter(cleaned, idx), target, JobPriority::High);
+                let job = Job::new(
+                    id,
+                    JobKind::FetchChapter(cleaned, idx),
+                    target,
+                    JobPriority::High,
+                );
                 self.job_queue.push(job.clone());
                 let _ = self.event_tx.send(AppEvent::JobEnqueued(job));
             }
@@ -303,7 +332,8 @@ impl JobManager {
     }
 
     fn find_job_to_retry(&self, id: JobId) -> Option<&Job> {
-        self.job_queue.iter()
+        self.job_queue
+            .iter()
             .chain(self.delayed_queue.iter())
             .find(|j| j.id == id && matches!(j.status, JobStatus::Failed(_)))
     }
@@ -314,8 +344,12 @@ impl JobManager {
         self.delayed_queue.retain(|job| {
             let domain = extract_domain(job.kind.target());
             let cooled_down = match &domain {
-                Some(d) => self.last_request.get(d)
-                    .map(|last| now.duration_since(*last) >= Duration::from_secs(self.rate_limit_secs))
+                Some(d) => self
+                    .last_request
+                    .get(d)
+                    .map(|last| {
+                        now.duration_since(*last) >= Duration::from_secs(self.rate_limit_secs)
+                    })
                     .unwrap_or(true),
                 None => true,
             };
@@ -344,7 +378,11 @@ fn extract_domain(url: &str) -> Option<String> {
     };
     let host = after_proto.split('/').next().unwrap_or(after_proto);
     let host = host.split(':').next().unwrap_or(host);
-    if host.is_empty() { None } else { Some(host.to_lowercase()) }
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_lowercase())
+    }
 }
 
 fn clean_url(url: &str) -> String {
@@ -421,7 +459,10 @@ mod tests {
 
     #[test]
     fn test_extract_domain_simple() {
-        assert_eq!(extract_domain("https://example.com/path"), Some("example.com".into()));
+        assert_eq!(
+            extract_domain("https://example.com/path"),
+            Some("example.com".into())
+        );
     }
 
     #[test]
