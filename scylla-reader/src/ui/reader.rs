@@ -93,14 +93,7 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Nav",
-                &[
-                    ("1", "Library"),
-                    ("2", "Reader"),
-                    ("3", "Settings"),
-                    (":", "Command"),
-                    ("?", "Hide"),
-                    ("Esc", "Back"),
-                ],
+                crate::ui::widgets::NAV_HINTS,
             )),
             hint_chunks[1],
         );
@@ -157,14 +150,7 @@ fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Nav",
-                &[
-                    ("1", "Library"),
-                    ("2", "Reader"),
-                    ("3", "Settings"),
-                    (":", "Command"),
-                    ("Esc", "Back"),
-                    ("?", "Hide"),
-                ],
+                crate::ui::widgets::NAV_HINTS,
             )),
             hint_chunks[1],
         );

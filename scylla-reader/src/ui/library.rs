@@ -54,14 +54,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Nav",
-                &[
-                    ("1", "Library"),
-                    ("2", "Reader"),
-                    ("3", "Settings"),
-                    (":", "Command"),
-                    ("?", "Hide"),
-                    ("Esc", "Quit"),
-                ],
+                crate::ui::widgets::NAV_HINTS,
             )),
             hint_chunks[1],
         );

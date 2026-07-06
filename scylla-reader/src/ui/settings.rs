@@ -58,14 +58,7 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Nav",
-                &[
-                    ("1", "Library"),
-                    ("2", "Reader"),
-                    ("3", "Settings"),
-                    (":", "Command"),
-                    ("?", "Hide"),
-                    ("Esc", "Quit"),
-                ],
+                crate::ui::widgets::NAV_HINTS,
             )),
             hint_chunks[1],
         );
@@ -118,14 +111,7 @@ fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Nav",
-                &[
-                    ("1", "Library"),
-                    ("2", "Reader"),
-                    ("3", "Settings"),
-                    (":", "Command"),
-                    ("Esc", "Back"),
-                    ("?", "Hide"),
-                ],
+                crate::ui::widgets::NAV_HINTS,
             )),
             hint_chunks[1],
         );
@@ -175,14 +161,7 @@ fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Nav",
-                &[
-                    ("1", "Library"),
-                    ("2", "Reader"),
-                    ("3", "Settings"),
-                    (":", "Command"),
-                    ("Esc", "Back"),
-                    ("?", "Hide"),
-                ],
+                crate::ui::widgets::NAV_HINTS,
             )),
             hint_chunks[1],
         );
@@ -255,14 +234,7 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Nav",
-                &[
-                    ("1", "Library"),
-                    ("2", "Reader"),
-                    ("3", "Settings"),
-                    (":", "Command"),
-                    ("Esc", "Back"),
-                    ("?", "Hide"),
-                ],
+                crate::ui::widgets::NAV_HINTS,
             )),
             hint_chunks[1],
         );
@@ -324,14 +296,7 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Nav",
-                &[
-                    ("1", "Library"),
-                    ("2", "Reader"),
-                    ("3", "Settings"),
-                    (":", "Command"),
-                    ("Esc", "Back"),
-                    ("?", "Hide"),
-                ],
+                crate::ui::widgets::NAV_HINTS,
             )),
             hint_chunks[1],
         );

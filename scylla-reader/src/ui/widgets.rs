@@ -4,6 +4,15 @@ use ratatui::prelude::*;
 use ratatui::style::Modifier;
 use ratatui::text::Line;
 
+pub const NAV_HINTS: &[(&str, &str)] = &[
+    ("1", "Library"),
+    ("2", "Reader"),
+    ("9", "Settings"),
+    (":", "Command"),
+    ("?", "Hide"),
+    ("Esc", "Quit"),
+];
+
 pub fn hint_line<'a>(category: &str, pairs: &[(&'a str, &'a str)]) -> Line<'a> {
     let mut spans = vec![
         Span::styled(
