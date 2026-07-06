@@ -92,9 +92,9 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
         frame.render_widget(
             Paragraph::new(hint_line("View", &[
                 ("a", "All"),
-                ("r", "Running"),
-                ("c", "Done"),
-                ("f", "Failed"),
+                ("s", "Running"),
+                ("d", "Done"),
+                ("e", "Failed"),
                 ("Enter", "Details"),
             ])),
             hint_chunks[2],

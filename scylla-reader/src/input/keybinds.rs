@@ -41,6 +41,17 @@ pub const KEY_NEW_SESSION: KeyCode = KeyCode::Char('n');
 pub const KEY_RENAME_SESSION: KeyCode = KeyCode::Char('r');
 pub const KEY_DELETE_SESSION: KeyCode = KeyCode::Char('d');
 
+// ── Jobs Page ──
+pub const KEY_JOBS_CANCEL: KeyCode = KeyCode::Char('c');
+pub const KEY_JOBS_CANCEL_ALL: KeyCode = KeyCode::Char('C');
+pub const KEY_JOBS_RETRY: KeyCode = KeyCode::Char('r');
+pub const KEY_JOBS_RETRY_ALL: KeyCode = KeyCode::Char('R');
+pub const KEY_JOBS_FLUSH_COMPLETED: KeyCode = KeyCode::Char('f');
+pub const KEY_JOBS_FLUSH_ALL: KeyCode = KeyCode::Char('F');
+pub const KEY_JOBS_DETAILS: KeyCode = KeyCode::Enter;
+pub const KEY_JOBS_INC_WORKERS: KeyCode = KeyCode::Char('+');
+pub const KEY_JOBS_DEC_WORKERS: KeyCode = KeyCode::Char('-');
+
 // ── Generic ──
 pub const KEY_BACKSPACE: KeyCode = KeyCode::Backspace;
 pub const KEY_ENTER: KeyCode = KeyCode::Enter;
