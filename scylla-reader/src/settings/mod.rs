@@ -97,6 +97,7 @@ struct PersistedSettings {
     rate_limit_secs: u64,
     debug_log: bool,
     reader_mode: ReaderMode,
+    max_workers: u8,
 }
 
 impl Default for PersistedSettings {
@@ -105,6 +106,7 @@ impl Default for PersistedSettings {
             rate_limit_secs: 2,
             debug_log: false,
             reader_mode: ReaderMode::Paged,
+            max_workers: 4,
         }
     }
 }
@@ -125,6 +127,9 @@ fn compiled_defaults() -> PersistedSettings {
             Some("Scrollable") => ReaderMode::Scrollable,
             _ => ReaderMode::Paged,
         },
+        max_workers: option_env!("SCYLLA_MAX_WORKERS")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(4),
     }
 }
 
@@ -132,6 +137,7 @@ pub struct Settings {
     pub rate_limit_secs: u64,
     pub debug_log: bool,
     pub reader_mode: ReaderMode,
+    pub max_workers: u8,
     pub plugin_configs: Vec<PluginConfig>,
 }
 
@@ -147,6 +153,7 @@ impl Settings {
             rate_limit_secs: self.rate_limit_secs,
             debug_log: self.debug_log,
             reader_mode: self.reader_mode.clone(),
+            max_workers: self.max_workers,
         };
         let path = settings_path();
         if let Some(parent) = path.parent() {
@@ -173,6 +180,7 @@ impl Settings {
             merged.rate_limit_secs = user.rate_limit_secs;
             merged.debug_log = user.debug_log;
             merged.reader_mode = user.reader_mode;
+            merged.max_workers = user.max_workers;
         }
 
         if merged.debug_log {
@@ -183,6 +191,7 @@ impl Settings {
             rate_limit_secs: merged.rate_limit_secs,
             debug_log: merged.debug_log,
             reader_mode: merged.reader_mode,
+            max_workers: merged.max_workers,
             plugin_configs: PluginConfig::discover_all(),
         }
     }
@@ -306,6 +315,7 @@ mod tests {
         assert_eq!(p.rate_limit_secs, 2);
         assert!(!p.debug_log);
         assert_eq!(p.reader_mode, ReaderMode::Paged);
+        assert_eq!(p.max_workers, 4);
     }
 
     #[test]
@@ -314,12 +324,14 @@ mod tests {
             rate_limit_secs: 42,
             debug_log: true,
             reader_mode: ReaderMode::Scrollable,
+            max_workers: 8,
         };
         let json = serde_json::to_string(&p).unwrap();
         let back: PersistedSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.rate_limit_secs, 42);
         assert!(back.debug_log);
         assert_eq!(back.reader_mode, ReaderMode::Scrollable);
+        assert_eq!(back.max_workers, 8);
     }
 
     #[test]
@@ -328,6 +340,7 @@ mod tests {
         assert_eq!(d.rate_limit_secs, 2);
         assert!(!d.debug_log);
         assert_eq!(d.reader_mode, ReaderMode::Paged);
+        assert_eq!(d.max_workers, 4);
     }
 
     #[test]
@@ -341,11 +354,13 @@ mod tests {
             rate_limit_secs: settings.rate_limit_secs,
             debug_log: settings.debug_log,
             reader_mode: settings.reader_mode.clone(),
+            max_workers: settings.max_workers,
         };
         let json = serde_json::to_string_pretty(&persisted).unwrap();
         let back: PersistedSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.rate_limit_secs, 99);
         assert!(back.debug_log);
         assert_eq!(back.reader_mode, ReaderMode::Scrollable);
+        assert_eq!(back.max_workers, 4);
     }
 }
