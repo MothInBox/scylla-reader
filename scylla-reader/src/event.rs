@@ -114,6 +114,10 @@ pub fn drain_events(
                     state.library.cached_protocol = Some(protocol);
                 }
             }
+            // TEMP: placeholder for new AppEvent variants (wired in Task 9)
+            AppEvent::JobEnqueued(_)
+            | AppEvent::JobStatusChanged(_, _)
+            | AppEvent::WorkersChanged(_) => {}
         }
     }
 }

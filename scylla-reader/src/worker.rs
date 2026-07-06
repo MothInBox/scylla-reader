@@ -102,6 +102,16 @@ impl Worker {
                                     AppCommand::FetchCover(url) => {
                                         deferred_covers.push(url);
                                     }
+                                    // TEMP: placeholder for new variants (replaced in Task 6)
+                                    AppCommand::Enqueue(_, _, _)
+                                    | AppCommand::CancelJob(_)
+                                    | AppCommand::CancelAll
+                                    | AppCommand::RetryJob(_)
+                                    | AppCommand::RetryAllFailed
+                                    | AppCommand::FlushCompleted
+                                    | AppCommand::FlushAll
+                                    | AppCommand::SetMaxWorkers(_)
+                                    | AppCommand::ReorderJob(_, _) => {}
                                 },
                                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                                 Err(mpsc::RecvTimeoutError::Disconnected) => break 'urls,
@@ -202,6 +212,16 @@ impl Worker {
                         }
                     });
                 }
+                // TEMP: placeholder arms for new AppCommand variants (will be replaced in Task 6)
+                AppCommand::Enqueue(_, _, _)
+                | AppCommand::CancelJob(_)
+                | AppCommand::CancelAll
+                | AppCommand::RetryJob(_)
+                | AppCommand::RetryAllFailed
+                | AppCommand::FlushCompleted
+                | AppCommand::FlushAll
+                | AppCommand::SetMaxWorkers(_)
+                | AppCommand::ReorderJob(_, _) => {}
             }
         }
     }
