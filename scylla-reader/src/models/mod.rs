@@ -2,8 +2,10 @@
 
 pub mod book;
 pub mod progress;
+pub mod job;
 pub mod session;
 
 pub use book::{Book, BookStatus, Chapter};
+pub use job::{Job, JobFilter, JobId, JobKind, JobPriority, JobStatus};
 pub use progress::Progress;
 pub use session::Session;
