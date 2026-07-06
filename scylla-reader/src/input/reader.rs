@@ -1,9 +1,10 @@
 //! Reader page input handler — paging, scrolling, chapter nav.
 
+use crate::input::keybinds::*;
 use crate::messenger::AppCommand;
 use crate::state::AppState;
 use crate::state::Modal;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 use ratatui::prelude::Rect;
 
 pub fn handle_reader(
@@ -15,10 +16,10 @@ pub fn handle_reader(
     use crate::settings::ReaderMode;
 
     match (key.modifiers, key.code) {
-        (_, KeyCode::Char('>')) => {
+        (_, KEY_NEXT_CHAPTER) => {
             if !state.reader.loading
                 && let Some(book) = state.library.selected_book() {
-                    let next_idx = state.reader.current_chapter_idx + 1;
+                    let next_idx = state.reader.current_chapter_idx.saturating_add(1);
                     if let Some(ch) = book.chapters.get(next_idx) {
                         let url = ch.url.clone();
                         state.reader.loading = true;
@@ -27,7 +28,7 @@ pub fn handle_reader(
                 }
             return true;
         }
-        (_, KeyCode::Char('<')) => {
+        (_, KEY_PREV_CHAPTER) => {
             if !state.reader.loading
                 && let Some(book) = state.library.selected_book() {
                     let prev_idx = state.reader.current_chapter_idx.saturating_sub(1);
@@ -40,7 +41,7 @@ pub fn handle_reader(
                 }
             return true;
         }
-        (_, KeyCode::Char('s')) => {
+        (_, KEY_MANAGE_SESSIONS) => {
             if let Some(book) = state.library.selected_book() {
                 state.modal = Modal::SessionPicker {
                     book_url: book.url.clone(),
@@ -48,6 +49,7 @@ pub fn handle_reader(
                     scroll_offset: 0,
                     input: None,
                     editing_id: None,
+                    pending_delete_url: None,
                 };
             }
             return true;
@@ -57,26 +59,22 @@ pub fn handle_reader(
 
     match state.settings.reader_mode {
         ReaderMode::Paged => match key.code {
-            KeyCode::Right => {
-                state
-                    .reader
-                    .next_page(size.width, size.height.saturating_sub(2));
+            KEY_NEXT_PAGE => {
+                state.reader.next_page();
                 true
             }
-            KeyCode::Left => {
-                state
-                    .reader
-                    .prev_page(size.width, size.height.saturating_sub(2));
+            KEY_PREV_PAGE => {
+                state.reader.prev_page();
                 true
             }
             _ => true,
         },
         ReaderMode::Scrollable => match key.code {
-            KeyCode::Down => {
+            KEY_SCROLL_DOWN => {
                 state.reader.scroll_down_visual(size.width);
                 true
             }
-            KeyCode::Up => {
+            KEY_SCROLL_UP => {
                 state.reader.scroll_up_visual();
                 true
             }
@@ -142,7 +140,7 @@ mod tests {
     fn test_handle_reader_gt_next_chapter() {
         let mut state = state_with_book_and_chapters();
         let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Char('>')), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_NEXT_CHAPTER), &tx, rect());
         assert!(result);
         assert!(state.reader.loading);
         match rx.try_recv() {
@@ -159,7 +157,7 @@ mod tests {
         let mut state = state_with_book_and_chapters();
         state.reader.current_chapter_idx = 1;
         let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Char('<')), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_PREV_CHAPTER), &tx, rect());
         assert!(result);
         assert!(state.reader.loading);
         match rx.try_recv() {
@@ -175,7 +173,7 @@ mod tests {
     fn test_handle_reader_prev_chapter_clamps_at_zero() {
         let mut state = state_with_book_and_chapters();
         let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Char('<')), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_PREV_CHAPTER), &tx, rect());
         assert!(result);
         assert!(!state.reader.loading);
         assert!(rx.try_recv().is_err());
@@ -186,7 +184,7 @@ mod tests {
         let mut state = state_with_book_and_chapters();
         state.reader.current_chapter_idx = 2;
         let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Char('>')), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_NEXT_CHAPTER), &tx, rect());
         assert!(result);
         assert!(!state.reader.loading);
         assert!(rx.try_recv().is_err());
@@ -197,7 +195,7 @@ mod tests {
         let mut state = state_with_book_and_chapters();
         state.reader.loading = true;
         let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Char('>')), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_NEXT_CHAPTER), &tx, rect());
         assert!(result);
         assert!(state.reader.loading);
         assert!(rx.try_recv().is_err());
@@ -227,7 +225,7 @@ mod tests {
             0,
         );
         let (tx, _rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Down), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_SCROLL_DOWN), &tx, rect());
         assert!(result);
         assert_eq!(state.reader.visual_scroll, 1);
     }
@@ -248,7 +246,7 @@ mod tests {
         );
         state.reader.visual_scroll = 10;
         let (tx, _rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Up), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_SCROLL_UP), &tx, rect());
         assert!(result);
         assert_eq!(state.reader.visual_scroll, 9);
     }

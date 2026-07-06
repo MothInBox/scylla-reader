@@ -1,5 +1,5 @@
 use crate::messenger::AppCommand;
-use crate::state::modal::PaletteAction;
+use crate::state::palette_action::PaletteAction;
 use crate::state::{AppState, Modal, Page};
 use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
@@ -12,13 +12,13 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         PaletteAction {
             category: "Navigation",
             label: "Go to Library",
-            keys: "1",
+            keys: "1", // KEY_LIBRARY
             handler: |s, _| s.current_page = Page::Library,
         },
         PaletteAction {
             category: "Navigation",
             label: "Go to Reader",
-            keys: "2",
+            keys: "2", // KEY_READER
             handler: |s, _| {
                 s.current_page = Page::Reader;
             },
@@ -26,14 +26,14 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         PaletteAction {
             category: "Navigation",
             label: "Go to Settings",
-            keys: "3",
+            keys: "3", // KEY_SETTINGS
             handler: |s, _| s.current_page = Page::Settings,
         },
         // Library actions
         PaletteAction {
             category: "Library",
             label: "Add Book",
-            keys: "i",
+            keys: "i", // KEY_ADD_BOOK
             handler: |s, _| {
                 s.modal = Modal::AddBook {
                     inputs: vec![String::new()],
@@ -46,7 +46,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         PaletteAction {
             category: "Library",
             label: "Jump Chapter",
-            keys: "j",
+            keys: "j", // KEY_JUMP_CHAPTER
             handler: |s, _| {
                 if let Some(b) = s.library.selected_book() {
                     s.modal = Modal::JumpChapter {
@@ -64,7 +64,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         PaletteAction {
             category: "Library",
             label: "Update All",
-            keys: "u",
+            keys: "u", // KEY_UPDATE_ALL
             handler: |s, tx| {
                 let urls: Vec<String> = s
                     .library
@@ -81,7 +81,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         PaletteAction {
             category: "Library",
             label: "Delete Book",
-            keys: "d",
+            keys: "d", // KEY_DELETE
             handler: |s, _| {
                 s.library.remove_selected();
             },
@@ -89,7 +89,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         PaletteAction {
             category: "Library",
             label: "Cycle Filter",
-            keys: "f",
+            keys: "f", // KEY_CYCLE_FILTER
             handler: |s, _| {
                 s.library.cycle_filter();
             },
@@ -97,7 +97,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         PaletteAction {
             category: "Library",
             label: "Cycle Status",
-            keys: "Space",
+            keys: "Space", // KEY_CYCLE_STATUS
             handler: |s, _| {
                 s.library.cycle_selected_status();
             },
@@ -106,7 +106,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         PaletteAction {
             category: "Reader",
             label: "Next Chapter",
-            keys: ">",
+            keys: ">", // KEY_NEXT_CHAPTER
             handler: |s, tx| {
                 if let Some(b) = s.library.selected_book() {
                     let next = s.reader.current_chapter_idx + 1;
@@ -120,7 +120,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         PaletteAction {
             category: "Reader",
             label: "Previous Chapter",
-            keys: "<",
+            keys: "<", // KEY_PREV_CHAPTER
             handler: |s, tx| {
                 if let Some(b) = s.library.selected_book() {
                     let prev = s.reader.current_chapter_idx.saturating_sub(1);
@@ -145,7 +145,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         PaletteAction {
             category: "Settings",
             label: "Open Settings",
-            keys: "3",
+            keys: "3", // KEY_SETTINGS
             handler: |s, _| s.current_page = Page::Settings,
         },
         PaletteAction {
@@ -163,7 +163,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             keys: "",
             handler: |s, _| {
                 s.settings.reload_plugins();
-                s.settings.settings_page = crate::settings::SettingsPage::PluginList;
+                s.settings_ui.settings_page = crate::settings::SettingsPage::PluginList;
             },
         },
         // Debug
@@ -171,7 +171,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             category: "Debug",
             label: "Reload Log",
             keys: "",
-            handler: |s, _| s.settings.reload_log(),
+            handler: |s, _| s.settings_ui.reload_log(),
         },
     ]
 }

@@ -86,6 +86,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
             scroll_offset,
             input,
             editing_id,
+            pending_delete_url,
         } => {
             let popup_area = centered_rect(60, 50, area);
             frame.render_widget(Clear, popup_area);
@@ -116,7 +117,9 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 )
             };
 
-            let hints = if input.is_some() {
+            let hints = if pending_delete_url.is_some() {
+                " Press d again to confirm deletion  [Esc] Cancel "
+            } else if input.is_some() {
                 " [Enter] Confirm  [Esc] Cancel "
             } else {
                 " [Enter] Open  [n] New  [r] Rename  [d] Delete  [↑↓] Move  [Esc] Cancel "
@@ -224,23 +227,92 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    #[test]
-    fn test_draw_modal_command_palette_renders() {
+    fn make_state() -> AppState {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
-        let mut state = AppState::from_parts(db, Library::new());
+        AppState::from_parts(db, Library::new())
+    }
+
+    fn draw_modal_with(state: &mut AppState) {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_modal(f, f.area(), state);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_draw_modal_command_palette_renders() {
+        let mut state = make_state();
         state.modal = Modal::CommandPalette {
             query: "test".into(),
             filtered: vec![],
             selected: 0,
         };
+        draw_modal_with(&mut state);
+    }
 
-        let backend = TestBackend::new(80, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|f| {
-                draw_modal(f, f.area(), &mut state);
-            })
-            .unwrap();
+    #[test]
+    fn test_draw_modal_add_book_renders() {
+        let mut state = make_state();
+        state.modal = Modal::AddBook {
+            inputs: vec!["http://example.com".into()],
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        draw_modal_with(&mut state);
+    }
+
+    #[test]
+    fn test_draw_modal_jump_chapter_renders() {
+        let mut state = make_state();
+        state.modal = Modal::JumpChapter {
+            chapters: vec![],
+            query: "search".into(),
+            filtered: vec![],
+            cursor: 0,
+            scroll_offset: 0,
+            show_titles: true,
+        };
+        draw_modal_with(&mut state);
+    }
+
+    #[test]
+    fn test_draw_modal_session_picker_renders() {
+        let mut state = make_state();
+        state.library.add_book("Test Book".into(), "http://example.com/book".into(), 10);
+        state.modal = Modal::SessionPicker {
+            book_url: "http://example.com/book".into(),
+            cursor: 0,
+            scroll_offset: 0,
+            input: None,
+            editing_id: None,
+            pending_delete_url: None,
+        };
+        draw_modal_with(&mut state);
+    }
+
+    #[test]
+    fn test_draw_modal_session_picker_pending_delete_renders() {
+        let mut state = make_state();
+        state.library.add_book("Test Book".into(), "http://example.com/book".into(), 10);
+        state.modal = Modal::SessionPicker {
+            book_url: "http://example.com/book".into(),
+            cursor: 0,
+            scroll_offset: 0,
+            input: None,
+            editing_id: None,
+            pending_delete_url: Some("http://example.com/confirm-delete".into()),
+        };
+        draw_modal_with(&mut state);
+    }
+
+    #[test]
+    fn test_draw_modal_none_does_not_panic() {
+        let mut state = make_state();
+        state.modal = Modal::None;
+        draw_modal_with(&mut state);
     }
 }

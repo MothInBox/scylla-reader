@@ -1,5 +1,6 @@
 //! Palette input handler.
 
+use crate::input::keybinds::*;
 use crate::messenger::AppCommand;
 use crate::state::AppState;
 use crate::state::Modal;
@@ -18,18 +19,18 @@ pub fn handle_palette(
     } = &mut state.modal
     {
         match key.code {
-            KeyCode::Enter => {
+            KEY_ENTER => {
                 if let Some(action) = filtered.get(*selected) {
                     (action.handler)(state, cmd_tx);
                 }
                 state.close_modal();
                 true
             }
-            KeyCode::Up => {
+            KEY_NAV_UP => {
                 *selected = selected.saturating_sub(1);
                 true
             }
-            KeyCode::Down => {
+            KEY_NAV_DOWN => {
                 if *selected + 1 < filtered.len() {
                     *selected += 1;
                 }
@@ -44,7 +45,7 @@ pub fn handle_palette(
                 *selected = 0;
                 true
             }
-            KeyCode::Backspace => {
+            KEY_BACKSPACE => {
                 query.pop();
                 *filtered = crate::ui::palette::filter_actions(
                     &crate::ui::palette::build_palette_actions(cmd_tx.clone()),
@@ -108,7 +109,7 @@ mod tests {
             has_settings,
             "Expected at least 'Go to Settings' to match 'Settings'"
         );
-        handle_palette(&mut state, key_event(KeyCode::Enter), &tx);
+        handle_palette(&mut state, key_event(KEY_ENTER), &tx);
         assert_eq!(state.current_page, Page::Settings);
         assert_eq!(state.modal, Modal::None);
     }
@@ -118,14 +119,14 @@ mod tests {
         let mut state = setup_palette_state("", 0);
         let (tx, _rx) = channel();
         // Initially selected = 0, press Down -> selected = 1
-        handle_palette(&mut state, key_event(KeyCode::Down), &tx);
+        handle_palette(&mut state, key_event(KEY_NAV_DOWN), &tx);
         if let Modal::CommandPalette { selected, .. } = &state.modal {
             assert_eq!(*selected, 1);
         } else {
             panic!("Expected CommandPalette");
         }
         // Press Up -> selected = 0
-        handle_palette(&mut state, key_event(KeyCode::Up), &tx);
+        handle_palette(&mut state, key_event(KEY_NAV_UP), &tx);
         if let Modal::CommandPalette { selected, .. } = &state.modal {
             assert_eq!(*selected, 0);
         } else {
@@ -137,7 +138,7 @@ mod tests {
     fn test_handle_palette_up_stays_at_top() {
         let mut state = setup_palette_state("", 0);
         let (tx, _rx) = channel();
-        handle_palette(&mut state, key_event(KeyCode::Up), &tx);
+        handle_palette(&mut state, key_event(KEY_NAV_UP), &tx);
         if let Modal::CommandPalette { selected, .. } = &state.modal {
             assert_eq!(*selected, 0);
         } else {
@@ -159,7 +160,7 @@ mod tests {
         if let Modal::CommandPalette { selected, .. } = &mut state.modal {
             *selected = action_count.saturating_sub(1);
         }
-        handle_palette(&mut state, key_event(KeyCode::Down), &tx);
+        handle_palette(&mut state, key_event(KEY_NAV_DOWN), &tx);
         if let Modal::CommandPalette { selected, .. } = &state.modal {
             assert_eq!(*selected, action_count.saturating_sub(1));
         } else {
@@ -216,7 +217,7 @@ mod tests {
             0
         };
 
-        handle_palette(&mut state, key_event(KeyCode::Backspace), &tx);
+        handle_palette(&mut state, key_event(KEY_BACKSPACE), &tx);
         if let Modal::CommandPalette {
             query,
             filtered,
@@ -260,7 +261,7 @@ mod tests {
         let mut state = test_state();
         state.modal = Modal::None;
         let (tx, _rx) = channel();
-        let result = handle_palette(&mut state, key_event(KeyCode::Enter), &tx);
+        let result = handle_palette(&mut state, key_event(KEY_ENTER), &tx);
         assert!(result);
         assert_eq!(state.modal, Modal::None);
     }

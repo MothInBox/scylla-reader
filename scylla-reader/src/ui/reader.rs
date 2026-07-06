@@ -42,6 +42,7 @@ fn draw_no_book(frame: &mut Frame, area: Rect) {
 }
 
 fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
+    state.reader.total_pages.set(state.reader.total_pages_for(area.width, area.height));
     let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -209,6 +210,25 @@ mod tests {
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(content.contains("[1]"));
+    }
+
+    #[test]
+    fn test_reader_draw_shows_content() {
+        let mut state = state_with_reader_content();
+        state.show_hints = false;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("hello"));
+        assert!(content.contains("world"));
     }
 
     #[test]

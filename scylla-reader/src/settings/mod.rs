@@ -130,19 +130,9 @@ fn compiled_defaults() -> PersistedSettings {
 
 pub struct Settings {
     pub rate_limit_secs: u64,
-    pub selected_field: usize,
-    pub editing: bool,
-    pub edit_buffer: String,
-    pub settings_page: SettingsPage,
     pub debug_log: bool,
     pub reader_mode: ReaderMode,
     pub plugin_configs: Vec<PluginConfig>,
-    pub selected_plugin: usize,
-    pub selected_plugin_field: usize,
-    pub plugin_field_editing: bool,
-    pub plugin_field_buffer: String,
-    pub log_scroll: usize,
-    pub log_lines: Vec<String>,
 }
 
 impl Default for Settings {
@@ -191,19 +181,9 @@ impl Settings {
 
         Self {
             rate_limit_secs: merged.rate_limit_secs,
-            selected_field: 0,
-            editing: false,
-            edit_buffer: String::new(),
-            settings_page: SettingsPage::Main,
             debug_log: merged.debug_log,
             reader_mode: merged.reader_mode,
             plugin_configs: PluginConfig::discover_all(),
-            selected_plugin: 0,
-            selected_plugin_field: 0,
-            plugin_field_editing: false,
-            plugin_field_buffer: String::new(),
-            log_scroll: 0,
-            log_lines: Vec::new(),
         }
     }
 
@@ -211,37 +191,36 @@ impl Settings {
         self.plugin_configs = PluginConfig::discover_all();
     }
 
-    pub fn save_current_field(&mut self) -> Result<(), String> {
-        let Some(config) = self.plugin_configs.get_mut(self.selected_plugin) else {
+    pub fn save_current_field(
+        &mut self,
+        selected_plugin: usize,
+        selected_plugin_field: usize,
+        plugin_field_buffer: &str,
+    ) -> Result<(), String> {
+        let Some(config) = self.plugin_configs.get_mut(selected_plugin) else {
             return Ok(());
         };
-        let is_cookie = self.selected_plugin_field == config.schema.len();
+        let is_cookie = selected_plugin_field == config.schema.len();
         if is_cookie {
-            config.cookies = self.plugin_field_buffer.clone();
+            config.cookies = plugin_field_buffer.to_string();
             return config.save();
         }
         let key = config
             .schema
-            .get(self.selected_plugin_field)
+            .get(selected_plugin_field)
             .map(|f| f.key.clone());
         let Some(key) = key else {
             return Ok(());
         };
-        if let Some(field) = config.schema.get(self.selected_plugin_field)
+        if let Some(field) = config.schema.get(selected_plugin_field)
             && field.field_type == "number"
-                && !self.plugin_field_buffer.is_empty()
-                && self.plugin_field_buffer.parse::<f64>().is_err()
+                && !plugin_field_buffer.is_empty()
+                && plugin_field_buffer.parse::<f64>().is_err()
             {
                 return Err("Invalid number".to_string());
             }
-        config.update_value(&key, self.plugin_field_buffer.clone());
+        config.update_value(&key, plugin_field_buffer.to_string());
         config.save()
-    }
-
-    pub fn reload_log(&mut self) {
-        let path = log_file();
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
-        self.log_lines = content.lines().map(|l| l.to_string()).collect();
     }
 
     pub fn field_value(&self, field: &SettingsField) -> String {
@@ -288,11 +267,6 @@ mod tests {
         assert_eq!(s.rate_limit_secs, 2);
         assert_eq!(s.reader_mode, ReaderMode::Paged);
         assert!(!s.debug_log);
-        assert_eq!(s.selected_field, 0);
-        assert_eq!(s.settings_page, SettingsPage::Main);
-        assert_eq!(s.selected_plugin, 0);
-        assert_eq!(s.selected_plugin_field, 0);
-        assert!(!s.plugin_field_editing);
     }
 
     #[test]

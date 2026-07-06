@@ -2,7 +2,9 @@
 
 pub mod app;
 pub mod db;
+pub mod event;
 pub mod input;
+pub mod key_handler;
 pub mod library;
 pub mod messenger;
 pub mod models;

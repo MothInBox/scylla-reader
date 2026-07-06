@@ -1,5 +1,7 @@
 //! Reader state — content, paging, scrolling, word-wrap calculations.
 
+use std::cell::Cell;
+
 pub struct ReaderState {
     pub content: Vec<String>,
     pub scroll: usize,
@@ -12,6 +14,7 @@ pub struct ReaderState {
     pub session_id: i64,
     pub session_name: String,
     pub loading: bool,
+    pub total_pages: Cell<usize>,
 }
 
 impl Default for ReaderState {
@@ -34,6 +37,7 @@ impl ReaderState {
             session_id: 0,
             session_name: String::new(),
             loading: false,
+            total_pages: Cell::new(1),
         }
     }
 
@@ -61,6 +65,7 @@ impl ReaderState {
         self.visual_scroll = 0;
         self.page = 0;
         self.current_chapter_idx = chapter_idx;
+        self.total_pages = Cell::new(1);
         self.loading = false;
     }
 
@@ -196,13 +201,13 @@ impl ReaderState {
         parts
     }
 
-    pub fn next_page(&mut self, area_width: u16, area_height: u16) {
-        if self.page + 1 < self.total_pages_for(area_width, area_height) {
+    pub fn next_page(&mut self) {
+        if self.page + 1 < self.total_pages.get() {
             self.page += 1;
         }
     }
 
-    pub fn prev_page(&mut self, _area_width: u16, _area_height: u16) {
+    pub fn prev_page(&mut self) {
         if self.page > 0 {
             self.page -= 1;
         }
@@ -509,7 +514,8 @@ mod tests {
                 .join("\n"),
             0,
         );
-        r.next_page(80, 6);
+        r.total_pages = Cell::new(r.total_pages_for(80, 6));
+        r.next_page();
         assert_eq!(r.page, 1);
     }
 
@@ -517,7 +523,8 @@ mod tests {
     fn test_next_page_clamps() {
         let mut r = ReaderState::new();
         r.load("".into(), "".into(), "".into(), "single line".into(), 0);
-        r.next_page(80, 20);
+        r.total_pages = Cell::new(r.total_pages_for(80, 20));
+        r.next_page();
         assert_eq!(r.page, 0);
     }
 
@@ -535,7 +542,8 @@ mod tests {
             0,
         );
         r.page = 2;
-        r.prev_page(80, 6);
+        r.total_pages = Cell::new(r.total_pages_for(80, 6));
+        r.prev_page();
         assert_eq!(r.page, 1);
     }
 
@@ -543,7 +551,8 @@ mod tests {
     fn test_prev_page_clamps() {
         let mut r = ReaderState::new();
         r.load("".into(), "".into(), "".into(), "single line".into(), 0);
-        r.prev_page(80, 20);
+        r.total_pages = Cell::new(r.total_pages_for(80, 20));
+        r.prev_page();
         assert_eq!(r.page, 0);
     }
 

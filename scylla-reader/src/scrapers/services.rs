@@ -366,3 +366,136 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
 
     String::from_utf8(data).map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_empty_registry_no_plugins() {
+        let registry = ScraperRegistry {
+            plugins: vec![],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        assert!(registry.plugins.is_empty());
+        let result = registry.find_plugin("https://example.com/page");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("No plugin found"));
+    }
+
+    #[test]
+    fn test_find_plugin_matches_exact_domain() {
+        let registry = ScraperRegistry {
+            plugins: vec![("example.com".into(), PathBuf::from("/p/example.wasm"))],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        let (domain, path) = registry.find_plugin("https://example.com/page").unwrap();
+        assert_eq!(domain, "example.com");
+        assert_eq!(path, &PathBuf::from("/p/example.wasm"));
+    }
+
+    #[test]
+    fn test_find_plugin_matches_substring_domain() {
+        let registry = ScraperRegistry {
+            plugins: vec![("blog".into(), PathBuf::from("/p/blog.wasm"))],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        let (domain, _) = registry
+            .find_plugin("https://blog.example.com/post")
+            .unwrap();
+        assert_eq!(domain, "blog");
+    }
+
+    #[test]
+    fn test_find_plugin_first_match_wins() {
+        let registry = ScraperRegistry {
+            plugins: vec![
+                ("com".into(), PathBuf::from("/p/com.wasm")),
+                ("example.com".into(), PathBuf::from("/p/example.wasm")),
+            ],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        let (domain, _) = registry.find_plugin("https://example.com/page").unwrap();
+        assert_eq!(domain, "com");
+    }
+
+    #[test]
+    fn test_find_plugin_no_match() {
+        let registry = ScraperRegistry {
+            plugins: vec![("example.com".into(), PathBuf::from("/p/example.wasm"))],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        let err = registry.find_plugin("https://other.com/page").unwrap_err();
+        assert!(err.to_string().contains("No plugin found for:"));
+    }
+
+    #[test]
+    fn test_find_plugin_template_without_template_plugin() {
+        let registry = ScraperRegistry {
+            plugins: vec![("other".into(), PathBuf::from("/p/other.wasm"))],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        let result = registry.find_plugin("template://something");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_find_plugin_template_with_template_plugin() {
+        let registry = ScraperRegistry {
+            plugins: vec![
+                ("template".into(), PathBuf::from("/p/template.wasm")),
+                ("other".into(), PathBuf::from("/p/other.wasm")),
+            ],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        let (domain, path) = registry.find_plugin("template://something").unwrap();
+        assert_eq!(domain, "template");
+        assert_eq!(path, &PathBuf::from("/p/template.wasm"));
+    }
+
+    #[test]
+    fn test_find_plugin_url_contains_domain_anywhere() {
+        let registry = ScraperRegistry {
+            plugins: vec![("royalroad".into(), PathBuf::from("/p/rr.wasm"))],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        let (domain, _) = registry
+            .find_plugin("https://www.royalroad.com/fiction/123")
+            .unwrap();
+        assert_eq!(domain, "royalroad");
+    }
+
+    #[test]
+    fn test_find_plugin_case_sensitive_matching() {
+        let registry = ScraperRegistry {
+            plugins: vec![("Example".into(), PathBuf::from("/p/example.wasm"))],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        // Case-sensitive match — URL must contain "Example" exactly
+        let (domain, _) = registry.find_plugin("https://Example.com/page").unwrap();
+        assert_eq!(domain, "Example");
+    }
+
+    #[test]
+    fn test_find_plugin_case_sensitive_no_match() {
+        let registry = ScraperRegistry {
+            plugins: vec![("Example".into(), PathBuf::from("/p/example.wasm"))],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        // Lowercase "example" doesn't match uppercase "Example"
+        let result = registry.find_plugin("https://example.com/page");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_plugin_list_contains_no_wasm() {
+        let registry = ScraperRegistry {
+            plugins: vec![("plugin".into(), PathBuf::from("/p/plugin.wasm"))],
+            plugin_cache: RefCell::new(vec![]),
+        };
+        assert_eq!(registry.plugins.len(), 1);
+        assert_eq!(registry.plugins[0].0, "plugin");
+    }
+}

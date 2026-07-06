@@ -5,7 +5,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
 pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
-    match state.settings.settings_page {
+    match state.settings_ui.settings_page {
         SettingsPage::Main => draw_main(frame, area, state),
         SettingsPage::DebugLog => draw_debug_log(frame, area, state),
         SettingsPage::PluginList => draw_plugin_list(frame, area, state),
@@ -39,7 +39,7 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
         .highlight_symbol(">> ");
 
     let mut list_state = ListState::default();
-    list_state.select(Some(state.settings.selected_field));
+    list_state.select(Some(state.settings_ui.selected_field));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
     if state.show_hints {
@@ -51,7 +51,7 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Actions",
-                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+                &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
             )),
             hint_chunks[0],
         );
@@ -95,10 +95,10 @@ fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
     .block(Block::default().title(" Debug Log ").borders(Borders::ALL));
     frame.render_widget(toggle_line, chunks[0]);
 
-    let log_content = state.settings.log_lines.join("\n");
+    let log_content = state.settings_ui.log_lines.join("\n");
     let log_widget = Paragraph::new(log_content)
         .block(Block::default().title(" Log ").borders(Borders::ALL))
-        .scroll((state.settings.log_scroll as u16, 0))
+        .scroll((state.settings_ui.log_scroll as u16, 0))
         .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(log_widget, chunks[1]);
 
@@ -111,7 +111,7 @@ fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Actions",
-                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+                &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
             )),
             hint_chunks[0],
         );
@@ -156,7 +156,7 @@ fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
         .highlight_symbol(">> ");
 
     let mut list_state = ListState::default();
-    list_state.select(Some(state.settings.selected_plugin));
+    list_state.select(Some(state.settings_ui.selected_plugin));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
     if state.show_hints {
@@ -168,7 +168,7 @@ fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Actions",
-                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+                &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
             )),
             hint_chunks[0],
         );
@@ -199,7 +199,7 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
     let Some(config) = state
         .settings
         .plugin_configs
-        .get(state.settings.selected_plugin)
+        .get(state.settings_ui.selected_plugin)
     else {
         return;
     };
@@ -223,7 +223,7 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
     let cookie_extra = if config.accepts_cookies { 1 } else { 0 };
     let field_count = config.schema.len() + cookie_extra;
     let clamped = state
-        .settings
+        .settings_ui
         .selected_plugin_field
         .min(field_count.saturating_sub(1));
     let list = List::new(items)
@@ -248,7 +248,7 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Actions",
-                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+                &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
             )),
             hint_chunks[0],
         );
@@ -279,20 +279,20 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
     let config = state
         .settings
         .plugin_configs
-        .get(state.settings.selected_plugin);
+        .get(state.settings_ui.selected_plugin);
     let is_cookie = config
-        .map(|c| state.settings.selected_plugin_field == c.schema.len() && c.accepts_cookies)
+        .map(|c| state.settings_ui.selected_plugin_field == c.schema.len() && c.accepts_cookies)
         .unwrap_or(false);
 
     let title = match (config, is_cookie) {
-        (Some(c), true) => format!(" {} — Cookies ", c.domain),
+        (Some(c), true) => format!(" {} \u{2014} Cookies ", c.domain),
         (Some(c), false) => {
             let label = c
                 .schema
-                .get(state.settings.selected_plugin_field)
+                .get(state.settings_ui.selected_plugin_field)
                 .map(|f| f.label.as_str())
                 .unwrap_or("unknown");
-            format!(" {} — {} ", c.domain, label)
+            format!(" {} \u{2014} {} ", c.domain, label)
         }
         (None, _) => " unknown ".to_string(),
     };
@@ -302,7 +302,7 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 
-    let paragraph = Paragraph::new(state.settings.plugin_field_buffer.as_str())
+    let paragraph = Paragraph::new(state.settings_ui.plugin_field_buffer.as_str())
         .block(block)
         .wrap(ratatui::widgets::Wrap { trim: false });
 
@@ -317,7 +317,7 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(
             Paragraph::new(hint_line(
                 "Actions",
-                &[("↑/↓", "Navigate"), ("Enter", "Select")],
+                &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
             )),
             hint_chunks[0],
         );
@@ -364,6 +364,26 @@ mod tests {
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(content.contains("[Enter]"));
+    }
+
+    #[test]
+    fn test_settings_draw_shows_rate_limit_label() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Db::open_conn(conn).unwrap();
+        let mut state = AppState::from_parts(db, Library::new());
+        state.show_hints = true;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &state);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Rate Limit"));
     }
 
     #[test]

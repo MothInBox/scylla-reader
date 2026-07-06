@@ -46,6 +46,7 @@ impl Worker {
                     );
                 }
                 AppCommand::UpdateAll(urls) => {
+                    let mut deferred_covers: Vec<String> = Vec::new();
                     let mut urls_iter = urls.into_iter();
                     if let Some(url) = urls_iter.next() {
                         Self::scrape_and_send(
@@ -76,11 +77,14 @@ impl Worker {
                                                     }),
                                                 );
                                             }
-                                            Err(e) => crate::settings::log(
-                                                crate::settings::LogLevel::Debug,
-                                                "SCRAPE",
-                                                &format!("Chapter fetch failed: {}", e),
-                                            ),
+                                            Err(e) => {
+                                                crate::settings::log(
+                                                    crate::settings::LogLevel::Debug,
+                                                    "SCRAPE",
+                                                    &format!("Chapter fetch failed: {}", e),
+                                                );
+                                                let _ = self.event_tx.send(AppEvent::ChapterFetchFailed);
+                                            }
                                         }
                                     }
                                     AppCommand::Scrape(url) => {
@@ -95,7 +99,9 @@ impl Worker {
                                         self.rate_limit_secs = secs;
                                     }
                                     AppCommand::UpdateAll(_) => {}
-                                    AppCommand::FetchCover(_) => {}
+                                    AppCommand::FetchCover(url) => {
+                                        deferred_covers.push(url);
+                                    }
                                 },
                                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                                 Err(mpsc::RecvTimeoutError::Disconnected) => break 'urls,
@@ -107,6 +113,35 @@ impl Worker {
                             &self.event_tx,
                             &clean_url(&url),
                         );
+                    }
+                    // Process deferred cover fetches
+                    for url in deferred_covers {
+                        let event_tx = self.event_tx.clone();
+                        let font_size = self.picker_font_size;
+                        let protocol_type = self.picker_protocol_type;
+                        runtime.spawn_blocking(move || {
+                            let mut picker = ratatui_image::picker::Picker::from_fontsize(font_size);
+                            picker.set_protocol_type(protocol_type);
+                            match reqwest::blocking::get(&url) {
+                                Ok(resp) => match resp.bytes() {
+                                    Ok(bytes) => match image::load_from_memory(&bytes) {
+                                        Ok(img) => {
+                                            let protocol = picker.new_resize_protocol(img);
+                                            let _ = event_tx.send(AppEvent::CoverFetched(url, protocol));
+                                        }
+                                        Err(e) => crate::settings::log(
+                                            crate::settings::LogLevel::Debug, "UI", &format!("Image decode: {}", e),
+                                        ),
+                                    },
+                                    Err(e) => crate::settings::log(
+                                        crate::settings::LogLevel::Debug, "UI", &format!("Cover bytes: {}", e),
+                                    ),
+                                },
+                                Err(e) => crate::settings::log(
+                                    crate::settings::LogLevel::Debug, "UI", &format!("Cover fetch: {}", e),
+                                ),
+                            }
+                        });
                     }
                 }
                 AppCommand::SetRateLimit(secs) => {
@@ -122,18 +157,21 @@ impl Worker {
                                 content,
                             }));
                         }
-                        Err(e) => crate::settings::log(
-                            crate::settings::LogLevel::Debug,
-                            "SCRAPE",
-                            &format!("Chapter fetch failed: {}", e),
-                        ),
+                        Err(e) => {
+                            crate::settings::log(
+                                crate::settings::LogLevel::Debug,
+                                "SCRAPE",
+                                &format!("Chapter fetch failed: {}", e),
+                            );
+                            let _ = self.event_tx.send(AppEvent::ChapterFetchFailed);
+                        }
                     }
                 }
                 AppCommand::FetchCover(url) => {
                     let event_tx = self.event_tx.clone();
                     let font_size = self.picker_font_size;
                     let protocol_type = self.picker_protocol_type;
-                    std::thread::spawn(move || {
+                    runtime.spawn_blocking(move || {
                         let mut picker = ratatui_image::picker::Picker::from_fontsize(font_size);
                         picker.set_protocol_type(protocol_type);
                         match reqwest::blocking::get(&url) {

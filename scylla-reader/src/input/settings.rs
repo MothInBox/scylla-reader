@@ -1,3 +1,4 @@
+use crate::input::keybinds::*;
 use crate::messenger::AppCommand;
 use crate::settings::{SettingsField, SettingsPage};
 use crate::state::AppState;
@@ -8,7 +9,7 @@ pub fn handle_settings(
     key: KeyEvent,
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
-    match state.settings.settings_page.clone() {
+    match state.settings_ui.settings_page.clone() {
         SettingsPage::Main => handle_settings_main(state, key, cmd_tx),
         SettingsPage::DebugLog => handle_debug_log(state, key),
         SettingsPage::PluginList => handle_plugin_list(state, key),
@@ -24,33 +25,33 @@ pub fn handle_settings_main(
 ) -> bool {
     let num_fields = SettingsField::all().len();
     match key.code {
-        KeyCode::Down => {
-            state.settings.selected_field = (state.settings.selected_field + 1).min(num_fields - 1);
+        KEY_NAV_DOWN => {
+            state.settings_ui.selected_field = (state.settings_ui.selected_field + 1).min(num_fields - 1);
             true
         }
-        KeyCode::Up => {
-            state.settings.selected_field = state.settings.selected_field.saturating_sub(1);
+        KEY_NAV_UP => {
+            state.settings_ui.selected_field = state.settings_ui.selected_field.saturating_sub(1);
             true
         }
-        KeyCode::Enter => {
-            match SettingsField::all()[state.settings.selected_field] {
+        KEY_ENTER => {
+            match SettingsField::all()[state.settings_ui.selected_field] {
                 SettingsField::RateLimit => {
-                    if state.settings.editing {
-                        if let Ok(rate) = state.settings.edit_buffer.parse::<u64>() {
+                    if state.settings_ui.editing {
+                        if let Ok(rate) = state.settings_ui.edit_buffer.parse::<u64>() {
                             state.settings.rate_limit_secs = rate;
                             state.settings.save();
                             let _ = cmd_tx.send(AppCommand::SetRateLimit(rate));
                         }
-                        state.settings.editing = false;
+                        state.settings_ui.editing = false;
                     } else {
-                        state.settings.edit_buffer = state.settings.rate_limit_secs.to_string();
-                        state.settings.editing = true;
+                        state.settings_ui.edit_buffer = state.settings.rate_limit_secs.to_string();
+                        state.settings_ui.editing = true;
                     }
                 }
                 SettingsField::DebugLog => {
-                    state.settings.reload_log();
-                    state.settings.log_scroll = 0;
-                    state.settings.settings_page = SettingsPage::DebugLog;
+                    state.settings_ui.reload_log();
+                    state.settings_ui.log_scroll = 0;
+                    state.settings_ui.settings_page = SettingsPage::DebugLog;
                 }
                 SettingsField::ReaderMode => {
                     state.settings.reader_mode = state.settings.reader_mode.toggle();
@@ -58,18 +59,18 @@ pub fn handle_settings_main(
                 }
                 SettingsField::Plugins => {
                     state.settings.reload_plugins();
-                    state.settings.selected_plugin = 0;
-                    state.settings.settings_page = SettingsPage::PluginList;
+                    state.settings_ui.selected_plugin = 0;
+                    state.settings_ui.settings_page = SettingsPage::PluginList;
                 }
             }
             true
         }
-        KeyCode::Char(c) if state.settings.editing => {
-            state.settings.edit_buffer.push(c);
+        KeyCode::Char(c) if state.settings_ui.editing => {
+            state.settings_ui.edit_buffer.push(c);
             true
         }
-        KeyCode::Backspace if state.settings.editing => {
-            state.settings.edit_buffer.pop();
+        KEY_BACKSPACE if state.settings_ui.editing => {
+            state.settings_ui.edit_buffer.pop();
             true
         }
         _ => true,
@@ -78,7 +79,7 @@ pub fn handle_settings_main(
 
 fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
     match key.code {
-        KeyCode::Enter => {
+        KEY_ENTER => {
             state.settings.debug_log = !state.settings.debug_log;
             crate::settings::set_debug(state.settings.debug_log);
             state.settings.save();
@@ -94,17 +95,17 @@ fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
                     "Debug logging enabled",
                 );
             }
-            state.settings.reload_log();
-            state.settings.log_scroll = 0;
+            state.settings_ui.reload_log();
+            state.settings_ui.log_scroll = 0;
             true
         }
-        KeyCode::Up => {
-            state.settings.log_scroll = state.settings.log_scroll.saturating_sub(1);
+        KEY_NAV_UP => {
+            state.settings_ui.log_scroll = state.settings_ui.log_scroll.saturating_sub(1);
             true
         }
-        KeyCode::Down => {
-            let max = state.settings.log_lines.len().saturating_sub(1);
-            state.settings.log_scroll = (state.settings.log_scroll + 1).min(max);
+        KEY_NAV_DOWN => {
+            let max = state.settings_ui.log_lines.len().saturating_sub(1);
+            state.settings_ui.log_scroll = (state.settings_ui.log_scroll + 1).min(max);
             true
         }
         _ => true,
@@ -114,21 +115,21 @@ fn handle_debug_log(state: &mut AppState, key: KeyEvent) -> bool {
 pub fn handle_plugin_list(state: &mut AppState, key: KeyEvent) -> bool {
     let num_plugins = state.settings.plugin_configs.len();
     match key.code {
-        KeyCode::Down => {
+        KEY_NAV_DOWN => {
             if num_plugins > 0 {
-                state.settings.selected_plugin =
-                    (state.settings.selected_plugin + 1).min(num_plugins - 1);
+                state.settings_ui.selected_plugin =
+                    (state.settings_ui.selected_plugin + 1).min(num_plugins - 1);
             }
             true
         }
-        KeyCode::Up => {
-            state.settings.selected_plugin = state.settings.selected_plugin.saturating_sub(1);
+        KEY_NAV_UP => {
+            state.settings_ui.selected_plugin = state.settings_ui.selected_plugin.saturating_sub(1);
             true
         }
-        KeyCode::Enter => {
+        KEY_ENTER => {
             if !state.settings.plugin_configs.is_empty() {
-                state.settings.selected_plugin_field = 0;
-                state.settings.settings_page = SettingsPage::PluginFields;
+                state.settings_ui.selected_plugin_field = 0;
+                state.settings_ui.settings_page = SettingsPage::PluginFields;
             }
             true
         }
@@ -140,39 +141,39 @@ pub fn handle_plugin_fields(state: &mut AppState, key: KeyEvent) -> bool {
     let Some(config) = state
         .settings
         .plugin_configs
-        .get(state.settings.selected_plugin)
+        .get(state.settings_ui.selected_plugin)
     else {
-        state.settings.settings_page = SettingsPage::PluginList;
+        state.settings_ui.settings_page = SettingsPage::PluginList;
         return true;
     };
     let cookie_extra = if config.accepts_cookies { 1 } else { 0 };
     let total = config.schema.len() + cookie_extra;
     match key.code {
-        KeyCode::Down => {
+        KEY_NAV_DOWN => {
             if total > 0 {
-                state.settings.selected_plugin_field =
-                    (state.settings.selected_plugin_field + 1).min(total - 1);
+                state.settings_ui.selected_plugin_field =
+                    (state.settings_ui.selected_plugin_field + 1).min(total - 1);
             }
             true
         }
-        KeyCode::Up => {
-            state.settings.selected_plugin_field =
-                state.settings.selected_plugin_field.saturating_sub(1);
+        KEY_NAV_UP => {
+            state.settings_ui.selected_plugin_field =
+                state.settings_ui.selected_plugin_field.saturating_sub(1);
             true
         }
-        KeyCode::Enter => {
+        KEY_ENTER => {
             let is_cookie = config.accepts_cookies
-                && state.settings.selected_plugin_field == config.schema.len();
+                && state.settings_ui.selected_plugin_field == config.schema.len();
             if is_cookie {
-                state.settings.plugin_field_buffer = config.cookies.clone();
-            } else if let Some(field) = config.schema.get(state.settings.selected_plugin_field) {
-                state.settings.plugin_field_buffer =
+                state.settings_ui.plugin_field_buffer = config.cookies.clone();
+            } else if let Some(field) = config.schema.get(state.settings_ui.selected_plugin_field) {
+                state.settings_ui.plugin_field_buffer =
                     config.values.get(&field.key).cloned().unwrap_or_default();
             } else {
                 return true;
             }
-            state.settings.plugin_field_editing = true;
-            state.settings.settings_page = SettingsPage::PluginFieldEdit;
+            state.settings_ui.plugin_field_editing = true;
+            state.settings_ui.settings_page = SettingsPage::PluginFieldEdit;
             true
         }
         _ => true,
@@ -181,8 +182,12 @@ pub fn handle_plugin_fields(state: &mut AppState, key: KeyEvent) -> bool {
 
 pub fn handle_plugin_field_edit(state: &mut AppState, key: KeyEvent) -> bool {
     match key.code {
-        KeyCode::Enter => {
-            let result = state.settings.save_current_field();
+        KEY_ENTER => {
+            let result = state.settings.save_current_field(
+                state.settings_ui.selected_plugin,
+                state.settings_ui.selected_plugin_field,
+                &state.settings_ui.plugin_field_buffer,
+            );
             if let Err(e) = result {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
@@ -190,17 +195,17 @@ pub fn handle_plugin_field_edit(state: &mut AppState, key: KeyEvent) -> bool {
                     &format!("Failed to save plugin field: {}", e),
                 );
             }
-            state.settings.plugin_field_buffer.clear();
-            state.settings.plugin_field_editing = false;
-            state.settings.settings_page = SettingsPage::PluginFields;
+            state.settings_ui.plugin_field_buffer.clear();
+            state.settings_ui.plugin_field_editing = false;
+            state.settings_ui.settings_page = SettingsPage::PluginFields;
             true
         }
         KeyCode::Char(c) => {
-            state.settings.plugin_field_buffer.push(c);
+            state.settings_ui.plugin_field_buffer.push(c);
             true
         }
-        KeyCode::Backspace => {
-            state.settings.plugin_field_buffer.pop();
+        KEY_BACKSPACE => {
+            state.settings_ui.plugin_field_buffer.pop();
             true
         }
         _ => true,
@@ -237,19 +242,19 @@ mod tests {
     fn test_handle_settings_main_navigate() {
         let mut state = test_state();
         let (tx, _rx) = channel();
-        assert_eq!(state.settings.selected_field, 0);
+        assert_eq!(state.settings_ui.selected_field, 0);
 
-        handle_settings_main(&mut state, key_event(KeyCode::Down), &tx);
-        assert_eq!(state.settings.selected_field, 1);
+        handle_settings_main(&mut state, key_event(KEY_NAV_DOWN), &tx);
+        assert_eq!(state.settings_ui.selected_field, 1);
 
-        handle_settings_main(&mut state, key_event(KeyCode::Down), &tx);
-        assert_eq!(state.settings.selected_field, 2);
+        handle_settings_main(&mut state, key_event(KEY_NAV_DOWN), &tx);
+        assert_eq!(state.settings_ui.selected_field, 2);
 
-        handle_settings_main(&mut state, key_event(KeyCode::Up), &tx);
-        assert_eq!(state.settings.selected_field, 1);
+        handle_settings_main(&mut state, key_event(KEY_NAV_UP), &tx);
+        assert_eq!(state.settings_ui.selected_field, 1);
 
-        handle_settings_main(&mut state, key_event(KeyCode::Up), &tx);
-        assert_eq!(state.settings.selected_field, 0);
+        handle_settings_main(&mut state, key_event(KEY_NAV_UP), &tx);
+        assert_eq!(state.settings_ui.selected_field, 0);
     }
 
     #[test]
@@ -265,48 +270,48 @@ mod tests {
     #[test]
     fn test_handle_settings_main_enter_edits_rate_limit() {
         let mut state = test_state();
-        state.settings.selected_field = 0;
+        state.settings_ui.selected_field = 0;
         let (tx, _rx) = channel();
-        assert!(!state.settings.editing);
+        assert!(!state.settings_ui.editing);
 
-        handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
-        assert!(state.settings.editing);
-        assert_eq!(state.settings.edit_buffer, "2");
+        handle_settings_main(&mut state, key_event(KEY_ENTER), &tx);
+        assert!(state.settings_ui.editing);
+        assert_eq!(state.settings_ui.edit_buffer, "2");
     }
 
     #[test]
     fn test_handle_settings_main_enter_saves_rate_limit() {
         let mut state = test_state();
-        state.settings.selected_field = 0;
-        state.settings.editing = true;
-        state.settings.edit_buffer = "5".to_string();
+        state.settings_ui.selected_field = 0;
+        state.settings_ui.editing = true;
+        state.settings_ui.edit_buffer = "5".to_string();
         let (tx, _rx) = channel();
 
-        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        let result = handle_settings_main(&mut state, key_event(KEY_ENTER), &tx);
         assert!(result);
-        assert!(!state.settings.editing);
+        assert!(!state.settings_ui.editing);
         assert_eq!(state.settings.rate_limit_secs, 5);
     }
 
     #[test]
     fn test_handle_settings_main_enter_debug_log() {
         let mut state = test_state();
-        state.settings.selected_field = 1;
+        state.settings_ui.selected_field = 1;
         let (tx, _rx) = channel();
 
-        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        let result = handle_settings_main(&mut state, key_event(KEY_ENTER), &tx);
         assert!(result);
-        assert_eq!(state.settings.settings_page, SettingsPage::DebugLog);
+        assert_eq!(state.settings_ui.settings_page, SettingsPage::DebugLog);
     }
 
     #[test]
     fn test_handle_settings_main_enter_toggles_reader_mode() {
         let mut state = test_state();
-        state.settings.selected_field = 2;
+        state.settings_ui.selected_field = 2;
         let (tx, _rx) = channel();
         assert_eq!(state.settings.reader_mode, ReaderMode::Paged);
 
-        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        let result = handle_settings_main(&mut state, key_event(KEY_ENTER), &tx);
         assert!(result);
         assert_eq!(state.settings.reader_mode, ReaderMode::Scrollable);
     }
@@ -314,62 +319,62 @@ mod tests {
     #[test]
     fn test_handle_plugin_field_edit_enter_saves_and_goes_back() {
         let mut state = test_state();
-        state.settings.settings_page = SettingsPage::PluginFieldEdit;
-        let result = handle_plugin_field_edit(&mut state, key_event(KeyCode::Enter));
+        state.settings_ui.settings_page = SettingsPage::PluginFieldEdit;
+        let result = handle_plugin_field_edit(&mut state, key_event(KEY_ENTER));
         assert!(result);
-        assert_eq!(state.settings.settings_page, SettingsPage::PluginFields);
+        assert_eq!(state.settings_ui.settings_page, SettingsPage::PluginFields);
     }
 
     #[test]
     fn test_handle_settings_main_char_while_editing() {
         let mut state = test_state();
-        state.settings.selected_field = 0;
-        state.settings.editing = true;
-        state.settings.edit_buffer = "2".to_string();
+        state.settings_ui.selected_field = 0;
+        state.settings_ui.editing = true;
+        state.settings_ui.edit_buffer = "2".to_string();
         let (tx, _rx) = channel();
 
         handle_settings_main(&mut state, key_event(KeyCode::Char('5')), &tx);
-        assert_eq!(state.settings.edit_buffer, "25");
+        assert_eq!(state.settings_ui.edit_buffer, "25");
     }
 
     #[test]
     fn test_handle_settings_main_backspace_while_editing() {
         let mut state = test_state();
-        state.settings.selected_field = 0;
-        state.settings.editing = true;
-        state.settings.edit_buffer = "25".to_string();
+        state.settings_ui.selected_field = 0;
+        state.settings_ui.editing = true;
+        state.settings_ui.edit_buffer = "25".to_string();
         let (tx, _rx) = channel();
 
-        handle_settings_main(&mut state, key_event(KeyCode::Backspace), &tx);
-        assert_eq!(state.settings.edit_buffer, "2");
+        handle_settings_main(&mut state, key_event(KEY_BACKSPACE), &tx);
+        assert_eq!(state.settings_ui.edit_buffer, "2");
     }
 
     #[test]
     fn test_handle_settings_main_enter_invalid_rate_limit_keeps_old() {
         let mut state = test_state();
-        state.settings.selected_field = 0;
-        state.settings.editing = true;
-        state.settings.edit_buffer = "not_a_number".to_string();
+        state.settings_ui.selected_field = 0;
+        state.settings_ui.editing = true;
+        state.settings_ui.edit_buffer = "not_a_number".to_string();
         let old_rate = state.settings.rate_limit_secs;
         let (tx, _rx) = channel();
 
-        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        let result = handle_settings_main(&mut state, key_event(KEY_ENTER), &tx);
         assert!(result);
-        assert!(!state.settings.editing);
+        assert!(!state.settings_ui.editing);
         assert_eq!(state.settings.rate_limit_secs, old_rate);
     }
 
     #[test]
     fn test_handle_settings_main_enter_toggles_reader_mode_and_saves() {
         let mut state = test_state();
-        state.settings.selected_field = 2;
+        state.settings_ui.selected_field = 2;
         let (tx, _rx) = channel();
 
-        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        let result = handle_settings_main(&mut state, key_event(KEY_ENTER), &tx);
         assert!(result);
         assert_eq!(state.settings.reader_mode, ReaderMode::Scrollable);
 
-        let result = handle_settings_main(&mut state, key_event(KeyCode::Enter), &tx);
+        let result = handle_settings_main(&mut state, key_event(KEY_ENTER), &tx);
         assert!(result);
         assert_eq!(state.settings.reader_mode, ReaderMode::Paged);
     }
@@ -378,8 +383,8 @@ mod tests {
     fn test_handle_plugin_list_navigate() {
         let mut state = test_state();
 
-        handle_plugin_list(&mut state, key_event(KeyCode::Down));
-        handle_plugin_list(&mut state, key_event(KeyCode::Up));
-        assert_eq!(state.settings.selected_plugin, 0);
+        handle_plugin_list(&mut state, key_event(KEY_NAV_DOWN));
+        handle_plugin_list(&mut state, key_event(KEY_NAV_UP));
+        assert_eq!(state.settings_ui.selected_plugin, 0);
     }
 }

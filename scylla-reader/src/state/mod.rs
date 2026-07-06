@@ -4,8 +4,10 @@ pub mod modal;
 pub use modal::Modal;
 pub mod page;
 pub use page::Page;
+pub mod palette_action;
 pub mod reader;
 pub use reader::ReaderState;
+pub mod settings_ui;
 
 use crate::db::Db;
 use crate::library::Library;
@@ -16,6 +18,7 @@ pub struct AppState {
     pub current_page: Page,
     pub modal: Modal,
     pub settings: Settings,
+    pub settings_ui: settings_ui::SettingsUiState,
     pub reader: ReaderState,
     pub db: Db,
     pub show_hints: bool,
@@ -33,6 +36,7 @@ impl AppState {
             current_page: Page::Library,
             modal: Modal::None,
             settings: Settings::new(),
+            settings_ui: settings_ui::SettingsUiState::new(),
             reader: ReaderState::new(),
             db: Db::open().unwrap_or_else(|e| {
                 crate::settings::log(
@@ -68,6 +72,7 @@ impl AppState {
             current_page: Page::Library,
             modal: Modal::None,
             settings: Settings::new(),
+            settings_ui: settings_ui::SettingsUiState::new(),
             reader: ReaderState::new(),
             db,
             show_hints: true,
