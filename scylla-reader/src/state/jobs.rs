@@ -7,7 +7,7 @@ pub struct JobsState {
     pub selected: usize,
     pub max_workers: u8,
     pub active_count: u8,
-    pub detail_expanded: Option<usize>,  // index into filtered_jobs()
+    pub detail_expanded: Option<usize>,  // index into jobs[] (unfiltered)
 }
 
 impl Default for JobsState {

@@ -76,6 +76,7 @@ impl App {
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         enable_raw_mode()?;
         stdout().execute(EnterAlternateScreen)?;
+        self.terminal.clear()?;
 
         let result = self.main_loop();
 
@@ -87,7 +88,12 @@ impl App {
 
     fn main_loop(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         loop {
-            event::drain_events(&mut self.state, &self.event_rx, &self.cmd_tx, &mut self.last_cover_url);
+            event::drain_events(
+                &mut self.state,
+                &self.event_rx,
+                &self.cmd_tx,
+                &mut self.last_cover_url,
+            );
             event::update_covers(&mut self.state, &self.cmd_tx, &mut self.last_cover_url);
 
             let area = self.draw()?;
@@ -177,7 +183,12 @@ mod tests {
         let mut state = test_state();
         assert_eq!(state.modal, Modal::None);
         let (tx, _rx) = mpsc::channel();
-        key_handler::handle_key(&mut state, key_event(KEY_COMMAND_PALETTE), &tx, Rect::default());
+        key_handler::handle_key(
+            &mut state,
+            key_event(KEY_COMMAND_PALETTE),
+            &tx,
+            Rect::default(),
+        );
         assert!(matches!(state.modal, Modal::CommandPalette { .. }));
     }
 
@@ -186,9 +197,19 @@ mod tests {
         let mut state = test_state();
         let (tx, _rx) = mpsc::channel();
         let initial = state.show_hints;
-        key_handler::handle_key(&mut state, key_event(KEY_TOGGLE_HINTS), &tx, Rect::default());
+        key_handler::handle_key(
+            &mut state,
+            key_event(KEY_TOGGLE_HINTS),
+            &tx,
+            Rect::default(),
+        );
         assert_eq!(state.show_hints, !initial);
-        key_handler::handle_key(&mut state, key_event(KEY_TOGGLE_HINTS), &tx, Rect::default());
+        key_handler::handle_key(
+            &mut state,
+            key_event(KEY_TOGGLE_HINTS),
+            &tx,
+            Rect::default(),
+        );
         assert_eq!(state.show_hints, initial);
     }
 
@@ -202,7 +223,8 @@ mod tests {
         };
         state.current_page = Page::AddingBook;
         let (tx, _rx) = mpsc::channel();
-        let result = key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
+        let result =
+            key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
         assert!(result);
         assert_eq!(state.modal, Modal::None);
     }
@@ -212,7 +234,8 @@ mod tests {
         let mut state = test_state();
         state.current_page = Page::Library;
         let (tx, _rx) = mpsc::channel();
-        let result = key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
+        let result =
+            key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
         assert!(!result);
     }
 
@@ -221,7 +244,8 @@ mod tests {
         let mut state = test_state();
         state.current_page = Page::Settings;
         let (tx, _rx) = mpsc::channel();
-        let result = key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
+        let result =
+            key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
         assert!(!result);
     }
 
@@ -234,7 +258,12 @@ mod tests {
             scroll_offset: 0,
         };
         let (tx, _rx) = mpsc::channel();
-        key_handler::handle_key(&mut state, key_event(KEY_COMMAND_PALETTE), &tx, Rect::default());
+        key_handler::handle_key(
+            &mut state,
+            key_event(KEY_COMMAND_PALETTE),
+            &tx,
+            Rect::default(),
+        );
         assert!(matches!(state.modal, Modal::AddBook { .. }));
     }
 
