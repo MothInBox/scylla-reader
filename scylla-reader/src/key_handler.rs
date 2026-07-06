@@ -51,6 +51,10 @@ pub fn handle_key(
             }
             return true;
         }
+        KEY_JOBS => {
+            state.current_page = Page::Jobs;
+            return true;
+        }
         KEY_SETTINGS => {
             state.current_page = Page::Settings;
             return true;

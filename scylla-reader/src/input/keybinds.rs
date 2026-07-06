@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 // ── Global Navigation ──
 pub const KEY_LIBRARY: KeyCode = KeyCode::Char('1');
 pub const KEY_READER: KeyCode = KeyCode::Char('2');
+pub const KEY_JOBS: KeyCode = KeyCode::Char('8');
 pub const KEY_SETTINGS: KeyCode = KeyCode::Char('9');
 pub const KEY_COMMAND_PALETTE: KeyCode = KeyCode::Char(':');
 pub const KEY_TOGGLE_HINTS: KeyCode = KeyCode::Char('?');

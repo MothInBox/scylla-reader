@@ -7,4 +7,5 @@ pub enum Page {
     AddingBook,
     BookChapterJump,
     Reader,
+    Jobs,
 }

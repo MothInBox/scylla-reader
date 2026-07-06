@@ -30,6 +30,7 @@ pub fn handle_input(
         Page::Settings => settings::handle_settings(state, key, cmd_tx),
         Page::Reader => reader::handle_reader(state, key, cmd_tx, size),
         Page::BookChapterJump => modal::handle_jumping_chapter(state, key, cmd_tx),
+        Page::Jobs => true,
     }
 }
 

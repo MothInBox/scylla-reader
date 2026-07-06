@@ -22,6 +22,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
         Page::Reader => {
             reader::draw(frame, area, state);
         }
+        Page::Jobs => {}
     }
 
     modal::draw_modal(frame, area, state);
