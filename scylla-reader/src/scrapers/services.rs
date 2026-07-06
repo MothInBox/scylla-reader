@@ -30,7 +30,11 @@ impl ScraperRegistry {
                 if path.extension().and_then(|e| e.to_str()) != Some("wasm") {
                     continue;
                 }
-                if let Some(domain) = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.strip_prefix("plugin-")) {
+                if let Some(domain) = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.strip_prefix("plugin-"))
+                {
                     crate::settings::log(
                         crate::settings::LogLevel::Debug,
                         "SCRAPE",
@@ -62,6 +66,23 @@ impl ScraperRegistry {
     }
 
     fn discover_schema(wasm_path: &std::path::PathBuf) -> PluginSchema {
+        let schema_path = wasm_path.with_extension("schema.json");
+        let wasm_modified = std::fs::metadata(wasm_path).and_then(|m| m.modified()).ok();
+        let schema_modified = std::fs::metadata(&schema_path)
+            .and_then(|m| m.modified())
+            .ok();
+
+        // Use cache if schema is newer than wasm
+        if let (Some(wasm_t), Some(schema_t)) = (wasm_modified, schema_modified) {
+            if schema_t >= wasm_t {
+                if let Ok(contents) = std::fs::read_to_string(&schema_path) {
+                    if let Ok(schema) = serde_json::from_str::<PluginSchema>(&contents) {
+                        return schema;
+                    }
+                }
+            }
+        }
+
         let curl_fetch_fn = Function::new(
             "curl_fetch",
             [ValType::I64],
@@ -83,12 +104,18 @@ impl ScraperRegistry {
                 accepts_cookies: true,
             };
         };
-        serde_json::from_slice(result).unwrap_or(PluginSchema {
+        let schema: PluginSchema = serde_json::from_slice(result).unwrap_or(PluginSchema {
             fields: vec![],
             accepts_cookies: true,
-        })
-    }
+        });
 
+        // Cache to disk
+        if let Ok(json) = serde_json::to_string(&schema) {
+            let _ = std::fs::write(&schema_path, json);
+        }
+
+        schema
+    }
     fn load_cookies_for_domain(domain: &str) -> Option<String> {
         let path = crate::plugin_config::config_dir().join(format!("{}.json", domain));
         let contents = std::fs::read_to_string(&path).ok()?;
@@ -126,7 +153,7 @@ impl ScraperRegistry {
             obj.remove("_cookies");
             obj.remove("_accepts_cookies");
         }
-    Some(serde_json::to_string(&json).ok()?)
+        Some(serde_json::to_string(&json).ok()?)
     }
 
     pub async fn scrape_url(
@@ -200,6 +227,11 @@ impl ScraperRegistry {
         function: &str,
         input: &[u8],
     ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        crate::settings::log(
+            crate::settings::LogLevel::Debug,
+            "SCRAPE",
+            &format!("call_cached_plugin: domain={} fn={}", domain, function),
+        );
         let mut cache = self.plugin_cache.borrow_mut();
         let idx = cache.iter().position(|(d, _)| d == domain);
 
@@ -228,7 +260,9 @@ impl ScraperRegistry {
         &self,
         url: &str,
     ) -> Result<(&str, &std::path::PathBuf), Box<dyn std::error::Error + Send + Sync>> {
-        if url.starts_with("template") && let Some((domain, path)) = self.plugins.iter().find(|(d, _)| d == "template") {
+        if url.starts_with("template")
+            && let Some((domain, path)) = self.plugins.iter().find(|(d, _)| d == "template")
+        {
             return Ok((domain.as_str(), path));
         }
 
@@ -332,5 +366,3 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
 
     String::from_utf8(data).map_err(|e| e.to_string())
 }
-
-

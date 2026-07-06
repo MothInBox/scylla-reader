@@ -10,6 +10,8 @@ pub struct Worker {
     event_tx: mpsc::Sender<AppEvent>,
     registry: ScraperRegistry,
     rate_limit_secs: u64,
+    picker_font_size: (u16, u16),
+    picker_protocol_type: ratatui_image::picker::ProtocolType,
 }
 
 impl Worker {
@@ -17,12 +19,16 @@ impl Worker {
         cmd_rx: mpsc::Receiver<AppCommand>,
         event_tx: mpsc::Sender<AppEvent>,
         registry: ScraperRegistry,
+        picker_font_size: (u16, u16),
+        picker_protocol_type: ratatui_image::picker::ProtocolType,
     ) -> Self {
         Self {
             cmd_rx,
             event_tx,
             registry,
             rate_limit_secs: 2,
+            picker_font_size,
+            picker_protocol_type,
         }
     }
 
@@ -125,11 +131,11 @@ impl Worker {
                 }
                 AppCommand::FetchCover(url) => {
                     let event_tx = self.event_tx.clone();
+                    let font_size = self.picker_font_size;
+                    let protocol_type = self.picker_protocol_type;
                     std::thread::spawn(move || {
-                        let mut picker = ratatui_image::picker::Picker::from_query_stdio()
-                            .unwrap_or_else(|_| {
-                                ratatui_image::picker::Picker::from_fontsize((8, 12))
-                            });
+                        let mut picker = ratatui_image::picker::Picker::from_fontsize(font_size);
+                        picker.set_protocol_type(protocol_type);
                         match reqwest::blocking::get(&url) {
                             Ok(resp) => match resp.bytes() {
                                 Ok(bytes) => match image::load_from_memory(&bytes) {

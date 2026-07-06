@@ -32,10 +32,22 @@ impl App {
         let (cmd_tx, cmd_rx) = mpsc::channel::<AppCommand>();
         let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
 
+        // Must happen before enable_raw_mode/EnterAlternateScreen
+        let picker = ratatui_image::picker::Picker::from_query_stdio()
+            .unwrap_or_else(|_| ratatui_image::picker::Picker::from_fontsize((8, 12)));
+        let picker_font_size = picker.font_size();
+        let picker_protocol_type = picker.protocol_type();
+
         let registry = ScraperRegistry::new();
         let worker_event_tx = event_tx;
         std::thread::spawn(move || {
-            let worker = worker::Worker::new(cmd_rx, worker_event_tx, registry);
+            let worker = worker::Worker::new(
+                cmd_rx,
+                worker_event_tx,
+                registry,
+                picker_font_size,
+                picker_protocol_type,
+            );
             worker.run();
         });
 
