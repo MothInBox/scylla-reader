@@ -59,7 +59,7 @@ pub fn handle_jobs(
             let _ = cmd_tx.send(AppCommand::RetryAllFailed);
             true
         }
-        KEY_JOBS_INC_WORKERS => {
+        KeyCode::Char('+') | KeyCode::Char('=') => {
             let new = (state.jobs_state.max_workers + 1).min(32);
             state.jobs_state.max_workers = new;
             state.settings.max_workers = new;
