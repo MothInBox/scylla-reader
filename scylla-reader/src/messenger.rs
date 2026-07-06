@@ -1,6 +1,6 @@
 //! Types for channel communication between the main thread and worker.
 
-use crate::models::Book;
+use crate::models::{Book, Job, JobId, JobKind, JobPriority, JobStatus};
 
 pub enum AppCommand {
     Scrape(String),
@@ -8,6 +8,16 @@ pub enum AppCommand {
     FetchChapter(String, usize),
     SetRateLimit(u64),
     FetchCover(String),
+    // new job commands
+    Enqueue(JobKind, String, JobPriority),  // kind, target display, priority
+    CancelJob(JobId),
+    CancelAll,
+    RetryJob(JobId),
+    RetryAllFailed,
+    FlushCompleted,
+    FlushAll,
+    SetMaxWorkers(u8),
+    ReorderJob(JobId, usize),
 }
 
 pub struct ChapterContent {
@@ -21,12 +31,15 @@ pub enum AppEvent {
     ChapterFetched(ChapterContent),
     ChapterFetchFailed,
     CoverFetched(String, ratatui_image::protocol::StatefulProtocol),
+    // new job events
+    JobEnqueued(Job),
+    JobStatusChanged(JobId, JobStatus),
+    WorkersChanged(u8),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Book;
     use crate::models::BookStatus;
 
     #[test]
@@ -152,5 +165,57 @@ mod tests {
         assert_eq!(content.chapter_idx, 1);
         assert_eq!(content.title, "Chapter Title");
         assert_eq!(content.content, "Chapter Content");
+    }
+
+    #[test]
+    fn test_app_command_enqueue_construction() {
+        let cmd = AppCommand::Enqueue(
+            JobKind::Scrape("http://example.com".into()),
+            "Example".into(),
+            JobPriority::High,
+        );
+        if let AppCommand::Enqueue(kind, target, priority) = &cmd {
+            assert_eq!(kind.target(), "http://example.com");
+            assert_eq!(target, "Example");
+            assert_eq!(*priority, JobPriority::High);
+        } else {
+            panic!("Expected Enqueue variant");
+        }
+    }
+
+    #[test]
+    fn test_app_command_cancel_job_construction() {
+        let cmd = AppCommand::CancelJob(42);
+        if let AppCommand::CancelJob(id) = &cmd {
+            assert_eq!(*id, 42);
+        } else {
+            panic!("Expected CancelJob variant");
+        }
+    }
+
+    #[test]
+    fn test_app_command_set_max_workers_construction() {
+        let cmd = AppCommand::SetMaxWorkers(8);
+        if let AppCommand::SetMaxWorkers(n) = &cmd {
+            assert_eq!(*n, 8);
+        } else {
+            panic!("Expected SetMaxWorkers variant");
+        }
+    }
+
+    #[test]
+    fn test_app_event_job_enqueued_construction() {
+        let job = Job::new(
+            1,
+            JobKind::Scrape("http://example.com".into()),
+            "Example".into(),
+            JobPriority::Normal,
+        );
+        let event = AppEvent::JobEnqueued(job);
+        if let AppEvent::JobEnqueued(j) = &event {
+            assert_eq!(j.id, 1);
+        } else {
+            panic!("Expected JobEnqueued variant");
+        }
     }
 }
