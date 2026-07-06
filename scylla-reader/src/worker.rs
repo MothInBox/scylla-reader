@@ -190,11 +190,16 @@ impl JobManager {
                 let _ = self.event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Cancelled));
             }
             AppCommand::CancelAll => {
-                for (_, handle) in self.active_jobs.drain() {
+                for (id, handle) in self.active_jobs.drain() {
                     handle.abort();
+                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Cancelled));
                 }
-                self.job_queue.clear();
-                self.delayed_queue.clear();
+                for job in self.job_queue.drain(..) {
+                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
+                }
+                for job in self.delayed_queue.drain(..) {
+                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
+                }
             }
             AppCommand::RetryJob(id) => {
                 if let Some(job) = self.find_job_to_retry(id) {
@@ -231,11 +236,16 @@ impl JobManager {
                 });
             }
             AppCommand::FlushAll => {
-                for (_, handle) in self.active_jobs.drain() {
+                for (id, handle) in self.active_jobs.drain() {
                     handle.abort();
+                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Cancelled));
                 }
-                self.job_queue.clear();
-                self.delayed_queue.clear();
+                for job in self.job_queue.drain(..) {
+                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
+                }
+                for job in self.delayed_queue.drain(..) {
+                    let _ = self.event_tx.send(AppEvent::JobStatusChanged(job.id, JobStatus::Cancelled));
+                }
             }
             AppCommand::SetMaxWorkers(n) => {
                 self.max_workers = n;
