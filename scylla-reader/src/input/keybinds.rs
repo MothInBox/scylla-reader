@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 // ── Global Navigation ──
 pub const KEY_LIBRARY: KeyCode = KeyCode::Char('1');
 pub const KEY_READER: KeyCode = KeyCode::Char('2');
+pub const KEY_JOBS: KeyCode = KeyCode::Char('8');
 pub const KEY_SETTINGS: KeyCode = KeyCode::Char('9');
 pub const KEY_COMMAND_PALETTE: KeyCode = KeyCode::Char(':');
 pub const KEY_TOGGLE_HINTS: KeyCode = KeyCode::Char('?');
@@ -39,6 +40,17 @@ pub const KEY_TOGGLE_TITLES: KeyCode = KeyCode::Char('t');
 pub const KEY_NEW_SESSION: KeyCode = KeyCode::Char('n');
 pub const KEY_RENAME_SESSION: KeyCode = KeyCode::Char('r');
 pub const KEY_DELETE_SESSION: KeyCode = KeyCode::Char('d');
+
+// ── Jobs Page ──
+pub const KEY_JOBS_CANCEL: KeyCode = KeyCode::Char('c');
+pub const KEY_JOBS_CANCEL_ALL: KeyCode = KeyCode::Char('C');
+pub const KEY_JOBS_RETRY: KeyCode = KeyCode::Char('r');
+pub const KEY_JOBS_RETRY_ALL: KeyCode = KeyCode::Char('R');
+pub const KEY_JOBS_FLUSH_COMPLETED: KeyCode = KeyCode::Char('f');
+pub const KEY_JOBS_FLUSH_ALL: KeyCode = KeyCode::Char('F');
+pub const KEY_JOBS_DETAILS: KeyCode = KeyCode::Enter;
+pub const KEY_JOBS_INC_WORKERS: KeyCode = KeyCode::Char('+');
+pub const KEY_JOBS_DEC_WORKERS: KeyCode = KeyCode::Char('-');
 
 // ── Generic ──
 pub const KEY_BACKSPACE: KeyCode = KeyCode::Backspace;

@@ -7,6 +7,8 @@ pub use page::Page;
 pub mod palette_action;
 pub mod reader;
 pub use reader::ReaderState;
+pub mod jobs;
+pub use jobs::JobsState;
 pub mod settings_ui;
 
 use crate::db::Db;
@@ -20,6 +22,7 @@ pub struct AppState {
     pub settings: Settings,
     pub settings_ui: settings_ui::SettingsUiState,
     pub reader: ReaderState,
+    pub jobs_state: JobsState,
     pub db: Db,
     pub show_hints: bool,
 }
@@ -31,13 +34,14 @@ impl Default for AppState {
 
 impl AppState {
     pub fn new() -> Self {
-        Self {
+        let mut state = Self {
             library: Library::new(),
             current_page: Page::Library,
             modal: Modal::None,
             settings: Settings::new(),
             settings_ui: settings_ui::SettingsUiState::new(),
             reader: ReaderState::new(),
+            jobs_state: JobsState::new(),
             db: Db::open().unwrap_or_else(|e| {
                 crate::settings::log(
                     crate::settings::LogLevel::Error,
@@ -47,7 +51,9 @@ impl AppState {
                 panic!("Could not open database");
             }),
             show_hints: true,
-        }
+        };
+        state.jobs_state.max_workers = state.settings.max_workers;
+        state
     }
 
     pub fn close_modal(&mut self) {
@@ -63,6 +69,7 @@ impl AppState {
             settings: Settings::new(),
             settings_ui: settings_ui::SettingsUiState::new(),
             reader: ReaderState::new(),
+            jobs_state: JobsState::new(),
             db,
             show_hints: true,
         }

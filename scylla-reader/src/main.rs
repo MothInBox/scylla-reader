@@ -30,13 +30,26 @@ fn cleanup() {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::panic::set_hook(Box::new(|info| {
-        cleanup();
-        eprintln!("Application panicked: {}", info);
+        let thread_name = std::thread::current()
+            .name()
+            .unwrap_or("<unnamed>")
+            .to_string();
+
+        crate::settings::log(
+            crate::settings::LogLevel::Error,
+            "PANIC",
+            &format!("thread '{}' panicked: {}", thread_name, info),
+        );
+
+        if thread_name == "main" {
+            cleanup();
+            eprintln!("Application panicked: {}", info);
+        }
     }));
 
     let mut app = app::App::new()?;
-    app.run()?;
-
+    let result = app.run();
     cleanup();
+    result?;
     Ok(())
 }

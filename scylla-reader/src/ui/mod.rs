@@ -5,6 +5,7 @@ pub mod modal;
 pub mod palette;
 pub mod reader;
 pub mod settings;
+pub mod jobs;
 pub mod widgets;
 
 use crate::state::AppState;
@@ -21,6 +22,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
         }
         Page::Reader => {
             reader::draw(frame, area, state);
+        }
+        Page::Jobs => {
+            jobs::draw(frame, area, state);
         }
     }
 

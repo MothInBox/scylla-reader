@@ -1,4 +1,5 @@
 use crate::messenger::{AppCommand, AppEvent};
+use crate::models::job::JobStatus;
 use crate::state::AppState;
 use std::sync::mpsc;
 
@@ -6,7 +7,7 @@ pub fn drain_events(
     state: &mut AppState,
     event_rx: &mpsc::Receiver<AppEvent>,
     _cmd_tx: &mpsc::Sender<AppCommand>,
-    last_cover_url: &mut Option<String>,
+    _fetched_covers: &mut std::collections::HashSet<String>,
 ) {
     while let Ok(event) = event_rx.try_recv() {
         match event {
@@ -16,12 +17,7 @@ pub fn drain_events(
                     "UI",
                     &format!("UI received book: {}", book.title),
                 );
-                if let Some(existing) = state
-                    .library
-                    .books
-                    .iter_mut()
-                    .find(|b| b.url == book.url)
-                {
+                if let Some(existing) = state.library.books.iter_mut().find(|b| b.url == book.url) {
                     existing.title = book.title.clone();
                     existing.cover_url = book.cover_url.clone();
                     existing.description = book.description.clone();
@@ -46,18 +42,12 @@ pub fn drain_events(
                     });
                     let book_url = book.url.clone();
                     state.library.books.push(book);
-                    if let Some(b) = state
-                        .library
-                        .books
-                        .iter_mut()
-                        .find(|b| b.url == book_url)
-                    {
+                    if let Some(b) = state.library.books.iter_mut().find(|b| b.url == book_url) {
                         if let Ok(sessions) = state.db.load_sessions_for_book(&book_url) {
                             b.sessions = sessions;
                         }
                     }
                 }
-                *last_cover_url = None;
             }
             AppEvent::ChapterFetched(chapter) => {
                 crate::settings::log(
@@ -106,13 +96,23 @@ pub fn drain_events(
                 state.reader.loading = false;
             }
             AppEvent::CoverFetched(url, protocol) => {
-                let current_url = state
-                    .library
-                    .selected_book()
-                    .and_then(|b| b.cover_url.as_deref().map(str::to_owned));
-                if current_url.as_deref() == Some(&url) {
-                    state.library.cached_protocol = Some(protocol);
-                }
+                state.library.cover_cache.insert(url, protocol);
+            }
+            AppEvent::JobEnqueued(job) => {
+                state.jobs_state.jobs.push(job);
+            }
+            AppEvent::JobStatusChanged(id, status) => {
+                state.jobs_state.update_from_event(id, status);
+                state.jobs_state.active_count = state
+                    .jobs_state
+                    .jobs
+                    .iter()
+                    .filter(|j| matches!(j.status, JobStatus::Running))
+                    .count() as u8;
+            }
+            AppEvent::WorkersChanged(n) => {
+                state.jobs_state.max_workers = n;
+                state.settings.max_workers = n;
             }
         }
     }
@@ -121,18 +121,16 @@ pub fn drain_events(
 pub fn update_covers(
     state: &mut AppState,
     cmd_tx: &mpsc::Sender<AppCommand>,
-    last_cover_url: &mut Option<String>,
+    fetched_covers: &mut std::collections::HashSet<String>,
 ) {
     let current_cover_url = state
         .library
         .selected_book()
         .and_then(|b| b.cover_url.clone());
 
-    if current_cover_url != *last_cover_url {
-        *last_cover_url = current_cover_url.clone();
-        state.library.cached_protocol = None;
-
-        if let Some(url) = current_cover_url {
+    if let Some(url) = current_cover_url {
+        if !fetched_covers.contains(&url) {
+            fetched_covers.insert(url.clone());
             let _ = cmd_tx.send(AppCommand::FetchCover(url));
         }
     }

@@ -3,6 +3,7 @@
 
 use crate::models::{Book, BookStatus};
 use ratatui_image::protocol::StatefulProtocol;
+use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum LibraryFilter {
@@ -25,7 +26,7 @@ pub struct Library {
     pub books: Vec<Book>,
     pub selected_index: usize,
     pub filter: LibraryFilter,
-    pub cached_protocol: Option<StatefulProtocol>,
+    pub cover_cache: HashMap<String, StatefulProtocol>,
 }
 
 impl Default for Library {
@@ -40,7 +41,7 @@ impl Library {
             books: Vec::new(),
             selected_index: 0,
             filter: LibraryFilter::All,
-            cached_protocol: None,
+            cover_cache: HashMap::new(),
         }
     }
 

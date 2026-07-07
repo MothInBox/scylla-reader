@@ -7,6 +7,7 @@ use ratatui::text::Line;
 pub const NAV_HINTS: &[(&str, &str)] = &[
     ("1", "Library"),
     ("2", "Reader"),
+    ("8", "Jobs"),
     ("9", "Settings"),
     (":", "Command"),
     ("?", "Hide"),

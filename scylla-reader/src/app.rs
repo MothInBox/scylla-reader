@@ -5,7 +5,7 @@ use crate::event;
 use crate::key_handler;
 use crate::messenger::{AppCommand, AppEvent};
 use crate::scrapers::services::ScraperRegistry;
-use crate::state::{AppState, Modal, Page};
+use crate::state::AppState;
 use crate::ui;
 use crate::worker;
 
@@ -24,7 +24,7 @@ pub struct App {
     state: AppState,
     cmd_tx: mpsc::Sender<AppCommand>,
     event_rx: mpsc::Receiver<AppEvent>,
-    last_cover_url: Option<String>,
+    fetched_covers: std::collections::HashSet<String>,
 }
 
 impl App {
@@ -38,17 +38,6 @@ impl App {
         let picker_protocol_type = picker.protocol_type();
 
         let registry = ScraperRegistry::new();
-        let worker_event_tx = event_tx;
-        std::thread::spawn(move || {
-            let worker = worker::Worker::new(
-                cmd_rx,
-                worker_event_tx,
-                registry,
-                picker_font_size,
-                picker_protocol_type,
-            );
-            worker.run();
-        });
 
         let terminal = Terminal::new(CrosstermBackend::new(
             Box::new(stdout()) as Box<dyn std::io::Write>
@@ -59,18 +48,38 @@ impl App {
             state.library.books.push(book);
         }
 
+        let worker_event_tx = event_tx;
+        let worker_max_workers = state.settings.max_workers;
+        let worker_rate_limit = state.settings.rate_limit_secs;
+        std::thread::Builder::new()
+            .name("job-manager".to_string())
+            .spawn(move || {
+                let manager = worker::JobManager::new(
+                    cmd_rx,
+                    worker_event_tx,
+                    registry,
+                    picker_font_size,
+                    picker_protocol_type,
+                    worker_max_workers,
+                    worker_rate_limit,
+                );
+                manager.run();
+            })
+            .expect("failed to spawn job manager thread");
+
         Ok(Self {
             terminal,
             state,
             cmd_tx,
             event_rx,
-            last_cover_url: None,
+            fetched_covers: std::collections::HashSet::new(),
         })
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         enable_raw_mode()?;
         stdout().execute(EnterAlternateScreen)?;
+        self.terminal.clear()?;
 
         let result = self.main_loop();
 
@@ -82,8 +91,13 @@ impl App {
 
     fn main_loop(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         loop {
-            event::drain_events(&mut self.state, &self.event_rx, &self.cmd_tx, &mut self.last_cover_url);
-            event::update_covers(&mut self.state, &self.cmd_tx, &mut self.last_cover_url);
+            event::drain_events(
+                &mut self.state,
+                &self.event_rx,
+                &self.cmd_tx,
+                &mut self.fetched_covers,
+            );
+            event::update_covers(&mut self.state, &self.cmd_tx, &mut self.fetched_covers);
 
             let area = self.draw()?;
 
@@ -116,7 +130,7 @@ impl App {
             state,
             cmd_tx,
             event_rx,
-            last_cover_url: None,
+            fetched_covers: std::collections::HashSet::new(),
         }
     }
 }
@@ -172,7 +186,12 @@ mod tests {
         let mut state = test_state();
         assert_eq!(state.modal, Modal::None);
         let (tx, _rx) = mpsc::channel();
-        key_handler::handle_key(&mut state, key_event(KEY_COMMAND_PALETTE), &tx, Rect::default());
+        key_handler::handle_key(
+            &mut state,
+            key_event(KEY_COMMAND_PALETTE),
+            &tx,
+            Rect::default(),
+        );
         assert!(matches!(state.modal, Modal::CommandPalette { .. }));
     }
 
@@ -181,9 +200,19 @@ mod tests {
         let mut state = test_state();
         let (tx, _rx) = mpsc::channel();
         let initial = state.show_hints;
-        key_handler::handle_key(&mut state, key_event(KEY_TOGGLE_HINTS), &tx, Rect::default());
+        key_handler::handle_key(
+            &mut state,
+            key_event(KEY_TOGGLE_HINTS),
+            &tx,
+            Rect::default(),
+        );
         assert_eq!(state.show_hints, !initial);
-        key_handler::handle_key(&mut state, key_event(KEY_TOGGLE_HINTS), &tx, Rect::default());
+        key_handler::handle_key(
+            &mut state,
+            key_event(KEY_TOGGLE_HINTS),
+            &tx,
+            Rect::default(),
+        );
         assert_eq!(state.show_hints, initial);
     }
 
@@ -197,7 +226,8 @@ mod tests {
         };
         state.current_page = Page::AddingBook;
         let (tx, _rx) = mpsc::channel();
-        let result = key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
+        let result =
+            key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
         assert!(result);
         assert_eq!(state.modal, Modal::None);
     }
@@ -207,7 +237,8 @@ mod tests {
         let mut state = test_state();
         state.current_page = Page::Library;
         let (tx, _rx) = mpsc::channel();
-        let result = key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
+        let result =
+            key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
         assert!(!result);
     }
 
@@ -216,7 +247,8 @@ mod tests {
         let mut state = test_state();
         state.current_page = Page::Settings;
         let (tx, _rx) = mpsc::channel();
-        let result = key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
+        let result =
+            key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
         assert!(!result);
     }
 
@@ -229,7 +261,12 @@ mod tests {
             scroll_offset: 0,
         };
         let (tx, _rx) = mpsc::channel();
-        key_handler::handle_key(&mut state, key_event(KEY_COMMAND_PALETTE), &tx, Rect::default());
+        key_handler::handle_key(
+            &mut state,
+            key_event(KEY_COMMAND_PALETTE),
+            &tx,
+            Rect::default(),
+        );
         assert!(matches!(state.modal, Modal::AddBook { .. }));
     }
 
