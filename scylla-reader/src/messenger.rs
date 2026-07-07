@@ -1,6 +1,6 @@
 //! Types for channel communication between the main thread and worker.
 
-use crate::models::{Book, Job, JobId, JobKind, JobPriority, JobStatus};
+use crate::models::{Book, Job, JobId, JobKind, JobOutcome, JobPriority, JobStatus};
 
 pub enum AppCommand {
     Scrape(String),
@@ -35,6 +35,7 @@ pub enum AppEvent {
     JobEnqueued(Job),
     JobStatusChanged(JobId, JobStatus),
     WorkersChanged(u8),
+    JobOutcome(JobId, JobOutcome),
 }
 
 #[cfg(test)]

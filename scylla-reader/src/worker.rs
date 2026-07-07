@@ -2,7 +2,7 @@
 //! and processes AppCommand messages, sending results back as AppEvents.
 
 use crate::messenger::{AppCommand, AppEvent, ChapterContent};
-use crate::models::job::{Job, JobId, JobKind, JobPriority, JobStatus};
+use crate::models::job::{Job, JobId, JobKind, JobOutcome, JobPriority, JobStatus};
 use crate::scrapers::services::ScraperRegistry;
 use std::collections::HashMap;
 use std::sync::mpsc;
@@ -117,31 +117,45 @@ impl JobManager {
             let protocol_type = self.picker_protocol_type;
 
             let handle = runtime.spawn_blocking(move || {
-                let result = match &job.kind {
+                let (result, outcome) = match &job.kind {
                     JobKind::Scrape(url) => {
                         let reg = registry.lock().unwrap();
-                        runtime_ref
-                            .block_on(reg.scrape_url(url))
-                            .map(|book| {
-                                let _ = event_tx.send(AppEvent::BookScraped(book));
-                            })
-                            .map_err(|e| e.to_string())
+                        match runtime_ref.block_on(reg.scrape_url(url)) {
+                            Ok(book) => {
+                                let _ = event_tx.send(AppEvent::BookScraped(book.clone()));
+                                let o = JobOutcome::BookScraped {
+                                    title: book.title,
+                                    chapters: book.chapters.len(),
+                                    cover: book.cover_url.is_some(),
+                                };
+                                let _ = event_tx.send(AppEvent::JobOutcome(job.id, o.clone()));
+                                (Ok(()), Some(o))
+                            }
+                            Err(e) => (Err(e.to_string()), None),
+                        }
                     }
                     JobKind::FetchChapter(url, idx) => {
                         let reg = registry.lock().unwrap();
-                        runtime_ref
-                            .block_on(reg.scrape_chapter(url))
-                            .map(|(title, content)| {
+                        match runtime_ref.block_on(reg.scrape_chapter(url)) {
+                            Ok((title, content)) => {
                                 let _ = event_tx.send(AppEvent::ChapterFetched(ChapterContent {
                                     chapter_idx: *idx,
-                                    title,
-                                    content,
+                                    title: title.clone(),
+                                    content: content.clone(),
                                 }));
-                            })
-                            .map_err(|e| e.to_string())
+                                let o = JobOutcome::ChapterFetched {
+                                    title,
+                                    content_chars: content.len(),
+                                };
+                                let _ = event_tx.send(AppEvent::JobOutcome(job.id, o.clone()));
+                                (Ok(()), Some(o))
+                            }
+                            Err(e) => (Err(e.to_string()), None),
+                        }
                     }
                     JobKind::FetchCover(url) => {
-                        let mut picker = ratatui_image::picker::Picker::from_fontsize(font_size);
+                        let mut picker =
+                            ratatui_image::picker::Picker::from_fontsize(font_size);
                         picker.set_protocol_type(protocol_type);
                         match reqwest::blocking::get(url) {
                             Ok(resp) => match resp.bytes() {
@@ -150,17 +164,26 @@ impl JobManager {
                                         let protocol = picker.new_resize_protocol(img);
                                         let _ = event_tx
                                             .send(AppEvent::CoverFetched(url.clone(), protocol));
-                                        Ok(())
+                                        let o = JobOutcome::CoverFetched;
+                                        let _ = event_tx.send(AppEvent::JobOutcome(job.id, o.clone()));
+                                        (Ok(()), Some(o))
                                     }
-                                    Err(e) => Err(format!("Image decode: {}", e)),
+                                    Err(e) => (Err(format!("Image decode: {}", e)), None),
                                 },
-                                Err(e) => Err(format!("Cover bytes: {}", e)),
+                                Err(e) => (Err(format!("Cover bytes: {}", e)), None),
                             },
-                            Err(e) => Err(format!("Cover fetch: {}", e)),
+                            Err(e) => (Err(format!("Cover fetch: {}", e)), None),
                         }
                     }
                 };
 
+                if outcome.is_some() {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "WORKER",
+                        &format!("Job {} completed with outcome", id),
+                    );
+                }
                 match result {
                     Ok(_) => {
                         let _ = event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Completed));
@@ -222,6 +245,7 @@ impl JobManager {
                     let mut retry = job.clone();
                     retry.status = JobStatus::Queued;
                     retry.error = None;
+                    retry.outcome = None;
                     retry.started_at = None;
                     retry.completed_at = None;
                     self.job_queue.push(retry);

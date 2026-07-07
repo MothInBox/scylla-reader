@@ -1,4 +1,4 @@
-use crate::models::job::{Job, JobStatus};
+use crate::models::job::{Job, JobOutcome, JobStatus};
 use crate::state::AppState;
 use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
@@ -192,6 +192,29 @@ fn render_job_row<'a>(job: &Job, _selected: bool, expanded: bool) -> ListItem<'a
                 job.started_at.unwrap().elapsed().as_secs()
             ))));
         }
+        if let Some(outcome) = &job.outcome {
+            match outcome {
+                JobOutcome::BookScraped { title, chapters, cover } => {
+                    lines.push(Line::from(Span::styled(
+                        format!("  Book: {} ({} chapters, cover: {})", title, chapters, if *cover { "yes" } else { "no" }),
+                        Style::default().fg(Color::Cyan),
+                    )));
+                }
+                JobOutcome::ChapterFetched { title, content_chars } => {
+                    lines.push(Line::from(Span::styled(
+                        format!("  Chapter: {} ({} chars)", title, content_chars),
+                        Style::default().fg(Color::Cyan),
+                    )));
+                }
+                JobOutcome::CoverFetched => {
+                    lines.push(Line::from(Span::styled(
+                        "  Cover: fetched",
+                        Style::default().fg(Color::Cyan),
+                    )));
+                }
+            }
+        }
+
         if let Some(e) = &job.error {
             for line in e.lines().take(10) {
                 lines.push(Line::from(Span::styled(

@@ -49,6 +49,13 @@ impl Default for JobPriority {
 }
 
 #[derive(Debug, Clone)]
+pub enum JobOutcome {
+    BookScraped { title: String, chapters: usize, cover: bool },
+    ChapterFetched { title: String, content_chars: usize },
+    CoverFetched,
+}
+
+#[derive(Debug, Clone)]
 pub struct Job {
     pub id: JobId,
     pub kind: JobKind,
@@ -61,6 +68,7 @@ pub struct Job {
     pub started_at: Option<Instant>,
     pub completed_at: Option<Instant>,
     pub error: Option<String>,
+    pub outcome: Option<JobOutcome>,
 }
 
 impl Job {
@@ -75,6 +83,7 @@ impl Job {
             started_at: None,
             completed_at: None,
             error: None,
+            outcome: None,
         }
     }
 }
