@@ -5,7 +5,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
 pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    let hint_height: u16 = if state.show_hints { 3 } else { 1 };
+    let hint_height: u16 = if state.show_hints { 4 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -62,16 +62,37 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
+                Constraint::Length(1),
             ])
             .split(hint_area);
 
         let filter_status = format!(
             " [{}]  {} queued | {} running | {} failed | {} completed",
             state.jobs_state.filter,
-            state.jobs_state.jobs.iter().filter(|j| matches!(j.status, JobStatus::Queued)).count(),
-            state.jobs_state.jobs.iter().filter(|j| matches!(j.status, JobStatus::Running)).count(),
-            state.jobs_state.jobs.iter().filter(|j| matches!(j.status, JobStatus::Failed(_))).count(),
-            state.jobs_state.jobs.iter().filter(|j| matches!(j.status, JobStatus::Completed | JobStatus::Cancelled)).count(),
+            state
+                .jobs_state
+                .jobs
+                .iter()
+                .filter(|j| matches!(j.status, JobStatus::Queued))
+                .count(),
+            state
+                .jobs_state
+                .jobs
+                .iter()
+                .filter(|j| matches!(j.status, JobStatus::Running))
+                .count(),
+            state
+                .jobs_state
+                .jobs
+                .iter()
+                .filter(|j| matches!(j.status, JobStatus::Failed(_)))
+                .count(),
+            state
+                .jobs_state
+                .jobs
+                .iter()
+                .filter(|j| matches!(j.status, JobStatus::Completed | JobStatus::Cancelled))
+                .count(),
         );
         frame.render_widget(
             Paragraph::new(filter_status).style(Style::default().fg(Color::DarkGray)),
@@ -79,25 +100,35 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
         );
 
         frame.render_widget(
-            Paragraph::new(hint_line("Jobs", &[
-                ("c", "Cancel"),
-                ("C", "CancelAll"),
-                ("r", "Retry"),
-                ("R", "RetryAll"),
-                ("f", "FlushDone"),
-                ("F", "FlushAll"),
-            ])),
+            Paragraph::new(hint_line(
+                "Jobs",
+                &[
+                    ("c", "Cancel"),
+                    ("C", "CancelAll"),
+                    ("r", "Retry"),
+                    ("R", "RetryAll"),
+                    ("f", "FlushDone"),
+                    ("F", "FlushAll"),
+                ],
+            )),
             hint_chunks[1],
         );
         frame.render_widget(
-            Paragraph::new(hint_line("View", &[
-                ("a", "All"),
-                ("s", "Running"),
-                ("d", "Done"),
-                ("e", "Failed"),
-                ("Enter", "Details"),
-            ])),
+            Paragraph::new(hint_line(
+                "View",
+                &[
+                    ("a", "All"),
+                    ("s", "Running"),
+                    ("d", "Done"),
+                    ("e", "Failed"),
+                    ("Enter", "Details"),
+                ],
+            )),
             hint_chunks[2],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line("Nav", crate::ui::widgets::NAV_HINTS)),
+            hint_chunks[3],
         );
     }
 }
@@ -126,7 +157,8 @@ fn render_job_row<'a>(job: &Job, _selected: bool, expanded: bool) -> ListItem<'a
     let icon = status_icon(&job.status);
     let color = status_color(&job.status);
     let elapsed = match &job.status {
-        JobStatus::Running => job.started_at
+        JobStatus::Running => job
+            .started_at
             .map(|s| format!(" {:?}", s.elapsed().as_secs()) + "s")
             .unwrap_or_default(),
         _ => String::new(),
@@ -148,9 +180,17 @@ fn render_job_row<'a>(job: &Job, _selected: bool, expanded: bool) -> ListItem<'a
     let mut lines = vec![Line::from(vec![Span::styled(main, style)])];
 
     if expanded {
-        lines.push(Line::from(Span::raw(format!("  ID: {}  Created: {:?} ago", job.id, job.created_at.elapsed().as_secs()))));
+        lines.push(Line::from(Span::raw(format!(
+            "  ID: {}  Created: {:?} ago",
+            job.id,
+            job.created_at.elapsed().as_secs()
+        ))));
         if let Some(started) = job.started_at {
-            lines.push(Line::from(Span::raw(format!("  Started: {:?} ago  Elapsed: {:?}s", started.elapsed().as_secs(), job.started_at.unwrap().elapsed().as_secs()))));
+            lines.push(Line::from(Span::raw(format!(
+                "  Started: {:?} ago  Elapsed: {:?}s",
+                started.elapsed().as_secs(),
+                job.started_at.unwrap().elapsed().as_secs()
+            ))));
         }
         if let Some(e) = &job.error {
             // Show first 200 chars of error, split on newlines
@@ -171,8 +211,8 @@ fn render_job_row<'a>(job: &Job, _selected: bool, expanded: bool) -> ListItem<'a
                     Style::default().fg(Color::Red),
                 )));
             }
-            }
         }
+    }
 
     ListItem::new(lines)
 }

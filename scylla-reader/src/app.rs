@@ -5,7 +5,7 @@ use crate::event;
 use crate::key_handler;
 use crate::messenger::{AppCommand, AppEvent};
 use crate::scrapers::services::ScraperRegistry;
-use crate::state::{AppState, Modal, Page};
+use crate::state::AppState;
 use crate::ui;
 use crate::worker;
 
@@ -24,7 +24,7 @@ pub struct App {
     state: AppState,
     cmd_tx: mpsc::Sender<AppCommand>,
     event_rx: mpsc::Receiver<AppEvent>,
-    last_cover_url: Option<String>,
+    fetched_covers: std::collections::HashSet<String>,
 }
 
 impl App {
@@ -72,7 +72,7 @@ impl App {
             state,
             cmd_tx,
             event_rx,
-            last_cover_url: None,
+            fetched_covers: std::collections::HashSet::new(),
         })
     }
 
@@ -95,9 +95,9 @@ impl App {
                 &mut self.state,
                 &self.event_rx,
                 &self.cmd_tx,
-                &mut self.last_cover_url,
+                &mut self.fetched_covers,
             );
-            event::update_covers(&mut self.state, &self.cmd_tx, &mut self.last_cover_url);
+            event::update_covers(&mut self.state, &self.cmd_tx, &mut self.fetched_covers);
 
             let area = self.draw()?;
 
@@ -130,7 +130,7 @@ impl App {
             state,
             cmd_tx,
             event_rx,
-            last_cover_url: None,
+            fetched_covers: std::collections::HashSet::new(),
         }
     }
 }

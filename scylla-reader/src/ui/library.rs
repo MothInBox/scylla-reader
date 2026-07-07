@@ -52,10 +52,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
             hint_chunks[0],
         );
         frame.render_widget(
-            Paragraph::new(hint_line(
-                "Nav",
-                crate::ui::widgets::NAV_HINTS,
-            )),
+            Paragraph::new(hint_line("Nav", crate::ui::widgets::NAV_HINTS)),
             hint_chunks[1],
         );
     }
@@ -129,10 +126,13 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, state: &mut AppState) {
             b.active_session_id,
             b.tags.clone(),
             b.description.clone(),
+            b.cover_url.clone(),
         )
     });
 
-    let Some((title, status, sessions, active_session_id, tags, description)) = book_data else {
+    let Some((title, status, sessions, active_session_id, tags, description, cover_url)) =
+        book_data
+    else {
         frame.render_widget(Paragraph::new("No book selected"), inner);
         return;
     };
@@ -142,8 +142,10 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .constraints([Constraint::Length(12), Constraint::Min(0)])
         .split(inner);
 
-    if let Some(protocol) = &mut state.library.cached_protocol {
-        frame.render_stateful_widget(StatefulImage::new(None), side_chunks[0], protocol);
+    if let Some(url) = &cover_url {
+        if let Some(protocol) = state.library.cover_cache.get_mut(url) {
+            frame.render_stateful_widget(StatefulImage::new(None), side_chunks[0], protocol);
+        }
     }
 
     let active_session = active_session_id
@@ -214,7 +216,9 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
-        state.library.add_book("Test Book Title".into(), "url".into(), 10);
+        state
+            .library
+            .add_book("Test Book Title".into(), "url".into(), 10);
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
