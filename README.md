@@ -181,7 +181,8 @@ Ctrl+S (submit)
 
 ### Planned
 
-- **Plugin explore feed** — in-app browser for discovering books from within Scylla. Plugins expose a browse/search interface, results rendered in the TUI.
-- **Plugin download from GitHub** — paste a repo URL, Scylla fetches the wasm and places it in your plugins folder.
-- **Customizable file paths** — configure where the database, config, and plugin directories live.
-- **HTTPS server** — optional server serving your library as a web UI + API, replacing the earlier daemon/server separation idea.
+- **Plugin explore feed** — in-app browser for discovering books. Plugins expose a `search(query) -> SearchResults` function. TUI renders results, user picks one, then `scrape_book` runs. Start with search input + paginated results.
+- **Plugin download from GitHub** — `scylla plugin install <repo-url>`. Fetches wasm from releases, validates by calling `get_config_schema`, places in plugins folder. CLI command or TUI modal.
+- **Customizable file paths** — add `data_dir`, `config_dir`, `plugin_dir` to `PersistedSettings`. `config_dir()` checks these overrides before `dirs`-based defaults.
+- **HTTPS server** — new `scylla-server` crate with axum/actix-web. Shares DB and plugin system. Start API-only (serve chapters, manage library), add web UI later. Replaces old daemon idea.
+- **Scylla as server client** — optionally run TUI as a client to the HTTPS server API instead of direct DB access. Concurrent SQLite with WAL mode, or independent consumers of the same DB.
