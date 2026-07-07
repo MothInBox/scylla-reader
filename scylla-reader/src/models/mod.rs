@@ -6,6 +6,6 @@ pub mod job;
 pub mod session;
 
 pub use book::{Book, BookStatus, Chapter};
-pub use job::{Job, JobFilter, JobId, JobKind, JobPriority, JobStatus};
+pub use job::{Job, JobFilter, JobId, JobKind, JobOutcome, JobPriority, JobStatus};
 pub use progress::Progress;
 pub use session::Session;

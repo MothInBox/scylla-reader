@@ -1,4 +1,4 @@
-use crate::models::job::{Job, JobFilter};
+use crate::models::job::{Job, JobFilter, JobOutcome};
 
 #[derive(Debug)]
 pub struct JobsState {
@@ -76,6 +76,16 @@ impl JobsState {
                 _ => {}
             }
             job.status = status;
+        }
+    }
+
+    pub fn set_outcome(
+        &mut self,
+        id: crate::models::job::JobId,
+        outcome: JobOutcome,
+    ) {
+        if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id) {
+            job.outcome = Some(outcome);
         }
     }
 

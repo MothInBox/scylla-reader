@@ -114,6 +114,9 @@ pub fn drain_events(
                 state.jobs_state.max_workers = n;
                 state.settings.max_workers = n;
             }
+            AppEvent::JobOutcome(id, outcome) => {
+                state.jobs_state.set_outcome(id, outcome);
+            }
         }
     }
 }

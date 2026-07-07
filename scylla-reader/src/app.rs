@@ -142,6 +142,7 @@ mod tests {
     use crate::input::keybinds::*;
     use crate::key_handler;
     use crate::library::Library;
+    use crate::state::{Modal, Page};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn test_state() -> AppState {
