@@ -93,15 +93,35 @@ pub fn drain_events(
                 );
             }
             AppEvent::ChapterFetchFailed => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    "Chapter fetch failed",
+                );
                 state.reader.loading = false;
             }
             AppEvent::CoverFetched(url, protocol) => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Cover fetched: {}", url),
+                );
                 state.library.cover_cache.insert(url, protocol);
             }
             AppEvent::JobEnqueued(job) => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Job enqueued: {} ({})", job.target, job.id),
+                );
                 state.jobs_state.jobs.push(job);
             }
             AppEvent::JobStatusChanged(id, status) => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Job {} status: {:?}", id, status),
+                );
                 state.jobs_state.update_from_event(id, status);
                 state.jobs_state.active_count = state
                     .jobs_state
@@ -111,10 +131,20 @@ pub fn drain_events(
                     .count() as u8;
             }
             AppEvent::WorkersChanged(n) => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Workers changed to {}", n),
+                );
                 state.jobs_state.max_workers = n;
                 state.settings.max_workers = n;
             }
             AppEvent::JobOutcome(id, outcome) => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Job {} outcome", id),
+                );
                 state.jobs_state.set_outcome(id, outcome);
             }
         }

@@ -26,10 +26,20 @@ pub fn handle_key(
 
     match key.code {
         KEY_LIBRARY => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "NAV",
+                "Page: Library",
+            );
             state.current_page = Page::Library;
             return true;
         }
         KEY_READER => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "NAV",
+                "Page: Reader",
+            );
             state.current_page = Page::Reader;
             if let Some(book) = state.library.selected_book()
                 && state.reader.book_url != book.url
@@ -52,10 +62,20 @@ pub fn handle_key(
             return true;
         }
         KEY_JOBS => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "NAV",
+                "Page: Jobs",
+            );
             state.current_page = Page::Jobs;
             return true;
         }
         KEY_SETTINGS => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "NAV",
+                "Page: Settings",
+            );
             state.current_page = Page::Settings;
             return true;
         }

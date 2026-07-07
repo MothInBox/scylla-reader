@@ -38,11 +38,21 @@ pub fn handle_jobs(
         KEY_JOBS_CANCEL => {
             if let Some(&real_idx) = filtered_indices.get(state.jobs_state.selected) {
                 let job_id = state.jobs_state.jobs[real_idx].id;
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "JOBS",
+                    &format!("Cancel job {}", job_id),
+                );
                 let _ = cmd_tx.send(AppCommand::CancelJob(job_id));
             }
             true
         }
         KEY_JOBS_CANCEL_ALL => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                "Cancel all jobs",
+            );
             let _ = cmd_tx.send(AppCommand::CancelAll);
             true
         }
@@ -50,17 +60,32 @@ pub fn handle_jobs(
             if let Some(&real_idx) = filtered_indices.get(state.jobs_state.selected) {
                 if matches!(state.jobs_state.jobs[real_idx].status, JobStatus::Failed(_)) {
                     let job_id = state.jobs_state.jobs[real_idx].id;
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "JOBS",
+                        &format!("Retry job {}", job_id),
+                    );
                     let _ = cmd_tx.send(AppCommand::RetryJob(job_id));
                 }
             }
             true
         }
         KEY_JOBS_RETRY_ALL => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                "Retry all failed jobs",
+            );
             let _ = cmd_tx.send(AppCommand::RetryAllFailed);
             true
         }
         KeyCode::Char('+') | KeyCode::Char('=') => {
             let new = (state.jobs_state.max_workers + 1).min(32);
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                &format!("Workers inc to {}", new),
+            );
             state.jobs_state.max_workers = new;
             state.settings.max_workers = new;
             state.settings.save();
@@ -69,6 +94,11 @@ pub fn handle_jobs(
         }
         KEY_JOBS_DEC_WORKERS => {
             let new = state.jobs_state.max_workers.saturating_sub(1).max(1);
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                &format!("Workers dec to {}", new),
+            );
             state.jobs_state.max_workers = new;
             state.settings.max_workers = new;
             state.settings.save();
@@ -76,31 +106,61 @@ pub fn handle_jobs(
             true
         }
         KEY_JOBS_FLUSH_COMPLETED => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                "Flush completed jobs",
+            );
             let _ = cmd_tx.send(AppCommand::FlushCompleted);
             state.jobs_state.remove_completed();
             true
         }
         KEY_JOBS_FLUSH_ALL => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                "Flush all jobs",
+            );
             let _ = cmd_tx.send(AppCommand::FlushAll);
             state.jobs_state.remove_all();
             true
         }
         KeyCode::Char('a') => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                "Filter: All",
+            );
             state.jobs_state.filter = JobFilter::All;
             state.jobs_state.selected = 0;
             true
         }
         KeyCode::Char('s') => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                "Filter: Running",
+            );
             state.jobs_state.filter = JobFilter::Running;
             state.jobs_state.selected = 0;
             true
         }
         KeyCode::Char('d') => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                "Filter: Done",
+            );
             state.jobs_state.filter = JobFilter::Completed;
             state.jobs_state.selected = 0;
             true
         }
         KeyCode::Char('e') => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                "Filter: Failed",
+            );
             state.jobs_state.filter = JobFilter::Failed;
             state.jobs_state.selected = 0;
             true

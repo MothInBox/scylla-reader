@@ -90,6 +90,7 @@ impl JobsState {
     }
 
     pub fn remove_completed(&mut self) {
+        let before = self.jobs.len();
         self.jobs.retain(|j| {
             !matches!(
                 j.status,
@@ -97,11 +98,27 @@ impl JobsState {
                     | crate::models::job::JobStatus::Cancelled
             )
         });
+        let removed = before - self.jobs.len();
+        if removed > 0 {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                &format!("Removed {} completed/cancelled jobs", removed),
+            );
+        }
         self.selected = self.selected.min(self.jobs.len().saturating_sub(1));
     }
 
     pub fn remove_all(&mut self) {
+        let before = self.jobs.len();
         self.jobs.clear();
         self.selected = 0;
+        if before > 0 {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "JOBS",
+                &format!("Cleared all {} jobs", before),
+            );
+        }
     }
 }

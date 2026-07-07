@@ -47,8 +47,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }));
 
+    crate::settings::log(
+        crate::settings::LogLevel::Debug,
+        "MAIN",
+        "Application starting",
+    );
     let mut app = app::App::new()?;
     let result = app.run();
+    crate::settings::log(
+        crate::settings::LogLevel::Debug,
+        "MAIN",
+        "Application shutting down",
+    );
     cleanup();
     result?;
     Ok(())
