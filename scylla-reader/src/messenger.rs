@@ -18,6 +18,7 @@ pub enum AppCommand {
     FlushAll,
     SetMaxWorkers(u8),
     ReorderJob(JobId, usize),
+    InstallPlugin(String), // GitHub repo URL
 }
 
 pub struct ChapterContent {
@@ -36,6 +37,8 @@ pub enum AppEvent {
     JobStatusChanged(JobId, JobStatus),
     WorkersChanged(u8),
     JobOutcome(JobId, JobOutcome),
+    PluginInstalled(String, String),   // domain, wasm path
+    PluginInstallFailed(String),       // error message
 }
 
 #[cfg(test)]
@@ -217,6 +220,37 @@ mod tests {
             assert_eq!(j.id, 1);
         } else {
             panic!("Expected JobEnqueued variant");
+        }
+    }
+
+    #[test]
+    fn test_app_command_install_plugin_construction() {
+        let cmd = AppCommand::InstallPlugin("https://github.com/owner/repo".into());
+        if let AppCommand::InstallPlugin(url) = &cmd {
+            assert_eq!(url, "https://github.com/owner/repo");
+        } else {
+            panic!("Expected InstallPlugin variant");
+        }
+    }
+
+    #[test]
+    fn test_app_event_plugin_installed_construction() {
+        let event = AppEvent::PluginInstalled("example.com".into(), "/path/to/plugin.wasm".into());
+        if let AppEvent::PluginInstalled(domain, path) = &event {
+            assert_eq!(domain, "example.com");
+            assert_eq!(path, "/path/to/plugin.wasm");
+        } else {
+            panic!("Expected PluginInstalled variant");
+        }
+    }
+
+    #[test]
+    fn test_app_event_plugin_install_failed_construction() {
+        let event = AppEvent::PluginInstallFailed("Network error".into());
+        if let AppEvent::PluginInstallFailed(msg) = &event {
+            assert_eq!(msg, "Network error");
+        } else {
+            panic!("Expected PluginInstallFailed variant");
         }
     }
 }

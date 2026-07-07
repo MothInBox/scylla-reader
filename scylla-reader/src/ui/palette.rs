@@ -166,6 +166,20 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
                 s.settings_ui.settings_page = crate::settings::SettingsPage::PluginList;
             },
         },
+        // Plugins
+        PaletteAction {
+            category: "Plugins",
+            label: "Install Plugin from GitHub",
+            keys: "",
+            handler: |s, _| {
+                s.modal = Modal::InstallPlugin {
+                    url: String::new(),
+                    cursor: 0,
+                    scroll_offset: 0,
+                };
+                s.current_page = Page::InstallingPlugin;
+            },
+        },
         // Debug
         PaletteAction {
             category: "Debug",

@@ -16,7 +16,10 @@ pub fn handle_key(
     if state.modal != Modal::None {
         if key.code == KEY_ESCAPE {
             state.close_modal();
-            if matches!(state.current_page, Page::AddingBook | Page::BookChapterJump) {
+            if matches!(
+                state.current_page,
+                Page::AddingBook | Page::BookChapterJump | Page::InstallingPlugin
+            ) {
                 state.current_page = Page::Library;
             }
             return true;

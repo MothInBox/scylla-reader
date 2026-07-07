@@ -352,6 +352,21 @@ impl JobManager {
             AppCommand::SetRateLimit(secs) => {
                 self.rate_limit_secs = secs;
             }
+            AppCommand::InstallPlugin(repo_url) => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "PLUGIN",
+                    &format!("Installing plugin from: {}", repo_url),
+                );
+                match crate::scrapers::plugin_install::install_plugin(&repo_url) {
+                    Ok((domain, path)) => {
+                        let _ = self.event_tx.send(AppEvent::PluginInstalled(domain, path));
+                    }
+                    Err(msg) => {
+                        let _ = self.event_tx.send(AppEvent::PluginInstallFailed(msg));
+                    }
+                }
+            }
         }
     }
 

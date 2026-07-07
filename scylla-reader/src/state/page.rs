@@ -8,4 +8,5 @@ pub enum Page {
     BookChapterJump,
     Reader,
     Jobs,
+    InstallingPlugin,
 }

@@ -178,6 +178,40 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
         }
 
         Modal::CommandPalette { .. } => {}
+
+        Modal::InstallPlugin {
+            url,
+            cursor: _cursor,
+            scroll_offset: _,
+        } => {
+            let popup_area = centered_rect(70, 5, area);
+            frame.render_widget(Clear, popup_area);
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(3), Constraint::Length(1)])
+                .split(popup_area);
+            let main_area = chunks[0];
+
+            let input_text = if url.is_empty() {
+                "Enter GitHub repo URL...".to_string()
+            } else {
+                url.clone()
+            };
+
+            let input = Paragraph::new(input_text)
+                .block(
+                    Block::default()
+                        .title(" Install Plugin from GitHub ")
+                        .borders(Borders::ALL),
+                )
+                .style(Style::default().fg(Color::White));
+            frame.render_widget(input, main_area);
+
+            let hints = Paragraph::new(" [Enter] Install  [Esc] Cancel ")
+                .style(Style::default().fg(Color::DarkGray));
+            frame.render_widget(hints, chunks[1]);
+        }
     }
 }
 

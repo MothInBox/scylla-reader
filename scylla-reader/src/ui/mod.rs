@@ -14,7 +14,7 @@ use ratatui::prelude::*;
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
     match state.current_page {
-        Page::Library | Page::AddingBook | Page::BookChapterJump => {
+        Page::Library | Page::AddingBook | Page::BookChapterJump | Page::InstallingPlugin => {
             library::draw(frame, area, state);
         }
         Page::Settings => {

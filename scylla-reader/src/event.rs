@@ -145,6 +145,21 @@ pub fn drain_events(
                 );
                 state.jobs_state.set_outcome(id, outcome);
             }
+            AppEvent::PluginInstalled(domain, path) => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "PLUGIN",
+                    &format!("Plugin installed: {} at {}", domain, path),
+                );
+                state.settings.reload_plugins();
+            }
+            AppEvent::PluginInstallFailed(msg) => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Error,
+                    "PLUGIN",
+                    &format!("Plugin install failed: {}", msg),
+                );
+            }
         }
     }
 }

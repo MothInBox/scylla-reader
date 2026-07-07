@@ -32,6 +32,11 @@ pub enum Modal {
         filtered: Vec<PaletteAction>,
         selected: usize,
     },
+    InstallPlugin {
+        url: String,
+        cursor: usize,
+        scroll_offset: usize,
+    },
 }
 
 #[cfg(test)]
@@ -176,6 +181,27 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
         });
+    }
+
+    #[test]
+    fn test_modal_install_plugin_construction() {
+        let modal = Modal::InstallPlugin {
+            url: "https://github.com/owner/repo".into(),
+            cursor: 5,
+            scroll_offset: 0,
+        };
+        if let Modal::InstallPlugin {
+            url,
+            cursor,
+            scroll_offset,
+        } = &modal
+        {
+            assert_eq!(url, "https://github.com/owner/repo");
+            assert_eq!(*cursor, 5);
+            assert_eq!(*scroll_offset, 0);
+        } else {
+            panic!("Expected InstallPlugin variant");
+        }
     }
 
     #[test]

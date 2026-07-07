@@ -23,7 +23,10 @@ pub fn handle_palette(
                 if let Some(action) = filtered.get(*selected) {
                     (action.handler)(state, cmd_tx);
                 }
-                state.close_modal();
+                // Only close palette if the handler didn't set a new modal
+                if matches!(state.modal, Modal::CommandPalette { .. }) {
+                    state.close_modal();
+                }
                 true
             }
             KEY_NAV_UP => {
