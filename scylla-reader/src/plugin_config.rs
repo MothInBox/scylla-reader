@@ -391,6 +391,9 @@ pub fn parse_cookies_str(raw: &str) -> String {
 }
 
 pub fn config_dir() -> PathBuf {
+    if let Some(Some(dir)) = crate::settings::CONFIG_DIR_OVERRIDE.get() {
+        return dir.clone();
+    }
     dirs::config_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("scylla-reader")

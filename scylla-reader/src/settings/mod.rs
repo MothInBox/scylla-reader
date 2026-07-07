@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 pub static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -98,6 +99,10 @@ struct PersistedSettings {
     debug_log: bool,
     reader_mode: ReaderMode,
     max_workers: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data_dir: Option<String>,
 }
 
 impl Default for PersistedSettings {
@@ -107,6 +112,8 @@ impl Default for PersistedSettings {
             debug_log: false,
             reader_mode: ReaderMode::Paged,
             max_workers: 4,
+            config_dir: None,
+            data_dir: None,
         }
     }
 }
@@ -130,7 +137,17 @@ fn compiled_defaults() -> PersistedSettings {
         max_workers: option_env!("SCYLLA_MAX_WORKERS")
             .and_then(|s| s.parse().ok())
             .unwrap_or(4),
+        config_dir: None,
+        data_dir: None,
     }
+}
+
+pub static CONFIG_DIR_OVERRIDE: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+pub static DATA_DIR_OVERRIDE: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+
+pub fn set_path_overrides(config_dir: Option<std::path::PathBuf>, data_dir: Option<std::path::PathBuf>) {
+    let _ = CONFIG_DIR_OVERRIDE.set(config_dir);
+    let _ = DATA_DIR_OVERRIDE.set(data_dir);
 }
 
 pub struct Settings {
@@ -149,11 +166,21 @@ impl Default for Settings {
 
 impl Settings {
     pub fn save(&self) {
+        let config_dir = CONFIG_DIR_OVERRIDE
+            .get()
+            .and_then(|o| o.as_ref())
+            .map(|p| p.to_string_lossy().to_string());
+        let data_dir = DATA_DIR_OVERRIDE
+            .get()
+            .and_then(|o| o.as_ref())
+            .map(|p| p.to_string_lossy().to_string());
         let persisted = PersistedSettings {
             rate_limit_secs: self.rate_limit_secs,
             debug_log: self.debug_log,
             reader_mode: self.reader_mode.clone(),
             max_workers: self.max_workers,
+            config_dir,
+            data_dir,
         };
         let path = settings_path();
         if let Some(parent) = path.parent() {
@@ -181,6 +208,10 @@ impl Settings {
             merged.debug_log = user.debug_log;
             merged.reader_mode = user.reader_mode;
             merged.max_workers = user.max_workers;
+            set_path_overrides(
+                user.config_dir.map(std::path::PathBuf::from),
+                user.data_dir.map(std::path::PathBuf::from),
+            );
         }
 
         if merged.debug_log {
@@ -325,6 +356,8 @@ mod tests {
             debug_log: true,
             reader_mode: ReaderMode::Scrollable,
             max_workers: 8,
+            config_dir: None,
+            data_dir: None,
         };
         let json = serde_json::to_string(&p).unwrap();
         let back: PersistedSettings = serde_json::from_str(&json).unwrap();
@@ -344,6 +377,26 @@ mod tests {
     }
 
     #[test]
+    fn test_path_overrides() {
+        assert!(CONFIG_DIR_OVERRIDE.get().is_none());
+        assert!(DATA_DIR_OVERRIDE.get().is_none());
+
+        set_path_overrides(
+            Some(std::path::PathBuf::from("/custom/config")),
+            Some(std::path::PathBuf::from("/custom/data")),
+        );
+
+        assert_eq!(
+            CONFIG_DIR_OVERRIDE.get(),
+            Some(&Some(std::path::PathBuf::from("/custom/config")))
+        );
+        assert_eq!(
+            DATA_DIR_OVERRIDE.get(),
+            Some(&Some(std::path::PathBuf::from("/custom/data")))
+        );
+    }
+
+    #[test]
     fn test_save_roundtrip() {
         let mut settings = Settings::new();
         settings.rate_limit_secs = 99;
@@ -355,6 +408,8 @@ mod tests {
             debug_log: settings.debug_log,
             reader_mode: settings.reader_mode.clone(),
             max_workers: settings.max_workers,
+            config_dir: None,
+            data_dir: None,
         };
         let json = serde_json::to_string_pretty(&persisted).unwrap();
         let back: PersistedSettings = serde_json::from_str(&json).unwrap();

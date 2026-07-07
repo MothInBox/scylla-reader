@@ -17,10 +17,7 @@ impl Default for ScraperRegistry {
 
 impl ScraperRegistry {
     pub fn new() -> Self {
-        let plugin_dir = dirs::config_local_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("scylla-reader")
-            .join("plugins");
+        let plugin_dir = crate::plugin_config::plugins_dir();
 
         let mut plugins = Vec::new();
 
@@ -359,7 +356,7 @@ impl ScraperRegistry {
     }
 }
 
-fn host_curl_fetch(
+pub(crate) fn host_curl_fetch(
     plugin: &mut CurrentPlugin,
     inputs: &[Val],
     outputs: &mut [Val],
@@ -399,7 +396,7 @@ fn host_curl_fetch(
     Ok(())
 }
 
-fn host_scylla_fail(
+pub(crate) fn host_scylla_fail(
     plugin: &mut CurrentPlugin,
     inputs: &[Val],
     _outputs: &mut [Val],

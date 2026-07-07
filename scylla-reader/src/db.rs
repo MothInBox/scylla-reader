@@ -322,6 +322,9 @@ impl Db {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn data_path() -> std::path::PathBuf {
+    if let Some(Some(dir)) = crate::settings::DATA_DIR_OVERRIDE.get() {
+        return dir.join("library.db");
+    }
     dirs::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("scylla-reader")
