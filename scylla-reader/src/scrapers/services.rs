@@ -2,11 +2,11 @@ use crate::models::{Book, BookStatus, Chapter};
 use curl::easy::{Easy, List};
 use extism::{CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType, Wasm};
 use scylla_plugin_api::{ChapterOutput, PluginSchema, ScrapeInput, ScrapeOutput};
-use std::cell::RefCell;
+use std::sync::Mutex;
 
 pub struct ScraperRegistry {
     plugins: Vec<(String, std::path::PathBuf)>,
-    plugin_cache: RefCell<Vec<(String, Plugin)>>,
+    plugin_cache: Mutex<Vec<(String, Plugin)>>,
 }
 
 impl Default for ScraperRegistry {
@@ -61,7 +61,7 @@ impl ScraperRegistry {
 
         Self {
             plugins,
-            plugin_cache: RefCell::new(Vec::new()),
+            plugin_cache: Mutex::new(Vec::new()),
         }
     }
 
@@ -117,16 +117,11 @@ impl ScraperRegistry {
         schema
     }
     fn load_cookies_for_domain(domain: &str) -> Option<String> {
-        let path = crate::plugin_config::config_dir().join(format!("{}.json", domain));
+        let path = crate::plugin_config::plugin_config_path(domain);
         let contents = std::fs::read_to_string(&path).ok()?;
         let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
         let raw = json.get("_cookies")?.as_str()?;
-        let parsed: String = raw
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect::<Vec<_>>()
-            .join("; ");
+        let parsed = crate::plugin_config::parse_cookies_str(raw);
         if parsed.is_empty() {
             crate::settings::log(
                 crate::settings::LogLevel::Debug,
@@ -145,7 +140,7 @@ impl ScraperRegistry {
     }
 
     fn load_plugin_config(domain: &str) -> Option<String> {
-        let path = crate::plugin_config::config_dir().join(format!("{}.json", domain));
+        let path = crate::plugin_config::plugin_config_path(domain);
         let contents = std::fs::read_to_string(&path).ok()?;
         let mut json: serde_json::Value = serde_json::from_str(&contents).ok()?;
         if let Some(obj) = json.as_object_mut() {
@@ -275,7 +270,7 @@ impl ScraperRegistry {
             "SCRAPE",
             &format!("call_cached_plugin: domain={} fn={}", domain, function),
         );
-        let mut cache = self.plugin_cache.borrow_mut();
+        let mut cache = self.plugin_cache.lock().unwrap();
         let idx = cache.iter().position(|(d, _)| d == domain);
 
         let plugin = if let Some(idx) = idx {
@@ -306,6 +301,22 @@ impl ScraperRegistry {
         Ok(result.to_vec())
     }
 
+    fn extract_host(url: &str) -> String {
+        let after_protocol = url.find("://").map(|i| &url[i + 3..]).unwrap_or(url);
+        let host = after_protocol
+            .find('/')
+            .map(|i| &after_protocol[..i])
+            .unwrap_or(after_protocol);
+        let host = host.find('?').map(|i| &host[..i]).unwrap_or(host);
+        let host = host.find('#').map(|i| &host[..i]).unwrap_or(host);
+        // Strip userinfo (user:password@)
+        if let Some(at) = host.rfind('@') {
+            host[at + 1..].to_string()
+        } else {
+            host.to_string()
+        }
+    }
+
     fn find_plugin(
         &self,
         url: &str,
@@ -316,9 +327,27 @@ impl ScraperRegistry {
             return Ok((domain.as_str(), path));
         }
 
-        self.plugins
-            .iter()
-            .find(|(domain, _)| url.contains(domain.as_str()))
+        let host = Self::extract_host(url);
+
+        let match_domain = |domain: &str| -> bool {
+            let domain_has_dot = domain.contains('.');
+            if domain_has_dot {
+                host == domain || host.ends_with(&format!(".{}", domain))
+            } else {
+                let segments: Vec<&str> = host.split('.').collect();
+                segments
+                    .iter()
+                    .any(|s| *s == domain)
+                    && segments.last().map_or(false, |last| last != &domain)
+            }
+        };
+
+        let mut matched: Vec<&(String, std::path::PathBuf)> =
+            self.plugins.iter().filter(|(d, _)| match_domain(d)).collect();
+        matched.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+        matched
+            .first()
             .map(|(domain, path)| (domain.as_str(), path))
             .ok_or_else(|| {
                 format!(
@@ -392,6 +421,9 @@ fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {
 
     handle.url(url).map_err(|e| e.to_string())?;
     handle
+        .timeout(std::time::Duration::from_secs(30))
+        .map_err(|e| e.to_string())?;
+    handle
         .useragent("Mozilla/5.0 (X11; Linux x86_64; rv:151.0) Gecko/20100101 Firefox/151.0")
         .map_err(|e| e.to_string())?;
     if !cookie_str.is_empty() {
@@ -441,7 +473,7 @@ mod tests {
     fn test_empty_registry_no_plugins() {
         let registry = ScraperRegistry {
             plugins: vec![],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
         assert!(registry.plugins.is_empty());
         let result = registry.find_plugin("https://example.com/page");
@@ -454,7 +486,7 @@ mod tests {
     fn test_find_plugin_matches_exact_domain() {
         let registry = ScraperRegistry {
             plugins: vec![("example.com".into(), PathBuf::from("/p/example.wasm"))],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
         let (domain, path) = registry.find_plugin("https://example.com/page").unwrap();
         assert_eq!(domain, "example.com");
@@ -462,10 +494,10 @@ mod tests {
     }
 
     #[test]
-    fn test_find_plugin_matches_substring_domain() {
+    fn test_find_plugin_matches_subdomain_segment() {
         let registry = ScraperRegistry {
             plugins: vec![("blog".into(), PathBuf::from("/p/blog.wasm"))],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
         let (domain, _) = registry
             .find_plugin("https://blog.example.com/post")
@@ -474,23 +506,33 @@ mod tests {
     }
 
     #[test]
-    fn test_find_plugin_first_match_wins() {
+    fn test_find_plugin_longest_match_wins() {
         let registry = ScraperRegistry {
             plugins: vec![
                 ("com".into(), PathBuf::from("/p/com.wasm")),
                 ("example.com".into(), PathBuf::from("/p/example.wasm")),
             ],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
         let (domain, _) = registry.find_plugin("https://example.com/page").unwrap();
-        assert_eq!(domain, "com");
+        assert_eq!(domain, "example.com");
+    }
+
+    #[test]
+    fn test_find_plugin_tld_does_not_match() {
+        let registry = ScraperRegistry {
+            plugins: vec![("com".into(), PathBuf::from("/p/com.wasm"))],
+            plugin_cache: Mutex::new(vec![]),
+        };
+        let err = registry.find_plugin("https://example.com/page").unwrap_err();
+        assert!(err.to_string().contains("No plugin found for:"));
     }
 
     #[test]
     fn test_find_plugin_no_match() {
         let registry = ScraperRegistry {
             plugins: vec![("example.com".into(), PathBuf::from("/p/example.wasm"))],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
         let err = registry.find_plugin("https://other.com/page").unwrap_err();
         assert!(err.to_string().contains("No plugin found for:"));
@@ -500,7 +542,7 @@ mod tests {
     fn test_find_plugin_template_without_template_plugin() {
         let registry = ScraperRegistry {
             plugins: vec![("other".into(), PathBuf::from("/p/other.wasm"))],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
         let result = registry.find_plugin("template://something");
         assert!(result.is_err());
@@ -513,7 +555,7 @@ mod tests {
                 ("template".into(), PathBuf::from("/p/template.wasm")),
                 ("other".into(), PathBuf::from("/p/other.wasm")),
             ],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
         let (domain, path) = registry.find_plugin("template://something").unwrap();
         assert_eq!(domain, "template");
@@ -521,10 +563,10 @@ mod tests {
     }
 
     #[test]
-    fn test_find_plugin_url_contains_domain_anywhere() {
+    fn test_find_plugin_matches_segment_in_host() {
         let registry = ScraperRegistry {
             plugins: vec![("royalroad".into(), PathBuf::from("/p/rr.wasm"))],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
         let (domain, _) = registry
             .find_plugin("https://www.royalroad.com/fiction/123")
@@ -536,9 +578,8 @@ mod tests {
     fn test_find_plugin_case_sensitive_matching() {
         let registry = ScraperRegistry {
             plugins: vec![("Example".into(), PathBuf::from("/p/example.wasm"))],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
-        // Case-sensitive match — URL must contain "Example" exactly
         let (domain, _) = registry.find_plugin("https://Example.com/page").unwrap();
         assert_eq!(domain, "Example");
     }
@@ -547,9 +588,8 @@ mod tests {
     fn test_find_plugin_case_sensitive_no_match() {
         let registry = ScraperRegistry {
             plugins: vec![("Example".into(), PathBuf::from("/p/example.wasm"))],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
-        // Lowercase "example" doesn't match uppercase "Example"
         let result = registry.find_plugin("https://example.com/page");
         assert!(result.is_err());
     }
@@ -558,7 +598,7 @@ mod tests {
     fn test_plugin_list_contains_no_wasm() {
         let registry = ScraperRegistry {
             plugins: vec![("plugin".into(), PathBuf::from("/p/plugin.wasm"))],
-            plugin_cache: RefCell::new(vec![]),
+            plugin_cache: Mutex::new(vec![]),
         };
         assert_eq!(registry.plugins.len(), 1);
         assert_eq!(registry.plugins[0].0, "plugin");
