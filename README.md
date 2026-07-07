@@ -1,114 +1,93 @@
 
 # Scylla Reader
-A TUI reader that interfaces with web assembly plugins to allow for an easily extensible Reader and Library manager.
-Your progress is kept for your books persistently, in local database.
 
-Features a scraper system, made to be extended by anyone via wasm:
+A TUI reader that interfaces with WebAssembly plugins to let you scrape, manage, and read web novels from the terminal. Progress is stored persistently in a local database.
+
 ![App Screenshot](extra/demo1.gif)
 
-Multiple ways to read:
+Multiple reading modes:
 ![App Screenshot](extra/demo2.gif)
 
 ## Layout
 
-The project  contains multiple crates:
+The project contains multiple crates:
 
-* **`scylla-reader/`**: The primary Terminal User Interface application.
-* **`scylla-plugin-api/`**: Definitioins for plugin developers.
-* **`plugin-template/`**: A baseline implementation used for learning to make new scrapers with Extism.
-
+- **`scylla-reader/`**: The TUI application.
+- **`scylla-plugin-api/`**: Type definitions for plugin developers.
+- **`plugin-template/`**: A baseline wasm plugin to help you write new scrapers with Extism.
 
 ## Installation
 
 ### Option A: Using Nix (Recommended)
 
-#### Temporary:
-Compile and run once immediently:
+#### Temporary
+
+Run once:
 ```bash
 nix run github:MothInBox/scylla-reader
 ```
-Comile and add to temporary shells path:
+
+Add to your shell temporarily:
 ```bash
 nix shell github:MothInBox/scylla-reader
 ```
-#### Declarative Installation (flake.nix and home.nix)
-Update flake.nix:
-```nix
-{
-    inputs = {
-        nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
-        home-manager = {
-            url = "github:nix-community/home-manager/release-26.05";
-            inputs.nixpkgs.follows = "nixpkgs";
-        };
-        # Add Scylla Reader to your flake inputs
-        scylla-reader = {
-            url = "github:MothInBox/scylla-reader";
-            inputs.nixpkgs.follows = "nixpkgs";
-        };
-    };
 
-    outputs = { self, nixpkgs, home-manager, scylla-reader, ... }: { # Add to outputs too!
-        nixosConfigurations."your-username" = nixpkgs.lib.nixosSystem {
-            modules = [
-                {nixpkgs.hostPlatform = "x86_64-linux";}
-                home-manager.nixosModules.home-manager
-                ({ config, pkgs, lib, ... }: {
-                    home-manager = {
-                        #Anything else you need here
-                        # Pass flake inputs downstream to your home.nix file
-                        extraSpecialArgs = { inherit scylla-reader; };
-                    };
-                    #Anything else you need here
-                })
-            ];
-        };
-    };
-}
-```
-Then in home.nix add to your home packages
+#### Declarative (flake.nix + home.nix)
+
+In your flake inputs:
 ```nix
-{ config, pkgs, inputs, ... }: {
-  home.packages = [
-    scylla-reader.packages.${pkgs.system}.default
-  ];
-}
+scylla-reader = {
+    url = "github:MothInBox/scylla-reader";
+    inputs.nixpkgs.follows = "nixpkgs";
+};
 ```
 
-### Option B: Using Cargo (UNTESTED)
+Pass `scylla-reader` as a special arg to home-manager, then add to `home.packages`:
+```nix
+scylla-reader.packages.${pkgs.system}.default
+```
 
-### Prerequisites
-must have the Rust stable toolchain installed on your system along with native development headers for ssl and curl.
+### Option B: Using Cargo
 
-Ubuntu/Debian: ``` sudo apt install build-essential pkg-config libssl-dev libcurl4-openssl-dev ```
+**Prerequisites:** Rust stable toolchain, development headers for SSL and curl.
 
-Fedora: ```sudo dnf groupinstall "Development Tools" && sudo dnf install pkg-config openssl-dev libcurl-devel ```
+```bash
+# Ubuntu/Debian
+sudo apt install build-essential pkg-config libssl-dev libcurl4-openssl-dev
 
-Arch Linux: ``` sudo pacman -S base-devel pkg-config openssl curl ```
+# Fedora
+sudo dnf groupinstall "Development Tools" && sudo dnf install pkg-config openssl-dev libcurl-devel
 
-macOS: ``` brew install openssl curl pkg-config ```
+# Arch
+sudo pacman -S base-devel pkg-config openssl curl
 
-#### Compilation
+# macOS
+brew install openssl curl pkg-config
+```
+
+**Compile:**
 ```bash
 git clone https://github.com/MothInBox/scylla-reader.git
 cd scylla-reader/scylla-reader
-cargo install --path scylla-reader
+cargo install --path .
 
-# if you then want to install the template plugin:
-cd plugin-template
+# Optional: build the template plugin
+cd ../plugin-template
 make
 ```
+
 ## Keybindings
 
-### Global (work everywhere)
+### Global
 | Key | Action |
 |-----|--------|
 | `1` | Library |
 | `2` | Reader (skip session picker, open most recent) |
-| `3` | Settings |
+| `8` | Jobs |
+| `9` | Settings |
 | `:` | Command Palette |
 | `?` | Toggle Hints |
-| `Esc` | Back / Quit (from Library) / Close Modal |
+| `Esc` | Back / Quit / Close Modal |
 
 ### Library
 | Key | Action |
@@ -127,12 +106,13 @@ make
 |-----|--------|
 | `>` | Next Chapter |
 | `<` | Prev Chapter |
-| `→` | Next Page (Paged) |
-| `←` | Prev Page (Paged) |
-| `↓` | Scroll Down (Scrollable) |
-| `↑` | Scroll Up (Scrollable) |
+| `→` | Next Page (Paged mode) |
+| `←` | Prev Page (Paged mode) |
+| `↓` | Scroll Down (Scrollable mode) |
+| `↑` | Scroll Up (Scrollable mode) |
 | `s` | Session Picker |
 | `Esc` | Back to Library |
+
 ### Settings
 | Key | Action |
 |-----|--------|
@@ -147,48 +127,61 @@ make
 | `Enter` | Confirm / Save |
 | `↑/↓` | Navigate |
 | `Ctrl+S` | Submit (Add Book) |
-| `t` | Toggle Title/URL (Jump) |
-| `n` | New Session (Session Picker) |
-| `r` | Rename Session (Session Picker) |
-| `d` | Delete Session (Session Picker) |
+| `t` | Toggle Title/URL (Jump Chapter) |
+| `n` | New Session |
+| `r` | Rename Session |
+| `d` | Delete Session |
+
+### Jobs
+| Key | Action |
+|-----|--------|
+| `c` / `C` | Cancel / Cancel All |
+| `r` / `R` | Retry / Retry All Failed |
+| `f` / `F` | Flush Completed / Flush All |
+| `+` / `-` | Increase / Decrease Workers |
 
 ## FAQ
-### Where can I get plugins?
-As of right now, develop your own or find one someone else has developed!
 
-see the template plugin to get an idea on how to develop your own! 
+### Where can I get plugins?
+
+Develop your own or find one someone else has written.
+
+See the `plugin-template/` directory for a reference implementation.
+
+To test with the template plugin, do:
 ```
 i (open add book window)
-type "template" 
-ctrl + s (submit all)
+type "template"
+Ctrl+S (submit)
 ```
 
-
 > [!WARNING]
-> Be aware that plugins could be running anything on your machine. Verify the plugin yourself or go with trusted sources.
+> Plugins run arbitrary wasm on your machine. Verify the plugin yourself or only use trusted sources.
 
 ### Where is data stored?
 
-#### .local/share/scylla-reader
-contains:
- - library.db (database for library persistence)
-
-#### .config/scylla-reader
-contains:
- - template.txt (files containing cookies for the plugin / domain)
- - plugins:
-    - plugin-template.wasm (the .wasm code for plugins)
-
-> [!NOTE]
-> could contain more than just template 
-> (e.g. royalroad.txt and plugin-royalroad.wasm)
-
+| Directory | Contents |
+|-----------|----------|
+| `~/.local/share/scylla-reader/` | `library.db` (database) |
+| `~/.config/scylla-reader/` | `settings.json`, `plugin-*.json` (config) |
+| `~/.config/scylla-reader/plugins/` | `plugin-*.wasm` (plugin binaries) |
 
 ## Roadmap
-### Features to Add
- - Easier way to install plugins. System to pull plugins from a git repo. Will require extension page.
- - ~~Multiple "Reading Sessions" (maybe you've completed a book but want to re-read and keep that progress, give them names too)~~
- - More customisation through settings
- - Persistent Settings
- - Seperation into a daemon/server and TUI client?
-Add all to dev branch then polish for main.
+
+### Recently Completed
+- Multiple reading sessions with names
+- Persistent settings (rate limit, debug logging, reader mode)
+- Word-wrap extracted to separate module
+- Plugin config files now use `plugin-` prefix (no collision with `settings.json`)
+- Domain matching fixed to use host segments instead of naive substring match
+- Plugin cache uses `Mutex` (thread-safe across async boundaries)
+- Curl requests have a 30s timeout
+- Shared cookie-parsing helper
+- Test setup deduplicated across 10 modules
+
+### Planned
+
+- **Plugin explore feed** — in-app browser for discovering books from within Scylla. Plugins expose a browse/search interface, results rendered in the TUI.
+- **Plugin download from GitHub** — paste a repo URL, Scylla fetches the wasm and places it in your plugins folder.
+- **Customizable file paths** — configure where the database, config, and plugin directories live.
+- **HTTPS server** — optional server serving your library as a web UI + API, replacing the earlier daemon/server separation idea.
