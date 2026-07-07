@@ -197,6 +197,14 @@ impl ScraperRegistry {
             );
             return Err("scrape failed: plugin returned empty URL".into());
         }
+        if output.chapters.is_empty() {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "SCRAPE",
+                &format!("Plugin returned 0 chapters for: {}", url),
+            );
+            return Err("scrape failed: plugin returned 0 chapters".into());
+        }
 
         Ok(Book {
             title: output.title,
