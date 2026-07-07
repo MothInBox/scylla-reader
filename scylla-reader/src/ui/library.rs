@@ -218,7 +218,7 @@ mod tests {
         let mut state = AppState::from_parts(db, Library::new());
         state
             .library
-            .add_book("Test Book Title".into(), "url".into(), 10);
+            .add_book("Test Book Title".into(), "url".into());
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();

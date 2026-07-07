@@ -34,17 +34,10 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
-    use crate::library::Library;
     use crate::state::Page;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-
-    fn test_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
-    }
+    use crate::test_helpers::*;
 
     #[test]
     fn test_draw_library_does_not_panic() {
@@ -75,7 +68,7 @@ mod tests {
     #[test]
     fn test_draw_reader_does_not_panic() {
         let mut state = test_state();
-        state.library.add_book("Test Book".into(), "url".into(), 10);
+        state.library.add_book("Test Book".into(), "url".into());
         state.current_page = Page::Reader;
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();

@@ -300,31 +300,12 @@ fn handle_session_picker_editing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
-    use crate::library::Library;
-    use crate::messenger::AppCommand;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-    fn test_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
-    }
-
-    fn key_event(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn channel() -> (
-        std::sync::mpsc::Sender<AppCommand>,
-        std::sync::mpsc::Receiver<AppCommand>,
-    ) {
-        std::sync::mpsc::channel()
-    }
+    use crossterm::event::KeyCode;
+    use crate::test_helpers::*;
 
     fn setup_session_picker_state(sessions: usize, cursor: usize) -> AppState {
         let mut state = test_state();
-        state.library.add_book("Test Book".into(), "test_url".into(), 10);
+        state.library.add_book("Test Book".into(), "test_url".into());
         if let Some(book) = state.library.books.iter().find(|b| b.url == "test_url") {
             let _ = state.db.upsert_book(book);
         }

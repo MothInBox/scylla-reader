@@ -38,32 +38,9 @@ pub fn handle_input(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
-    use crate::library::Library;
     use crate::state::{Modal, Page};
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::prelude::Rect;
-
-    fn test_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
-    }
-
-    fn key_event(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn channel() -> (
-        std::sync::mpsc::Sender<AppCommand>,
-        std::sync::mpsc::Receiver<AppCommand>,
-    ) {
-        std::sync::mpsc::channel()
-    }
-
-    fn rect() -> Rect {
-        Rect::new(0, 0, 80, 24)
-    }
+    use crossterm::event::KeyCode;
+    use crate::test_helpers::*;
 
     #[test]
     fn test_handle_input_adding_book_dispatches_correctly() {
@@ -116,7 +93,7 @@ mod tests {
     #[test]
     fn test_handle_input_reader_dispatches() {
         let mut state = test_state();
-        state.library.add_book("Test Book".into(), "url".into(), 10);
+        state.library.add_book("Test Book".into(), "url".into());
         state.current_page = Page::Reader;
         let (tx, _rx) = channel();
         let result = handle_input(&mut state, key_event(KeyCode::Right), &tx, rect());

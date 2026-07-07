@@ -109,29 +109,11 @@ pub fn handle_library(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
-    use crate::library::Library;
     use crate::library::LibraryFilter;
     use crate::models::Chapter;
     use crate::models::book::BookStatus;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-    fn test_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
-    }
-
-    fn key_event(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn channel() -> (
-        std::sync::mpsc::Sender<AppCommand>,
-        std::sync::mpsc::Receiver<AppCommand>,
-    ) {
-        std::sync::mpsc::channel()
-    }
+    use crossterm::event::KeyCode;
+    use crate::test_helpers::*;
 
     #[test]
     fn test_handle_library_i_opens_add_book() {
@@ -153,7 +135,7 @@ mod tests {
     #[test]
     fn test_handle_library_j_opens_jump_chapter() {
         let mut state = test_state();
-        state.library.add_book("Test".into(), "url".into(), 10);
+        state.library.add_book("Test".into(), "url".into());
         state.library.books[0].chapters.push(Chapter {
             title: "Ch1".into(),
             url: "u1".into(),
@@ -187,8 +169,8 @@ mod tests {
     #[test]
     fn test_handle_library_u_updates_all() {
         let mut state = test_state();
-        state.library.add_book("A".into(), "url-a".into(), 10);
-        state.library.add_book("B".into(), "url-b".into(), 20);
+        state.library.add_book("A".into(), "url-a".into());
+        state.library.add_book("B".into(), "url-b".into());
         let (tx, rx) = channel();
         let result = handle_library(&mut state, key_event(KEY_UPDATE_ALL), &tx);
         assert!(result);
@@ -203,7 +185,7 @@ mod tests {
     #[test]
     fn test_handle_library_d_deletes() {
         let mut state = test_state();
-        state.library.add_book("Test".into(), "url".into(), 10);
+        state.library.add_book("Test".into(), "url".into());
         assert_eq!(state.library.books.len(), 1);
         let (tx, _rx) = channel();
         let result = handle_library(&mut state, key_event(KEY_DELETE), &tx);
@@ -227,7 +209,7 @@ mod tests {
     #[test]
     fn test_handle_library_space_cycles_status() {
         let mut state = test_state();
-        state.library.add_book("Test".into(), "url".into(), 10);
+        state.library.add_book("Test".into(), "url".into());
         assert_eq!(state.library.books[0].status, BookStatus::Reading);
         let (tx, _rx) = channel();
         let result = handle_library(&mut state, key_event(KEY_CYCLE_STATUS), &tx);
@@ -238,7 +220,7 @@ mod tests {
     #[test]
     fn test_handle_library_enter_opens_session_picker() {
         let mut state = test_state();
-        state.library.add_book("Test".into(), "url".into(), 10);
+        state.library.add_book("Test".into(), "url".into());
         let (tx, _rx) = channel();
         let result = handle_library(&mut state, key_event(KEY_SESSIONS), &tx);
         assert!(result);
@@ -249,9 +231,9 @@ mod tests {
     #[test]
     fn test_handle_library_up_down_navigation() {
         let mut state = test_state();
-        state.library.add_book("A".into(), "u1".into(), 10);
-        state.library.add_book("B".into(), "u2".into(), 20);
-        state.library.add_book("C".into(), "u3".into(), 30);
+        state.library.add_book("A".into(), "u1".into());
+        state.library.add_book("B".into(), "u2".into());
+        state.library.add_book("C".into(), "u3".into());
         let (tx, _rx) = channel();
         assert_eq!(state.library.selected_index, 0);
         handle_library(&mut state, key_event(KEY_NAV_DOWN), &tx);
@@ -267,7 +249,7 @@ mod tests {
     #[test]
     fn test_handle_library_up_does_not_go_below_zero() {
         let mut state = test_state();
-        state.library.add_book("A".into(), "u1".into(), 10);
+        state.library.add_book("A".into(), "u1".into());
         let (tx, _rx) = channel();
         assert_eq!(state.library.selected_index, 0);
         handle_library(&mut state, key_event(KEY_NAV_UP), &tx);
@@ -277,8 +259,8 @@ mod tests {
     #[test]
     fn test_handle_library_down_does_not_exceed_max() {
         let mut state = test_state();
-        state.library.add_book("A".into(), "u1".into(), 10);
-        state.library.add_book("B".into(), "u2".into(), 20);
+        state.library.add_book("A".into(), "u1".into());
+        state.library.add_book("B".into(), "u2".into());
         let (tx, _rx) = channel();
         handle_library(&mut state, key_event(KEY_NAV_DOWN), &tx);
         handle_library(&mut state, key_event(KEY_NAV_DOWN), &tx);

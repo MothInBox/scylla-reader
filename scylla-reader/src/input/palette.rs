@@ -64,24 +64,9 @@ pub fn handle_palette(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
-    use crate::library::Library;
     use crate::state::Page;
-    use crossterm::event::KeyModifiers;
-
-    fn test_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
-    }
-
-    fn key_event(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn channel() -> (mpsc::Sender<AppCommand>, mpsc::Receiver<AppCommand>) {
-        mpsc::channel()
-    }
+    use crossterm::event::KeyCode;
+    use crate::test_helpers::*;
 
     fn setup_palette_state(query: &str, selected: usize) -> AppState {
         let (tx, _) = channel();

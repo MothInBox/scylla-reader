@@ -71,7 +71,7 @@ impl Library {
         self.books.get_mut(real_idx)
     }
 
-    pub fn add_book(&mut self, title: String, url: String, _total_pages: u32) {
+    pub fn add_book(&mut self, title: String, url: String) {
         self.books.push(Book {
             title,
             url,
@@ -146,7 +146,7 @@ mod tests {
     fn lib_with_n(n: usize) -> Library {
         let mut lib = Library::new();
         for i in 0..n {
-            lib.add_book(format!("Book {}", i), format!("url-{}", i), 100);
+            lib.add_book(format!("Book {}", i), format!("url-{}", i));
         }
         lib
     }
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn test_add_one_book() {
         let mut lib = Library::new();
-        lib.add_book("Title".into(), "url".into(), 42);
+        lib.add_book("Title".into(), "url".into());
         assert_eq!(lib.books.len(), 1);
         assert_eq!(lib.books[0].title, "Title");
         assert_eq!(lib.books[0].url, "url");
@@ -174,7 +174,7 @@ mod tests {
     fn test_add_five_books() {
         let mut lib = Library::new();
         for title in ["Book A", "Book B", "Book C", "Book D", "Book E"] {
-            lib.add_book(title.to_string(), String::new(), 100);
+            lib.add_book(title.to_string(), String::new());
         }
         assert_eq!(lib.books.len(), 5);
         assert_eq!(lib.books[0].title, "Book A");
@@ -373,8 +373,8 @@ mod tests {
     #[test]
     fn test_navigation_respects_filter_bounds() {
         let mut lib = Library::new();
-        lib.add_book("Book A".into(), "url-a".into(), 10);
-        lib.add_book("Book B".into(), "url-b".into(), 10);
+        lib.add_book("Book A".into(), "url-a".into());
+        lib.add_book("Book B".into(), "url-b".into());
         lib.books[1].status = BookStatus::Dropped;
 
         lib.filter = LibraryFilter::ByStatus(BookStatus::Reading);

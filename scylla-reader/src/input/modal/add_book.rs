@@ -89,29 +89,11 @@ pub fn handle_adding_book(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
-    use crate::library::Library;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-    fn test_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
-    }
-
-    fn key_event(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
+    use crossterm::event::KeyCode;
+    use crate::test_helpers::*;
 
     fn key_event_ctrl_s() -> KeyEvent {
         KeyEvent::new(KEY_SUBMIT, KEY_SUBMIT_MODIFIER)
-    }
-
-    fn channel() -> (
-        std::sync::mpsc::Sender<AppCommand>,
-        std::sync::mpsc::Receiver<AppCommand>,
-    ) {
-        std::sync::mpsc::channel()
     }
 
     fn setup_add_book_state(inputs: Vec<String>, cursor: usize) -> AppState {

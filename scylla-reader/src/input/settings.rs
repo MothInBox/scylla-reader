@@ -215,28 +215,10 @@ pub fn handle_plugin_field_edit(state: &mut AppState, key: KeyEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
-    use crate::library::Library;
     use crate::settings::ReaderMode;
     use crate::state::Page;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-    fn test_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
-    }
-
-    fn key_event(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn channel() -> (
-        std::sync::mpsc::Sender<AppCommand>,
-        std::sync::mpsc::Receiver<AppCommand>,
-    ) {
-        std::sync::mpsc::channel()
-    }
+    use crossterm::event::KeyCode;
+    use crate::test_helpers::*;
 
     #[test]
     fn test_handle_settings_main_navigate() {

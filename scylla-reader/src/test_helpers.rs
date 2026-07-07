@@ -25,5 +25,5 @@ pub fn channel() -> (mpsc::Sender<AppCommand>, mpsc::Receiver<AppCommand>) {
 }
 
 pub fn rect() -> Rect {
-    Rect::default()
+    Rect::new(0, 0, 80, 24)
 }

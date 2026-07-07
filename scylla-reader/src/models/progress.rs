@@ -7,4 +7,4 @@ pub struct Progress {
     pub current: u32,
     pub total: u32,
 }
-impl Progress {}
+

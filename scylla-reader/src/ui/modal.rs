@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn test_draw_modal_session_picker_renders() {
         let mut state = make_state();
-        state.library.add_book("Test Book".into(), "http://example.com/book".into(), 10);
+        state.library.add_book("Test Book".into(), "http://example.com/book".into());
         state.modal = Modal::SessionPicker {
             book_url: "http://example.com/book".into(),
             cursor: 0,
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn test_draw_modal_session_picker_pending_delete_renders() {
         let mut state = make_state();
-        state.library.add_book("Test Book".into(), "http://example.com/book".into(), 10);
+        state.library.add_book("Test Book".into(), "http://example.com/book".into());
         state.modal = Modal::SessionPicker {
             book_url: "http://example.com/book".into(),
             cursor: 0,
