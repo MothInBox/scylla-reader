@@ -6,8 +6,6 @@ use std::sync::mpsc;
 pub fn drain_events(
     state: &mut AppState,
     event_rx: &mpsc::Receiver<AppEvent>,
-    _cmd_tx: &mpsc::Sender<AppCommand>,
-    _fetched_covers: &mut std::collections::HashSet<String>,
 ) {
     while let Ok(event) = event_rx.try_recv() {
         match event {

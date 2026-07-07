@@ -42,27 +42,7 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
     list_state.select(Some(state.settings_ui.selected_field));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    if state.show_hints {
-        let hint_area = chunks[1];
-        let hint_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1)])
-            .split(hint_area);
-        frame.render_widget(
-            Paragraph::new(hint_line(
-                "Actions",
-                &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
-            )),
-            hint_chunks[0],
-        );
-        frame.render_widget(
-            Paragraph::new(hint_line(
-                "Nav",
-                crate::ui::widgets::NAV_HINTS,
-            )),
-            hint_chunks[1],
-        );
-    }
+    draw_hints(frame, chunks[1], state.show_hints);
 }
 
 fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -95,27 +75,7 @@ fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
         .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(log_widget, chunks[1]);
 
-    if state.show_hints {
-        let hint_area = chunks[2];
-        let hint_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1)])
-            .split(hint_area);
-        frame.render_widget(
-            Paragraph::new(hint_line(
-                "Actions",
-                &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
-            )),
-            hint_chunks[0],
-        );
-        frame.render_widget(
-            Paragraph::new(hint_line(
-                "Nav",
-                crate::ui::widgets::NAV_HINTS,
-            )),
-            hint_chunks[1],
-        );
-    }
+    draw_hints(frame, chunks[2], state.show_hints);
 }
 
 fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -145,27 +105,7 @@ fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
     list_state.select(Some(state.settings_ui.selected_plugin));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    if state.show_hints {
-        let hint_area = chunks[1];
-        let hint_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1)])
-            .split(hint_area);
-        frame.render_widget(
-            Paragraph::new(hint_line(
-                "Actions",
-                &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
-            )),
-            hint_chunks[0],
-        );
-        frame.render_widget(
-            Paragraph::new(hint_line(
-                "Nav",
-                crate::ui::widgets::NAV_HINTS,
-            )),
-            hint_chunks[1],
-        );
-    }
+    draw_hints(frame, chunks[1], state.show_hints);
 }
 
 fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -218,27 +158,7 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
     list_state.select(Some(clamped));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    if state.show_hints {
-        let hint_area = chunks[1];
-        let hint_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1)])
-            .split(hint_area);
-        frame.render_widget(
-            Paragraph::new(hint_line(
-                "Actions",
-                &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
-            )),
-            hint_chunks[0],
-        );
-        frame.render_widget(
-            Paragraph::new(hint_line(
-                "Nav",
-                crate::ui::widgets::NAV_HINTS,
-            )),
-            hint_chunks[1],
-        );
-    }
+    draw_hints(frame, chunks[1], state.show_hints);
 }
 
 fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -280,27 +200,31 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
 
     frame.render_widget(paragraph, chunks[0]);
 
-    if state.show_hints {
-        let hint_area = chunks[1];
-        let hint_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1)])
-            .split(hint_area);
-        frame.render_widget(
-            Paragraph::new(hint_line(
-                "Actions",
-                &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
-            )),
-            hint_chunks[0],
-        );
-        frame.render_widget(
-            Paragraph::new(hint_line(
-                "Nav",
-                crate::ui::widgets::NAV_HINTS,
-            )),
-            hint_chunks[1],
-        );
+    draw_hints(frame, chunks[1], state.show_hints);
+}
+
+fn draw_hints(frame: &mut Frame, area: Rect, show_hints: bool) {
+    if !show_hints {
+        return;
     }
+    let hint_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(hint_line(
+            "Actions",
+            &[("\u{2191}/\u{2193}", "Navigate"), ("Enter", "Select")],
+        )),
+        hint_chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(hint_line(
+            "Nav",
+            crate::ui::widgets::NAV_HINTS,
+        )),
+        hint_chunks[1],
+    );
 }
 
 #[cfg(test)]

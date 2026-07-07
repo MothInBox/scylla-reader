@@ -48,24 +48,14 @@ impl App {
             state.library.books.push(book);
         }
 
-        let worker_event_tx = event_tx;
-        let worker_max_workers = state.settings.max_workers;
-        let worker_rate_limit = state.settings.rate_limit_secs;
-        std::thread::Builder::new()
-            .name("job-manager".to_string())
-            .spawn(move || {
-                let manager = worker::JobManager::new(
-                    cmd_rx,
-                    worker_event_tx,
-                    registry,
-                    picker_font_size,
-                    picker_protocol_type,
-                    worker_max_workers,
-                    worker_rate_limit,
-                );
-                manager.run();
-            })
-            .expect("failed to spawn job manager thread");
+        let max_workers = state.settings.max_workers;
+        let rate_limit = state.settings.rate_limit_secs;
+
+        Self::spawn_worker_thread(
+            cmd_rx, event_tx, registry,
+            picker_font_size, picker_protocol_type,
+            max_workers, rate_limit,
+        );
 
         Ok(Self {
             terminal,
@@ -74,6 +64,32 @@ impl App {
             event_rx,
             fetched_covers: std::collections::HashSet::new(),
         })
+    }
+
+    fn spawn_worker_thread(
+        cmd_rx: mpsc::Receiver<AppCommand>,
+        event_tx: mpsc::Sender<AppEvent>,
+        registry: ScraperRegistry,
+        font_size: (u16, u16),
+        protocol_type: ratatui_image::picker::ProtocolType,
+        max_workers: u8,
+        rate_limit: u64,
+    ) {
+        std::thread::Builder::new()
+            .name("job-manager".to_string())
+            .spawn(move || {
+                let manager = worker::JobManager::new(
+                    cmd_rx,
+                    event_tx,
+                    registry,
+                    font_size,
+                    protocol_type,
+                    max_workers,
+                    rate_limit,
+                );
+                manager.run();
+            })
+            .expect("failed to spawn job manager thread");
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -94,8 +110,6 @@ impl App {
             event::drain_events(
                 &mut self.state,
                 &self.event_rx,
-                &self.cmd_tx,
-                &mut self.fetched_covers,
             );
             event::update_covers(&mut self.state, &self.cmd_tx, &mut self.fetched_covers);
 
