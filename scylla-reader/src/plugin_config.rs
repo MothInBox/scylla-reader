@@ -13,9 +13,24 @@ pub struct PluginConfig {
     path: PathBuf,
 }
 
+pub fn plugin_config_path(domain: &str) -> PathBuf {
+    config_dir().join(format!("plugin-{}.json", domain))
+}
+
 impl PluginConfig {
     pub fn for_domain(domain: &str, schema: Vec<ConfigField>, accepts_cookies: bool) -> Self {
-        let path = config_dir().join(format!("{}.json", domain));
+        let path = plugin_config_path(domain);
+        let path = if path.exists() {
+            path
+        } else {
+            let old = config_dir().join(format!("{}.json", domain));
+            if old.exists() {
+                let _ = fs::rename(&old, &path);
+                path
+            } else {
+                path
+            }
+        };
         let (values, cookies) = if path.exists() {
             Self::load_from_disk(&path, &schema)
         } else {
@@ -33,18 +48,20 @@ impl PluginConfig {
 
     pub fn discover_all() -> Vec<PluginConfig> {
         Self::migrate_txt_files();
+        Self::migrate_old_json_files();
         let dir = config_dir();
         let mut configs: HashMap<String, PluginConfig> = HashMap::new();
 
         if let Ok(entries) = fs::read_dir(&dir) {
             for entry in entries.flatten() {
-                if entry
-                    .path()
-                    .extension()
-                    .map(|x| x == "json")
-                    .unwrap_or(false)
-                {
-                    let path = entry.path();
+                let path = entry.path();
+                if path.extension().map(|x| x == "json").unwrap_or(false) {
+                    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                        continue;
+                    };
+                    let Some(domain) = stem.strip_prefix("plugin-") else {
+                        continue;
+                    };
                     let contents = match fs::read_to_string(&path) {
                         Ok(c) => c,
                         _ => continue,
@@ -57,19 +74,15 @@ impl PluginConfig {
                         .get("_schema")
                         .and_then(|s| serde_json::from_value(s.clone()).ok())
                         .unwrap_or_default();
-                    let domain = match path.file_stem().and_then(|s| s.to_str()) {
-                        Some(d) => d.to_string(),
-                        _ => continue,
-                    };
                     let accepts_cookies = json
                         .get("_accepts_cookies")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
                     let (values, cookies) = Self::load_from_disk(&path, &schema);
                     configs.insert(
-                        domain.clone(),
+                        domain.to_string(),
                         PluginConfig {
-                            domain,
+                            domain: domain.to_string(),
                             schema,
                             accepts_cookies,
                             values,
@@ -99,7 +112,7 @@ impl PluginConfig {
                                     accepts_cookies: true,
                                     values: HashMap::new(),
                                     cookies: String::new(),
-                                    path: config_dir().join(format!("{}.json", domain)),
+                                    path: plugin_config_path(domain),
                                 },
                             );
                         }
@@ -172,16 +185,15 @@ impl PluginConfig {
     }
 
     pub fn parse_cookies(&self) -> String {
-        self.cookies
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect::<Vec<_>>()
-            .join("; ")
+        parse_cookies_str(&self.cookies)
     }
 
     pub fn init_config_file(domain: &str, schema: &[ConfigField], accepts_cookies: bool) {
-        let path = config_dir().join(format!("{}.json", domain));
+        let path = plugin_config_path(domain);
+        let old = config_dir().join(format!("{}.json", domain));
+        if !path.exists() && old.exists() {
+            let _ = fs::rename(&old, &path);
+        }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).ok();
         }
@@ -273,6 +285,26 @@ impl PluginConfig {
         }
     }
 
+    fn migrate_old_json_files() {
+        let dir = config_dir();
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|x| x == "json").unwrap_or(false) {
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if stem == "settings" || stem.starts_with("plugin-") {
+                    continue;
+                }
+                let new_path = plugin_config_path(stem);
+                let _ = fs::rename(&path, &new_path);
+            }
+        }
+    }
+
     fn migrate_txt_files() {
         let dir = config_dir();
         let Ok(entries) = fs::read_dir(&dir) else {
@@ -289,7 +321,7 @@ impl PluginConfig {
             if stem == "library" {
                 continue;
             }
-            let json_path = dir.join(format!("{}.json", stem));
+            let json_path = plugin_config_path(stem);
             if json_path.exists() {
                 let contents = fs::read_to_string(&json_path).ok();
                 let json: Option<serde_json::Value> =
@@ -348,6 +380,14 @@ impl PluginConfig {
         }
         (values, cookies)
     }
+}
+
+pub fn parse_cookies_str(raw: &str) -> String {
+    raw.lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 pub fn config_dir() -> PathBuf {
