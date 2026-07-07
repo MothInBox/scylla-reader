@@ -192,6 +192,10 @@ pub fn get_config_schema(Json(()): Json<()>) -> FnResult<Json<PluginSchema>> {
 // Called when the book is initially added to the library (i : template : ctrl + s)
 #[plugin_fn]
 pub fn scrape_book(Json(input): Json<ScrapeInput>) -> FnResult<Json<ScrapeOutput>> {
+    if input.url.contains("/fail") {
+        return Err(extism_pdk::Error::msg("Plugin fail triggered by template/fail URL").into());
+    }
+
     let title = "Inifine Scroll (Template)".to_string();
     let cover_url = Some(config_value(&input.config, "cover_source", "https://picsum.photos/400/600"));
     let description = Some(
