@@ -181,6 +181,23 @@ impl ScraperRegistry {
             self.call_cached_plugin(domain, wasm_path, "scrape_book", &input_json)?;
         let output: ScrapeOutput = serde_json::from_slice(&output_bytes)?;
 
+        if output.title.is_empty() {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "SCRAPE",
+                &format!("Plugin returned empty title for: {}", url),
+            );
+            return Err("scrape failed: plugin returned empty title".into());
+        }
+        if output.url.is_empty() {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "SCRAPE",
+                &format!("Plugin returned empty URL for: {}", url),
+            );
+            return Err("scrape failed: plugin returned empty URL".into());
+        }
+
         Ok(Book {
             title: output.title,
             url: output.url.clone(),
@@ -217,6 +234,24 @@ impl ScraperRegistry {
         let output_bytes =
             self.call_cached_plugin(domain, wasm_path, "scrape_chapter", &input_json)?;
         let output: ChapterOutput = serde_json::from_slice(&output_bytes)?;
+
+        if output.title.is_empty() {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "SCRAPE",
+                &format!("Plugin returned empty chapter title for: {}", url),
+            );
+            return Err("scrape failed: plugin returned empty chapter title".into());
+        }
+        if output.content.is_empty() {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "SCRAPE",
+                &format!("Plugin returned empty chapter content for: {}", url),
+            );
+            return Err("scrape failed: plugin returned empty chapter content".into());
+        }
+
         Ok((output.title, output.content))
     }
 
@@ -245,9 +280,16 @@ impl ScraperRegistry {
                 UserData::<()>::default(),
                 host_curl_fetch,
             );
+            let fail_fn = Function::new(
+                "scylla_fail",
+                [ValType::I64],
+                [],
+                UserData::<()>::default(),
+                host_scylla_fail,
+            );
             let wasm = Wasm::file(wasm_path);
             let manifest = Manifest::new([wasm]).with_allowed_host("*");
-            let plugin = Plugin::new(&manifest, [curl_fetch_fn], true)?;
+            let plugin = Plugin::new(&manifest, [curl_fetch_fn, fail_fn], true)?;
             cache.push((domain.to_string(), plugin));
             &mut cache.last_mut().unwrap().1
         };
@@ -318,6 +360,21 @@ fn host_curl_fetch(
     let mem = plugin.memory_new(result.as_bytes())?;
     outputs[0] = plugin.memory_to_val(mem);
     Ok(())
+}
+
+fn host_scylla_fail(
+    plugin: &mut CurrentPlugin,
+    inputs: &[Val],
+    _outputs: &mut [Val],
+    _user_data: UserData<()>,
+) -> Result<(), extism::Error> {
+    let msg = plugin.memory_get_val::<String>(&inputs[0])?;
+    crate::settings::log(
+        crate::settings::LogLevel::Debug,
+        "PLUGIN",
+        &format!("Plugin called fail(): {}", msg),
+    );
+    Err(extism::Error::msg(msg))
 }
 
 fn fetch_with_curl(url: &str, cookie_str: &str) -> Result<String, String> {

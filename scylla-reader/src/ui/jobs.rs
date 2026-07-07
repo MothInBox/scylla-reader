@@ -193,19 +193,13 @@ fn render_job_row<'a>(job: &Job, _selected: bool, expanded: bool) -> ListItem<'a
             ))));
         }
         if let Some(e) = &job.error {
-            // Show first 200 chars of error, split on newlines
-            for line in e.lines().take(3) {
-                let truncated = if line.len() > 60 {
-                    format!("{}...", &line[..57])
-                } else {
-                    line.to_string()
-                };
+            for line in e.lines().take(10) {
                 lines.push(Line::from(Span::styled(
-                    format!("  Error: {}", truncated),
+                    format!("  Error: {}", line),
                     Style::default().fg(Color::Red),
                 )));
             }
-            if e.lines().count() > 3 {
+            if e.lines().count() > 10 {
                 lines.push(Line::from(Span::styled(
                     "  ... (more)",
                     Style::default().fg(Color::Red),
