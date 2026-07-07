@@ -60,11 +60,11 @@ pub fn handle_reader(
     match state.settings.reader_mode {
         ReaderMode::Paged => match key.code {
             KEY_NEXT_PAGE => {
-                state.reader.next_page();
+                state.reader.next_page(size.height);
                 true
             }
             KEY_PREV_PAGE => {
-                state.reader.prev_page();
+                state.reader.prev_page(size.height);
                 true
             }
             _ => true,
@@ -86,36 +86,13 @@ pub fn handle_reader(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
-    use crate::library::Library;
     use crate::models::Chapter;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::prelude::Rect;
-
-    fn test_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
-    }
-
-    fn key_event(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn channel() -> (
-        std::sync::mpsc::Sender<AppCommand>,
-        std::sync::mpsc::Receiver<AppCommand>,
-    ) {
-        std::sync::mpsc::channel()
-    }
-
-    fn rect() -> Rect {
-        Rect::new(0, 0, 80, 24)
-    }
+    use crossterm::event::KeyCode;
+    use crate::test_helpers::*;
 
     fn state_with_book_and_chapters() -> AppState {
         let mut state = test_state();
-        state.library.add_book("Test Book".into(), "url".into(), 10);
+        state.library.add_book("Test Book".into(), "url".into());
         state.library.books[0].chapters.extend(vec![
             Chapter {
                 title: "Ch1".into(),

@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn test_open_reader_chapter_with_selected_book() {
         let mut state = test_state();
-        state.library.add_book("Test Book".into(), "url".into(), 10);
+        state.library.add_book("Test Book".into(), "url".into());
         state.open_reader_chapter("Ch1".into(), "content".into(), 0, 1, "default".into());
         assert_eq!(state.current_page, Page::Reader);
         assert_eq!(state.reader.book_title, "Test Book");

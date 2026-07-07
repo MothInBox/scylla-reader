@@ -1,7 +1,5 @@
 //! Reader state — content, paging, scrolling, word-wrap calculations.
 
-use std::cell::Cell;
-
 pub struct ReaderState {
     pub content: Vec<String>,
     pub scroll: usize,
@@ -14,7 +12,6 @@ pub struct ReaderState {
     pub session_id: i64,
     pub session_name: String,
     pub loading: bool,
-    pub total_pages: Cell<usize>,
 }
 
 impl Default for ReaderState {
@@ -37,7 +34,6 @@ impl ReaderState {
             session_id: 0,
             session_name: String::new(),
             loading: false,
-            total_pages: Cell::new(1),
         }
     }
 
@@ -65,7 +61,6 @@ impl ReaderState {
         self.visual_scroll = 0;
         self.page = 0;
         self.current_chapter_idx = chapter_idx;
-        self.total_pages = Cell::new(1);
         self.loading = false;
     }
 
@@ -82,14 +77,10 @@ impl ReaderState {
         let visual_lines: usize = self
             .content
             .iter()
-            .map(|l| Self::wrap_line_count(l, width))
+            .map(|l| crate::textwrap::wrap_line_count(l, width))
             .sum();
         let pages = visual_lines.div_ceil(lpp);
         if pages == 0 { 1 } else { pages }
-    }
-
-    pub fn total_pages(&self, area_height: u16) -> usize {
-        self.total_pages_for(80, area_height)
     }
 
     pub fn page_lines_wrapped(&self, area_width: u16, area_height: u16) -> Vec<String> {
@@ -100,7 +91,7 @@ impl ReaderState {
         let width = area_width as usize;
         let mut vlines: Vec<String> = Vec::new();
         for line in &self.content {
-            let parts = Self::wrap_line(line, width);
+            let parts = crate::textwrap::wrap_line(line, width);
             if parts.is_empty() {
                 vlines.push(String::new());
             } else {
@@ -117,97 +108,13 @@ impl ReaderState {
         vlines[start..end].to_vec()
     }
 
-    fn wrap_line_count(line: &str, width: usize) -> usize {
-        if width == 0 {
-            return 1;
-        }
-        if line.trim().is_empty() {
-            return 1;
-        }
-        let mut count = 0usize;
-        let mut cur = 0usize;
-        for word in line.split_whitespace() {
-            let wlen = word.chars().count();
-            if wlen > width {
-                if cur > 0 {
-                    count += 1;
-                }
-                count += wlen / width;
-                cur = wlen % width;
-                continue;
-            }
-            if cur == 0 {
-                cur = wlen;
-            } else if cur + 1 + wlen <= width {
-                cur += 1 + wlen;
-            } else {
-                count += 1;
-                cur = wlen;
-            }
-        }
-        if cur > 0 {
-            count += 1;
-        }
-        count
-    }
-
-    fn wrap_line(line: &str, width: usize) -> Vec<String> {
-        if width == 0 {
-            return vec![line.to_string()];
-        }
-        if line.trim().is_empty() {
-            return vec![String::new()];
-        }
-        let mut parts: Vec<String> = Vec::new();
-        let mut cur = String::new();
-        let mut cur_len = 0usize;
-        for word in line.split_whitespace() {
-            let wlen = word.chars().count();
-            if wlen > width {
-                if !cur.is_empty() {
-                    parts.push(cur);
-                    cur = String::new();
-                    cur_len = 0;
-                }
-                let mut chars = word.chars().peekable();
-                while chars.peek().is_some() {
-                    let chunk: String = chars.by_ref().take(width).collect();
-                    let chunk_len = chunk.chars().count();
-                    if chunk_len == width {
-                        parts.push(chunk);
-                    } else {
-                        cur = chunk;
-                        cur_len = chunk_len;
-                    }
-                }
-                continue;
-            }
-            if cur.is_empty() {
-                cur.push_str(word);
-                cur_len = wlen;
-            } else if cur_len + 1 + wlen <= width {
-                cur.push(' ');
-                cur.push_str(word);
-                cur_len += 1 + wlen;
-            } else {
-                parts.push(cur);
-                cur = word.to_string();
-                cur_len = wlen;
-            }
-        }
-        if !cur.is_empty() {
-            parts.push(cur);
-        }
-        parts
-    }
-
-    pub fn next_page(&mut self) {
-        if self.page + 1 < self.total_pages.get() {
+    pub fn next_page(&mut self, area_height: u16) {
+        if self.page + 1 < self.total_pages_for(80, area_height) {
             self.page += 1;
         }
     }
 
-    pub fn prev_page(&mut self) {
+    pub fn prev_page(&mut self, _area_height: u16) {
         if self.page > 0 {
             self.page -= 1;
         }
@@ -228,7 +135,7 @@ impl ReaderState {
         let width = area_width as usize;
         self.content
             .iter()
-            .map(|l| Self::wrap_line_count(l, width))
+            .map(|l| crate::textwrap::wrap_line_count(l, width))
             .sum()
     }
 
@@ -252,7 +159,7 @@ impl ReaderState {
         let mut visual_idx = 0usize;
 
         for line in &self.content {
-            let count = Self::wrap_line_count(line, width);
+            let count = crate::textwrap::wrap_line_count(line, width);
 
             // Skip entire wrapped line groups before the scroll window without allocating them.
             if visual_idx + count <= scroll {
@@ -260,7 +167,7 @@ impl ReaderState {
                 continue;
             }
 
-            let mut parts = Self::wrap_line(line, width);
+            let mut parts = crate::textwrap::wrap_line(line, width);
             if parts.is_empty() {
                 parts.push(String::new());
             }
@@ -405,65 +312,65 @@ mod tests {
 
     #[test]
     fn test_wrap_line_count_zero_width() {
-        assert_eq!(ReaderState::wrap_line_count("hello world", 0), 1);
+        assert_eq!(crate::textwrap::wrap_line_count("hello world", 0), 1);
     }
 
     #[test]
     fn test_wrap_line_count_empty_line() {
-        assert_eq!(ReaderState::wrap_line_count("   ", 80), 1);
+        assert_eq!(crate::textwrap::wrap_line_count("   ", 80), 1);
     }
 
     #[test]
     fn test_wrap_line_count_fits() {
-        assert_eq!(ReaderState::wrap_line_count("hello", 80), 1);
+        assert_eq!(crate::textwrap::wrap_line_count("hello", 80), 1);
     }
 
     #[test]
     fn test_wrap_line_count_wraps() {
         let line = "word1 word2 word3 word4 word5";
-        assert_eq!(ReaderState::wrap_line_count(line, 10), 5);
+        assert_eq!(crate::textwrap::wrap_line_count(line, 10), 5);
     }
 
     #[test]
     fn test_wrap_line_count_very_long_word() {
         let long_word = "a".repeat(100);
-        assert_eq!(ReaderState::wrap_line_count(&long_word, 10), 10);
+        assert_eq!(crate::textwrap::wrap_line_count(&long_word, 10), 10);
     }
 
     #[test]
     fn test_wrap_line_zero_width() {
-        let result = ReaderState::wrap_line("hello world", 0);
+        let result = crate::textwrap::wrap_line("hello world", 0);
         assert_eq!(result, vec!["hello world"]);
     }
 
     #[test]
     fn test_wrap_line_blank_line() {
-        let result = ReaderState::wrap_line("   ", 80);
+        let result = crate::textwrap::wrap_line("   ", 80);
         assert_eq!(result, vec![""]);
     }
 
     #[test]
     fn test_wrap_line_fits() {
-        let result = ReaderState::wrap_line("hello world", 80);
+        let result = crate::textwrap::wrap_line("hello world", 80);
         assert_eq!(result, vec!["hello world"]);
     }
 
     #[test]
     fn test_wrap_line_splits() {
-        let result = ReaderState::wrap_line("a b c d e", 3);
+        let result = crate::textwrap::wrap_line("a b c d e", 3);
         assert_eq!(result, vec!["a b", "c d", "e"]);
     }
 
     #[test]
     fn test_wrap_line_single_word_fits() {
-        let result = ReaderState::wrap_line("hello", 10);
+        let result = crate::textwrap::wrap_line("hello", 10);
         assert_eq!(result, vec!["hello"]);
     }
 
     #[test]
     fn test_wrap_line_very_long_word() {
         let long_word = "a".repeat(100);
-        let result = ReaderState::wrap_line(&long_word, 10);
+        let result = crate::textwrap::wrap_line(&long_word, 10);
         assert_eq!(result.len(), 10);
         for line in &result {
             assert_eq!(line.chars().count(), 10);
@@ -514,8 +421,7 @@ mod tests {
                 .join("\n"),
             0,
         );
-        r.total_pages = Cell::new(r.total_pages_for(80, 6));
-        r.next_page();
+        r.next_page(6);
         assert_eq!(r.page, 1);
     }
 
@@ -523,8 +429,7 @@ mod tests {
     fn test_next_page_clamps() {
         let mut r = ReaderState::new();
         r.load("".into(), "".into(), "".into(), "single line".into(), 0);
-        r.total_pages = Cell::new(r.total_pages_for(80, 20));
-        r.next_page();
+        r.next_page(20);
         assert_eq!(r.page, 0);
     }
 
@@ -542,8 +447,7 @@ mod tests {
             0,
         );
         r.page = 2;
-        r.total_pages = Cell::new(r.total_pages_for(80, 6));
-        r.prev_page();
+        r.prev_page(6);
         assert_eq!(r.page, 1);
     }
 
@@ -551,8 +455,7 @@ mod tests {
     fn test_prev_page_clamps() {
         let mut r = ReaderState::new();
         r.load("".into(), "".into(), "".into(), "single line".into(), 0);
-        r.total_pages = Cell::new(r.total_pages_for(80, 20));
-        r.prev_page();
+        r.prev_page(20);
         assert_eq!(r.page, 0);
     }
 
@@ -624,33 +527,17 @@ mod tests {
     }
 
     #[test]
-    fn test_total_pages_delegates() {
-        let mut r = ReaderState::new();
-        r.load(
-            "".into(),
-            "".into(),
-            "".into(),
-            (0..50)
-                .map(|i| format!("line {}", i))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            0,
-        );
-        assert_eq!(r.total_pages(20), 4);
-    }
-
-    #[test]
     fn test_wrap_line_count_matches_actual_wrapped_lines() {
         let line = "this is a test line with several words";
         let width = 10;
-        let count = ReaderState::wrap_line_count(line, width);
-        let wrapped = ReaderState::wrap_line(line, width);
+        let count = crate::textwrap::wrap_line_count(line, width);
+        let wrapped = crate::textwrap::wrap_line(line, width);
         assert_eq!(count, wrapped.len());
 
         let long_line = format!("a small word {} and another", "a".repeat(100));
         let width = 10;
-        let count = ReaderState::wrap_line_count(&long_line, width);
-        let wrapped = ReaderState::wrap_line(&long_line, width);
+        let count = crate::textwrap::wrap_line_count(&long_line, width);
+        let wrapped = crate::textwrap::wrap_line(&long_line, width);
         assert_eq!(count, wrapped.len());
     }
 }

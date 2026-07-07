@@ -42,7 +42,6 @@ fn draw_no_book(frame: &mut Frame, area: Rect) {
 }
 
 fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
-    state.reader.total_pages.set(state.reader.total_pages_for(area.width, area.height));
     let hint_height: u16 = if state.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -169,7 +168,7 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
-        state.library.add_book("Test Book".into(), "url".into(), 10);
+        state.library.add_book("Test Book".into(), "url".into());
         state.reader.load(
             "Test Book".into(),
             "url".into(),
