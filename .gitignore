@@ -6,6 +6,10 @@ target
 
 *.pdb
 *superpowers*
+*opencode*
+*claude*
+*agents*
+*AGENTS*
 
 **/mutants.out*/
 rustc-ice-*.txt

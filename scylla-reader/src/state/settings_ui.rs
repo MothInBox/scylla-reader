@@ -13,6 +13,12 @@ pub struct SettingsUiState {
     pub log_lines: Vec<String>,
 }
 
+impl Default for SettingsUiState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SettingsUiState {
     pub fn new() -> Self {
         Self {

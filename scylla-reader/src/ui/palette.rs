@@ -1,6 +1,6 @@
 use crate::messenger::AppCommand;
 use crate::state::palette_action::PaletteAction;
-use crate::state::{AppState, Modal, Page};
+use crate::state::{Modal, Page, UiState};
 use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
@@ -13,21 +13,21 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             category: "Navigation",
             label: "Go to Library",
             keys: "1", // KEY_LIBRARY
-            handler: |s, _| s.current_page = Page::Library,
+            handler: |s, _| s.ui.page = Page::Library,
         },
         PaletteAction {
             category: "Navigation",
             label: "Go to Reader",
             keys: "2", // KEY_READER
             handler: |s, _| {
-                s.current_page = Page::Reader;
+                s.ui.page = Page::Reader;
             },
         },
         PaletteAction {
             category: "Navigation",
             label: "Go to Settings",
             keys: "3", // KEY_SETTINGS
-            handler: |s, _| s.current_page = Page::Settings,
+            handler: |s, _| s.ui.page = Page::Settings,
         },
         // Library actions
         PaletteAction {
@@ -35,12 +35,12 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             label: "Add Book",
             keys: "i", // KEY_ADD_BOOK
             handler: |s, _| {
-                s.modal = Modal::AddBook {
+                s.ui.modal = Modal::AddBook {
                     inputs: vec![String::new()],
                     cursor: 0,
                     scroll_offset: 0,
                 };
-                s.current_page = Page::AddingBook;
+                s.ui.page = Page::AddingBook;
             },
         },
         PaletteAction {
@@ -48,8 +48,8 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             label: "Jump Chapter",
             keys: "j", // KEY_JUMP_CHAPTER
             handler: |s, _| {
-                if let Some(b) = s.library.selected_book() {
-                    s.modal = Modal::JumpChapter {
+                if let Some(b) = s.lib.library.selected_book() {
+                    s.ui.modal = Modal::JumpChapter {
                         chapters: b.chapters.clone(),
                         query: String::new(),
                         filtered: b.chapters.clone(),
@@ -57,7 +57,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
                         scroll_offset: 0,
                         show_titles: true,
                     };
-                    s.current_page = Page::BookChapterJump;
+                    s.ui.page = Page::BookChapterJump;
                 }
             },
         },
@@ -67,7 +67,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             keys: "u", // KEY_UPDATE_ALL
             handler: |s, tx| {
                 let urls: Vec<String> = s
-                    .library
+                    .lib.library
                     .books
                     .iter()
                     .map(|b| b.url.clone())
@@ -83,7 +83,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             label: "Delete Book",
             keys: "d", // KEY_DELETE
             handler: |s, _| {
-                s.library.remove_selected();
+                s.lib.library.remove_selected();
             },
         },
         PaletteAction {
@@ -91,7 +91,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             label: "Cycle Filter",
             keys: "f", // KEY_CYCLE_FILTER
             handler: |s, _| {
-                s.library.cycle_filter();
+                s.lib.library.cycle_filter();
             },
         },
         PaletteAction {
@@ -99,7 +99,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             label: "Cycle Status",
             keys: "Space", // KEY_CYCLE_STATUS
             handler: |s, _| {
-                s.library.cycle_selected_status();
+                s.lib.library.cycle_selected_status();
             },
         },
         // Reader actions
@@ -108,7 +108,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             label: "Next Chapter",
             keys: ">", // KEY_NEXT_CHAPTER
             handler: |s, tx| {
-                if let Some(b) = s.library.selected_book() {
+                if let Some(b) = s.lib.library.selected_book() {
                     let next = s.reader.current_chapter_idx + 1;
                     if let Some(ch) = b.chapters.get(next) {
                         s.reader.loading = true;
@@ -122,7 +122,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             label: "Previous Chapter",
             keys: "<", // KEY_PREV_CHAPTER
             handler: |s, tx| {
-                if let Some(b) = s.library.selected_book() {
+                if let Some(b) = s.lib.library.selected_book() {
                     let prev = s.reader.current_chapter_idx.saturating_sub(1);
                     if prev != s.reader.current_chapter_idx
                         && let Some(ch) = b.chapters.get(prev)
@@ -138,7 +138,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             label: "Toggle Paged/Scrollable",
             keys: "",
             handler: |s, _| {
-                s.settings.reader_mode = s.settings.reader_mode.toggle();
+                s.lib.settings.reader_mode = s.lib.settings.reader_mode.toggle();
             },
         },
         // Settings
@@ -146,15 +146,15 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             category: "Settings",
             label: "Open Settings",
             keys: "3", // KEY_SETTINGS
-            handler: |s, _| s.current_page = Page::Settings,
+            handler: |s, _| s.ui.page = Page::Settings,
         },
         PaletteAction {
             category: "Settings",
             label: "Toggle Debug Log",
             keys: "",
             handler: |s, _| {
-                s.settings.debug_log = !s.settings.debug_log;
-                crate::settings::set_debug(s.settings.debug_log);
+                s.lib.settings.debug_log = !s.lib.settings.debug_log;
+                crate::settings::set_debug(s.lib.settings.debug_log);
             },
         },
         PaletteAction {
@@ -162,8 +162,8 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             label: "Plugin Configs",
             keys: "",
             handler: |s, _| {
-                s.settings.reload_plugins();
-                s.settings_ui.settings_page = crate::settings::SettingsPage::PluginList;
+                s.lib.settings.reload_plugins();
+                s.lib.settings_ui.settings_page = crate::settings::SettingsPage::PluginList;
             },
         },
         // Plugins
@@ -172,12 +172,12 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             label: "Install Plugin from GitHub",
             keys: "",
             handler: |s, _| {
-                s.modal = Modal::InstallPlugin {
+                s.ui.modal = Modal::InstallPlugin {
                     url: String::new(),
                     cursor: 0,
                     scroll_offset: 0,
                 };
-                s.current_page = Page::InstallingPlugin;
+                s.ui.page = Page::InstallingPlugin;
             },
         },
         // Debug
@@ -185,7 +185,7 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             category: "Debug",
             label: "Reload Log",
             keys: "",
-            handler: |s, _| s.settings_ui.reload_log(),
+            handler: |s, _| s.lib.settings_ui.reload_log(),
         },
     ]
 }
@@ -206,12 +206,12 @@ pub fn filter_actions(actions: &[PaletteAction], query: &str) -> Vec<PaletteActi
         .collect()
 }
 
-pub fn draw_palette(frame: &mut Frame, area: Rect, state: &AppState) {
+pub fn draw_palette(frame: &mut Frame, area: Rect, ui: &UiState) {
     if let Modal::CommandPalette {
         query,
         filtered,
         selected,
-    } = &state.modal
+    } = &ui.modal
     {
         let popup_area = centered_rect(60, 40, area);
         frame.render_widget(Clear, popup_area);
@@ -288,7 +288,7 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
-        state.modal = Modal::CommandPalette {
+        state.ui.modal = Modal::CommandPalette {
             query: "test".into(),
             filtered: vec![],
             selected: 0,
@@ -298,7 +298,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw_palette(f, f.area(), &state);
+                draw_palette(f, f.area(), &state.ui);
             })
             .unwrap();
     }

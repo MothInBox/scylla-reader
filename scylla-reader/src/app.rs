@@ -45,11 +45,11 @@ impl App {
 
         let mut state = AppState::new();
         for book in state.db.load_books().unwrap_or_default() {
-            state.library.books.push(book);
+            state.lib.library.books.push(book);
         }
 
-        let max_workers = state.settings.max_workers;
-        let rate_limit = state.settings.rate_limit_secs;
+        let max_workers = state.lib.settings.max_workers;
+        let rate_limit = state.lib.settings.rate_limit_secs;
 
         Self::spawn_worker_thread(
             cmd_rx, event_tx, registry,
@@ -172,34 +172,34 @@ mod tests {
     #[test]
     fn test_global_key_1_switches_to_library() {
         let mut state = test_state();
-        state.current_page = Page::Reader;
+        state.ui.page = Page::Reader;
         let (tx, _rx) = mpsc::channel();
         key_handler::handle_key(&mut state, key_event(KEY_LIBRARY), &tx, Rect::default());
-        assert_eq!(state.current_page, Page::Library);
+        assert_eq!(state.ui.page, Page::Library);
     }
 
     #[test]
     fn test_global_key_2_switches_to_reader() {
         let mut state = test_state();
-        state.current_page = Page::Library;
+        state.ui.page = Page::Library;
         let (tx, _rx) = mpsc::channel();
         key_handler::handle_key(&mut state, key_event(KEY_READER), &tx, Rect::default());
-        assert_eq!(state.current_page, Page::Reader);
+        assert_eq!(state.ui.page, Page::Reader);
     }
 
     #[test]
     fn test_global_key_3_switches_to_settings() {
         let mut state = test_state();
-        state.current_page = Page::Library;
+        state.ui.page = Page::Library;
         let (tx, _rx) = mpsc::channel();
         key_handler::handle_key(&mut state, key_event(KEY_SETTINGS), &tx, Rect::default());
-        assert_eq!(state.current_page, Page::Settings);
+        assert_eq!(state.ui.page, Page::Settings);
     }
 
     #[test]
     fn test_colon_opens_command_palette() {
         let mut state = test_state();
-        assert_eq!(state.modal, Modal::None);
+        assert_eq!(state.ui.modal, Modal::None);
         let (tx, _rx) = mpsc::channel();
         key_handler::handle_key(
             &mut state,
@@ -207,50 +207,50 @@ mod tests {
             &tx,
             Rect::default(),
         );
-        assert!(matches!(state.modal, Modal::CommandPalette { .. }));
+        assert!(matches!(state.ui.modal, Modal::CommandPalette { .. }));
     }
 
     #[test]
     fn test_question_toggles_hints() {
         let mut state = test_state();
         let (tx, _rx) = mpsc::channel();
-        let initial = state.show_hints;
+        let initial = state.ui.show_hints;
         key_handler::handle_key(
             &mut state,
             key_event(KEY_TOGGLE_HINTS),
             &tx,
             Rect::default(),
         );
-        assert_eq!(state.show_hints, !initial);
+        assert_eq!(state.ui.show_hints, !initial);
         key_handler::handle_key(
             &mut state,
             key_event(KEY_TOGGLE_HINTS),
             &tx,
             Rect::default(),
         );
-        assert_eq!(state.show_hints, initial);
+        assert_eq!(state.ui.show_hints, initial);
     }
 
     #[test]
     fn test_esc_closes_modal() {
         let mut state = test_state();
-        state.modal = Modal::CommandPalette {
+        state.ui.modal = Modal::CommandPalette {
             query: "".into(),
             filtered: vec![],
             selected: 0,
         };
-        state.current_page = Page::AddingBook;
+        state.ui.page = Page::AddingBook;
         let (tx, _rx) = mpsc::channel();
         let result =
             key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
         assert!(result);
-        assert_eq!(state.modal, Modal::None);
+        assert_eq!(state.ui.modal, Modal::None);
     }
 
     #[test]
     fn test_esc_quits_from_library() {
         let mut state = test_state();
-        state.current_page = Page::Library;
+        state.ui.page = Page::Library;
         let (tx, _rx) = mpsc::channel();
         let result =
             key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn test_esc_quits_from_any_page() {
         let mut state = test_state();
-        state.current_page = Page::Settings;
+        state.ui.page = Page::Settings;
         let (tx, _rx) = mpsc::channel();
         let result =
             key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn test_colon_does_not_open_palette_when_modal_open() {
         let mut state = test_state();
-        state.modal = Modal::AddBook {
+        state.ui.modal = Modal::AddBook {
             inputs: vec![String::new()],
             cursor: 0,
             scroll_offset: 0,
@@ -282,20 +282,20 @@ mod tests {
             &tx,
             Rect::default(),
         );
-        assert!(matches!(state.modal, Modal::AddBook { .. }));
+        assert!(matches!(state.ui.modal, Modal::AddBook { .. }));
     }
 
     #[test]
     fn test_global_key_does_not_switch_page_when_modal_open() {
         let mut state = test_state();
-        state.current_page = Page::Library;
-        state.modal = Modal::AddBook {
+        state.ui.page = Page::Library;
+        state.ui.modal = Modal::AddBook {
             inputs: vec![String::new()],
             cursor: 0,
             scroll_offset: 0,
         };
         let (tx, _rx) = mpsc::channel();
         key_handler::handle_key(&mut state, key_event(KEY_READER), &tx, Rect::default());
-        assert_eq!(state.current_page, Page::Library);
+        assert_eq!(state.ui.page, Page::Library);
     }
 }

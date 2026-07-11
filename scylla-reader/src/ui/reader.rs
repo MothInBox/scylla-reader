@@ -1,23 +1,23 @@
 //! Reader page renderer — paged and scrollable modes.
 
 use crate::settings::ReaderMode;
-use crate::state::AppState;
+use crate::state::{LibraryState, ReaderState, UiState};
 use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
-    if state.reader.loading {
+pub fn draw(frame: &mut Frame, area: Rect, reader: &ReaderState, lib: &LibraryState, ui: &UiState) {
+    if reader.loading {
         draw_loading(frame, area);
         return;
     }
-    if state.library.selected_book().is_none() {
+    if lib.library.selected_book().is_none() {
         draw_no_book(frame, area);
         return;
     }
-    match state.settings.reader_mode {
-        ReaderMode::Paged => draw_paged(frame, area, state),
-        ReaderMode::Scrollable => draw_scrollable(frame, area, state),
+    match lib.settings.reader_mode {
+        ReaderMode::Paged => draw_paged(frame, area, reader, lib, ui),
+        ReaderMode::Scrollable => draw_scrollable(frame, area, reader, lib, ui),
     }
 }
 
@@ -41,8 +41,8 @@ fn draw_no_book(frame: &mut Frame, area: Rect) {
     frame.render_widget(para, area);
 }
 
-fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
-    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
+fn draw_paged(frame: &mut Frame, area: Rect, reader: &ReaderState, _lib: &LibraryState, ui: &UiState) {
+    let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -52,23 +52,22 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
         ])
         .split(area);
 
-    let session_label = if state.reader.session_name.is_empty() {
+    let session_label = if reader.session_name.is_empty() {
         String::new()
     } else {
-        format!(" [Session: {}]", state.reader.session_name)
+        format!(" [Session: {}]", reader.session_name)
     };
     let header = Paragraph::new(format!(
         " {} — Ch.{} {}{}",
-        state.reader.book_title,
-        state.reader.current_chapter_idx + 1,
-        state.reader.chapter_title,
+        reader.book_title,
+        reader.current_chapter_idx + 1,
+        reader.chapter_title,
         session_label,
     ))
     .style(Style::default().fg(Color::Yellow));
     frame.render_widget(header, chunks[0]);
 
-    let lines = state
-        .reader
+    let lines = reader
         .page_lines_wrapped(chunks[1].width, chunks[1].height);
     let content = lines.join("\n");
     let block = Block::default().borders(Borders::LEFT);
@@ -76,7 +75,7 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
         .block(block)
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, chunks[1]);
-    if state.show_hints {
+    if ui.show_hints {
         let hint_area = chunks[2];
         let hint_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -99,8 +98,8 @@ fn draw_paged(frame: &mut Frame, area: Rect, state: &AppState) {
     }
 }
 
-fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
-    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
+fn draw_scrollable(frame: &mut Frame, area: Rect, reader: &ReaderState, _lib: &LibraryState, ui: &UiState) {
+    let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -110,30 +109,29 @@ fn draw_scrollable(frame: &mut Frame, area: Rect, state: &AppState) {
         ])
         .split(area);
 
-    let session_label = if state.reader.session_name.is_empty() {
+    let session_label = if reader.session_name.is_empty() {
         String::new()
     } else {
-        format!(" [Session: {}]", state.reader.session_name)
+        format!(" [Session: {}]", reader.session_name)
     };
     let header = Paragraph::new(format!(
         " {} — Ch.{} {}{}",
-        state.reader.book_title,
-        state.reader.current_chapter_idx + 1,
-        state.reader.chapter_title,
+        reader.book_title,
+        reader.current_chapter_idx + 1,
+        reader.chapter_title,
         session_label,
     ))
     .style(Style::default().fg(Color::Yellow));
     frame.render_widget(header, chunks[0]);
 
-    let lines = state
-        .reader
+    let lines = reader
         .visible_wrapped_lines(chunks[1].width, chunks[1].height);
     let content = lines.join("\n");
     let block = Block::default().borders(Borders::LEFT);
     let paragraph = Paragraph::new(content).block(block);
     frame.render_widget(paragraph, chunks[1]);
 
-    if state.show_hints {
+    if ui.show_hints {
         let hint_area = chunks[2];
         let hint_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -161,6 +159,7 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use crate::library::Library;
+    use crate::state::AppState;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -168,7 +167,7 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
-        state.library.add_book("Test Book".into(), "url".into());
+        state.lib.library.add_book("Test Book".into(), "url".into());
         state.reader.load(
             "Test Book".into(),
             "url".into(),
@@ -182,13 +181,13 @@ mod tests {
     #[test]
     fn test_reader_draw_shows_hints_when_enabled() {
         let mut state = state_with_reader_content();
-        state.show_hints = true;
+        state.ui.show_hints = true;
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &state);
+                draw(f, f.area(), &state.reader, &state.lib, &state.ui);
             })
             .unwrap();
 
@@ -200,13 +199,13 @@ mod tests {
     #[test]
     fn test_reader_draw_shows_content() {
         let mut state = state_with_reader_content();
-        state.show_hints = false;
+        state.ui.show_hints = false;
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &state);
+                draw(f, f.area(), &state.reader, &state.lib, &state.ui);
             })
             .unwrap();
 
@@ -219,13 +218,13 @@ mod tests {
     #[test]
     fn test_reader_draw_hides_hints_when_disabled() {
         let mut state = state_with_reader_content();
-        state.show_hints = false;
+        state.ui.show_hints = false;
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &state);
+                draw(f, f.area(), &state.reader, &state.lib, &state.ui);
             })
             .unwrap();
 

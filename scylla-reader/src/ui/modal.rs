@@ -1,21 +1,21 @@
 //! Modal popup renderer — add-book form and jump-to-chapter list.
 
 use crate::models::Session;
-use crate::state::AppState;
 use crate::state::modal::Modal;
+use crate::state::{LibraryState, UiState};
 use crate::ui::palette::draw_palette;
 use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 
-pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    if matches!(state.modal, Modal::CommandPalette { .. }) {
-        draw_palette(frame, area, state);
+pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut LibraryState) {
+    if matches!(ui.modal, Modal::CommandPalette { .. }) {
+        draw_palette(frame, area, ui);
         return;
     }
 
-    match &mut state.modal {
+    match &mut ui.modal {
         Modal::None => {}
         Modal::AddBook {
             inputs,
@@ -91,7 +91,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, state: &mut AppState) {
             let popup_area = centered_rect(60, 50, area);
             frame.render_widget(Clear, popup_area);
 
-            let sessions: Vec<Session> = state
+            let sessions: Vec<Session> = lib
                 .library
                 .books
                 .iter()
@@ -258,6 +258,7 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use crate::library::Library;
+    use crate::state::AppState;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -272,7 +273,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw_modal(f, f.area(), state);
+                draw_modal(f, f.area(), &mut state.ui, &mut state.lib);
             })
             .unwrap();
     }
@@ -280,7 +281,7 @@ mod tests {
     #[test]
     fn test_draw_modal_command_palette_renders() {
         let mut state = make_state();
-        state.modal = Modal::CommandPalette {
+        state.ui.modal = Modal::CommandPalette {
             query: "test".into(),
             filtered: vec![],
             selected: 0,
@@ -291,7 +292,7 @@ mod tests {
     #[test]
     fn test_draw_modal_add_book_renders() {
         let mut state = make_state();
-        state.modal = Modal::AddBook {
+        state.ui.modal = Modal::AddBook {
             inputs: vec!["http://example.com".into()],
             cursor: 0,
             scroll_offset: 0,
@@ -302,7 +303,7 @@ mod tests {
     #[test]
     fn test_draw_modal_jump_chapter_renders() {
         let mut state = make_state();
-        state.modal = Modal::JumpChapter {
+        state.ui.modal = Modal::JumpChapter {
             chapters: vec![],
             query: "search".into(),
             filtered: vec![],
@@ -316,8 +317,8 @@ mod tests {
     #[test]
     fn test_draw_modal_session_picker_renders() {
         let mut state = make_state();
-        state.library.add_book("Test Book".into(), "http://example.com/book".into());
-        state.modal = Modal::SessionPicker {
+        state.lib.library.add_book("Test Book".into(), "http://example.com/book".into());
+        state.ui.modal = Modal::SessionPicker {
             book_url: "http://example.com/book".into(),
             cursor: 0,
             scroll_offset: 0,
@@ -331,8 +332,8 @@ mod tests {
     #[test]
     fn test_draw_modal_session_picker_pending_delete_renders() {
         let mut state = make_state();
-        state.library.add_book("Test Book".into(), "http://example.com/book".into());
-        state.modal = Modal::SessionPicker {
+        state.lib.library.add_book("Test Book".into(), "http://example.com/book".into());
+        state.ui.modal = Modal::SessionPicker {
             book_url: "http://example.com/book".into(),
             cursor: 0,
             scroll_offset: 0,
@@ -346,7 +347,7 @@ mod tests {
     #[test]
     fn test_draw_modal_none_does_not_panic() {
         let mut state = make_state();
-        state.modal = Modal::None;
+        state.ui.modal = Modal::None;
         draw_modal_with(&mut state);
     }
 }

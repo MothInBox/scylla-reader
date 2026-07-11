@@ -1,11 +1,11 @@
 use crate::models::job::{Job, JobOutcome, JobStatus};
-use crate::state::AppState;
+use crate::state::{JobsState, UiState};
 use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
-pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    let hint_height: u16 = if state.show_hints { 4 } else { 1 };
+pub fn draw(frame: &mut Frame, area: Rect, jobs: &mut JobsState, ui: &UiState) {
+    let hint_height: u16 = if ui.show_hints { 4 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -18,7 +18,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // Header bar
     let header = format!(
         " Jobs                      Workers: {}/{}  [+][-]",
-        state.jobs_state.active_count, state.jobs_state.max_workers,
+        jobs.active_count, jobs.max_workers,
     );
     frame.render_widget(
         Paragraph::new(header).style(Style::default().fg(Color::Cyan)),
@@ -30,22 +30,22 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let inner = block.inner(chunks[1]);
     frame.render_widget(block, chunks[1]);
 
-    let filtered_indices = state.jobs_state.filtered_jobs();
+    let filtered_indices = jobs.filtered_jobs();
     let items: Vec<ListItem> = filtered_indices
         .iter()
         .map(|&i| {
-            let job = &state.jobs_state.jobs[i];
+            let job = &jobs.jobs[i];
             let is_selected = filtered_indices
-                .get(state.jobs_state.selected)
+                .get(jobs.selected)
                 .map(|&si| si == i)
                 .unwrap_or(false);
-            let is_expanded = state.jobs_state.detail_expanded == Some(i);
+            let is_expanded = jobs.detail_expanded == Some(i);
             render_job_row(job, is_selected, is_expanded)
         })
         .collect();
 
     let mut list_state = ratatui::widgets::ListState::default();
-    list_state.select(Some(state.jobs_state.selected));
+    list_state.select(Some(jobs.selected));
 
     let list = List::new(items)
         .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
@@ -54,7 +54,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
     frame.render_stateful_widget(list, inner, &mut list_state);
 
     // Footer hints
-    if state.show_hints {
+    if ui.show_hints {
         let hint_area = chunks[2];
         let hint_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -68,27 +68,23 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
         let filter_status = format!(
             " [{}]  {} queued | {} running | {} failed | {} completed",
-            state.jobs_state.filter,
-            state
-                .jobs_state
+            jobs.filter,
+            jobs
                 .jobs
                 .iter()
                 .filter(|j| matches!(j.status, JobStatus::Queued))
                 .count(),
-            state
-                .jobs_state
+            jobs
                 .jobs
                 .iter()
                 .filter(|j| matches!(j.status, JobStatus::Running))
                 .count(),
-            state
-                .jobs_state
+            jobs
                 .jobs
                 .iter()
                 .filter(|j| matches!(j.status, JobStatus::Failed(_)))
                 .count(),
-            state
-                .jobs_state
+            jobs
                 .jobs
                 .iter()
                 .filter(|j| matches!(j.status, JobStatus::Completed | JobStatus::Cancelled))
@@ -170,7 +166,7 @@ fn render_job_row<'a>(job: &Job, _selected: bool, expanded: bool) -> ListItem<'a
         job.kind.label(),
         job.target,
         match &job.status {
-            JobStatus::Failed(_e) => format!("FAILED"),
+            JobStatus::Failed(_e) => "FAILED".to_string(),
             _ => format!("{:?}", job.status),
         },
         elapsed,

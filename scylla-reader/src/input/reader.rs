@@ -18,7 +18,7 @@ pub fn handle_reader(
     match (key.modifiers, key.code) {
         (_, KEY_NEXT_CHAPTER) => {
             if !state.reader.loading
-                && let Some(book) = state.library.selected_book() {
+                && let Some(book) = state.lib.library.selected_book() {
                     let next_idx = state.reader.current_chapter_idx.saturating_add(1);
                     if let Some(ch) = book.chapters.get(next_idx) {
                         let url = ch.url.clone();
@@ -30,7 +30,7 @@ pub fn handle_reader(
         }
         (_, KEY_PREV_CHAPTER) => {
             if !state.reader.loading
-                && let Some(book) = state.library.selected_book() {
+                && let Some(book) = state.lib.library.selected_book() {
                     let prev_idx = state.reader.current_chapter_idx.saturating_sub(1);
                     if prev_idx != state.reader.current_chapter_idx
                         && let Some(ch) = book.chapters.get(prev_idx) {
@@ -42,8 +42,8 @@ pub fn handle_reader(
             return true;
         }
         (_, KEY_MANAGE_SESSIONS) => {
-            if let Some(book) = state.library.selected_book() {
-                state.modal = Modal::SessionPicker {
+            if let Some(book) = state.lib.library.selected_book() {
+                state.ui.modal = Modal::SessionPicker {
                     book_url: book.url.clone(),
                     cursor: 0,
                     scroll_offset: 0,
@@ -57,7 +57,7 @@ pub fn handle_reader(
         _ => {}
     }
 
-    match state.settings.reader_mode {
+    match state.lib.settings.reader_mode {
         ReaderMode::Paged => match key.code {
             KEY_NEXT_PAGE => {
                 state.reader.next_page(size.height);
@@ -92,8 +92,8 @@ mod tests {
 
     fn state_with_book_and_chapters() -> AppState {
         let mut state = test_state();
-        state.library.add_book("Test Book".into(), "url".into());
-        state.library.books[0].chapters.extend(vec![
+        state.lib.library.add_book("Test Book".into(), "url".into());
+        state.lib.library.books[0].chapters.extend(vec![
             Chapter {
                 title: "Ch1".into(),
                 url: "url-1".into(),
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn test_handle_reader_paged_mode_unhandled_key() {
         let mut state = test_state();
-        state.settings.reader_mode = crate::settings::ReaderMode::Paged;
+        state.lib.settings.reader_mode = crate::settings::ReaderMode::Paged;
         let (tx, _rx) = channel();
         let result = handle_reader(&mut state, key_event(KeyCode::Char('z')), &tx, rect());
         assert!(result);
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn test_handle_reader_scrollable_down() {
         let mut state = test_state();
-        state.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
+        state.lib.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
         state.reader.load(
             "Book".into(),
             "url".into(),
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn test_handle_reader_scrollable_up() {
         let mut state = test_state();
-        state.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
+        state.lib.settings.reader_mode = crate::settings::ReaderMode::Scrollable;
         state.reader.load(
             "Book".into(),
             "url".into(),

@@ -2,32 +2,33 @@
 
 use crate::input::keybinds::*;
 use crate::messenger::AppCommand;
-use crate::state::{AppState, Modal, Page};
+use crate::state::{UiState, LibraryState, Modal, Page};
 use crossterm::event::KeyEvent;
 
 pub fn handle_library(
-    state: &mut AppState,
+    ui: &mut UiState,
+    lib: &mut LibraryState,
     key: KeyEvent,
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
     match key.code {
         KEY_ADD_BOOK => {
-            state.modal = Modal::AddBook {
+            ui.modal = Modal::AddBook {
                 inputs: vec![String::new()],
                 cursor: 0,
                 scroll_offset: 0,
             };
-            state.current_page = Page::AddingBook;
+            ui.page = Page::AddingBook;
             true
         }
         KEY_JUMP_CHAPTER => {
-            if let Some(book) = state.library.selected_book() {
+            if let Some(book) = lib.library.selected_book() {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
                     "INPUT",
                     &format!("Adding Book {} to modal", book.title),
                 );
-                state.modal = Modal::JumpChapter {
+                ui.modal = Modal::JumpChapter {
                     chapters: book.chapters.clone(),
                     query: String::new(),
                     filtered: book.chapters.clone(),
@@ -35,25 +36,25 @@ pub fn handle_library(
                     scroll_offset: 0,
                     show_titles: true,
                 };
-                state.current_page = Page::BookChapterJump;
+                ui.page = Page::BookChapterJump;
             }
             true
         }
         KEY_DELETE => {
-            state.library.remove_selected();
+            lib.library.remove_selected();
             true
         }
         KEY_CYCLE_STATUS => {
-            state.library.cycle_selected_status();
+            lib.library.cycle_selected_status();
             true
         }
         KEY_CYCLE_FILTER => {
-            state.library.cycle_filter();
+            lib.library.cycle_filter();
             true
         }
         KEY_SESSIONS => {
-            if let Some(book) = state.library.selected_book() {
-                state.modal = Modal::SessionPicker {
+            if let Some(book) = lib.library.selected_book() {
+                ui.modal = Modal::SessionPicker {
                     book_url: book.url.clone(),
                     cursor: 0,
                     scroll_offset: 0,
@@ -65,8 +66,7 @@ pub fn handle_library(
             true
         }
         KEY_UPDATE_ALL => {
-            let urls: Vec<String> = state
-                .library
+            let urls: Vec<String> = lib.library
                 .books
                 .iter()
                 .map(|b| b.url.clone())
@@ -89,16 +89,16 @@ pub fn handle_library(
             true
         }
         KEY_NAV_DOWN => {
-            let visible_len = state.library.visible_indices().len();
+            let visible_len = lib.library.visible_indices().len();
             if visible_len > 0 {
-                state.library.selected_index =
-                    (state.library.selected_index + 1).min(visible_len - 1);
+                lib.library.selected_index =
+                    (lib.library.selected_index + 1).min(visible_len - 1);
             }
             true
         }
         KEY_NAV_UP => {
-            if !state.library.visible_indices().is_empty() {
-                state.library.selected_index = state.library.selected_index.saturating_sub(1);
+            if !lib.library.visible_indices().is_empty() {
+                lib.library.selected_index = lib.library.selected_index.saturating_sub(1);
             }
             true
         }
@@ -112,6 +112,7 @@ mod tests {
     use crate::library::LibraryFilter;
     use crate::models::Chapter;
     use crate::models::book::BookStatus;
+    use crate::state::Page;
     use crossterm::event::KeyCode;
     use crate::test_helpers::*;
 
@@ -119,11 +120,11 @@ mod tests {
     fn test_handle_library_i_opens_add_book() {
         let mut state = test_state();
         let (tx, _rx) = channel();
-        let result = handle_library(&mut state, key_event(KEY_ADD_BOOK), &tx);
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_ADD_BOOK), &tx);
         assert!(result);
-        assert_eq!(state.current_page, Page::AddingBook);
+        assert_eq!(state.ui.page, Page::AddingBook);
         assert_eq!(
-            state.modal,
+            state.ui.modal,
             Modal::AddBook {
                 inputs: vec![String::new()],
                 cursor: 0,
@@ -135,18 +136,18 @@ mod tests {
     #[test]
     fn test_handle_library_j_opens_jump_chapter() {
         let mut state = test_state();
-        state.library.add_book("Test".into(), "url".into());
-        state.library.books[0].chapters.push(Chapter {
+        state.lib.library.add_book("Test".into(), "url".into());
+        state.lib.library.books[0].chapters.push(Chapter {
             title: "Ch1".into(),
             url: "u1".into(),
             order: 0,
         });
         let (tx, _rx) = channel();
-        let result = handle_library(&mut state, key_event(KEY_JUMP_CHAPTER), &tx);
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_JUMP_CHAPTER), &tx);
         assert!(result);
-        assert_eq!(state.current_page, Page::BookChapterJump);
+        assert_eq!(state.ui.page, Page::BookChapterJump);
         assert_eq!(
-            state.modal,
+            state.ui.modal,
             Modal::JumpChapter {
                 chapters: vec![Chapter {
                     title: "Ch1".into(),
@@ -169,10 +170,10 @@ mod tests {
     #[test]
     fn test_handle_library_u_updates_all() {
         let mut state = test_state();
-        state.library.add_book("A".into(), "url-a".into());
-        state.library.add_book("B".into(), "url-b".into());
+        state.lib.library.add_book("A".into(), "url-a".into());
+        state.lib.library.add_book("B".into(), "url-b".into());
         let (tx, rx) = channel();
-        let result = handle_library(&mut state, key_event(KEY_UPDATE_ALL), &tx);
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_UPDATE_ALL), &tx);
         assert!(result);
         match rx.try_recv() {
             Ok(AppCommand::UpdateAll(urls)) => {
@@ -185,23 +186,23 @@ mod tests {
     #[test]
     fn test_handle_library_d_deletes() {
         let mut state = test_state();
-        state.library.add_book("Test".into(), "url".into());
-        assert_eq!(state.library.books.len(), 1);
+        state.lib.library.add_book("Test".into(), "url".into());
+        assert_eq!(state.lib.library.books.len(), 1);
         let (tx, _rx) = channel();
-        let result = handle_library(&mut state, key_event(KEY_DELETE), &tx);
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_DELETE), &tx);
         assert!(result);
-        assert_eq!(state.library.books.len(), 0);
+        assert_eq!(state.lib.library.books.len(), 0);
     }
 
     #[test]
     fn test_handle_library_f_cycles_filter() {
         let mut state = test_state();
-        assert_eq!(state.library.filter, LibraryFilter::All);
+        assert_eq!(state.lib.library.filter, LibraryFilter::All);
         let (tx, _rx) = channel();
-        let result = handle_library(&mut state, key_event(KEY_CYCLE_FILTER), &tx);
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_CYCLE_FILTER), &tx);
         assert!(result);
         assert_eq!(
-            state.library.filter,
+            state.lib.library.filter,
             LibraryFilter::ByStatus(BookStatus::Reading)
         );
     }
@@ -209,69 +210,69 @@ mod tests {
     #[test]
     fn test_handle_library_space_cycles_status() {
         let mut state = test_state();
-        state.library.add_book("Test".into(), "url".into());
-        assert_eq!(state.library.books[0].status, BookStatus::Reading);
+        state.lib.library.add_book("Test".into(), "url".into());
+        assert_eq!(state.lib.library.books[0].status, BookStatus::Reading);
         let (tx, _rx) = channel();
-        let result = handle_library(&mut state, key_event(KEY_CYCLE_STATUS), &tx);
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_CYCLE_STATUS), &tx);
         assert!(result);
-        assert_eq!(state.library.books[0].status, BookStatus::Paused);
+        assert_eq!(state.lib.library.books[0].status, BookStatus::Paused);
     }
 
     #[test]
     fn test_handle_library_enter_opens_session_picker() {
         let mut state = test_state();
-        state.library.add_book("Test".into(), "url".into());
+        state.lib.library.add_book("Test".into(), "url".into());
         let (tx, _rx) = channel();
-        let result = handle_library(&mut state, key_event(KEY_SESSIONS), &tx);
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_SESSIONS), &tx);
         assert!(result);
-        assert_eq!(state.current_page, Page::Library);
-        assert!(matches!(state.modal, Modal::SessionPicker { .. }));
+        assert_eq!(state.ui.page, Page::Library);
+        assert!(matches!(state.ui.modal, Modal::SessionPicker { .. }));
     }
 
     #[test]
     fn test_handle_library_up_down_navigation() {
         let mut state = test_state();
-        state.library.add_book("A".into(), "u1".into());
-        state.library.add_book("B".into(), "u2".into());
-        state.library.add_book("C".into(), "u3".into());
+        state.lib.library.add_book("A".into(), "u1".into());
+        state.lib.library.add_book("B".into(), "u2".into());
+        state.lib.library.add_book("C".into(), "u3".into());
         let (tx, _rx) = channel();
-        assert_eq!(state.library.selected_index, 0);
-        handle_library(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        assert_eq!(state.library.selected_index, 1);
-        handle_library(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        assert_eq!(state.library.selected_index, 2);
-        handle_library(&mut state, key_event(KEY_NAV_UP), &tx);
-        assert_eq!(state.library.selected_index, 1);
-        handle_library(&mut state, key_event(KEY_NAV_UP), &tx);
-        assert_eq!(state.library.selected_index, 0);
+        assert_eq!(state.lib.library.selected_index, 0);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_NAV_DOWN), &tx);
+        assert_eq!(state.lib.library.selected_index, 1);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_NAV_DOWN), &tx);
+        assert_eq!(state.lib.library.selected_index, 2);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_NAV_UP), &tx);
+        assert_eq!(state.lib.library.selected_index, 1);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_NAV_UP), &tx);
+        assert_eq!(state.lib.library.selected_index, 0);
     }
 
     #[test]
     fn test_handle_library_up_does_not_go_below_zero() {
         let mut state = test_state();
-        state.library.add_book("A".into(), "u1".into());
+        state.lib.library.add_book("A".into(), "u1".into());
         let (tx, _rx) = channel();
-        assert_eq!(state.library.selected_index, 0);
-        handle_library(&mut state, key_event(KEY_NAV_UP), &tx);
-        assert_eq!(state.library.selected_index, 0);
+        assert_eq!(state.lib.library.selected_index, 0);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_NAV_UP), &tx);
+        assert_eq!(state.lib.library.selected_index, 0);
     }
 
     #[test]
     fn test_handle_library_down_does_not_exceed_max() {
         let mut state = test_state();
-        state.library.add_book("A".into(), "u1".into());
-        state.library.add_book("B".into(), "u2".into());
+        state.lib.library.add_book("A".into(), "u1".into());
+        state.lib.library.add_book("B".into(), "u2".into());
         let (tx, _rx) = channel();
-        handle_library(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        handle_library(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        assert_eq!(state.library.selected_index, 1);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_NAV_DOWN), &tx);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_NAV_DOWN), &tx);
+        assert_eq!(state.lib.library.selected_index, 1);
     }
 
     #[test]
     fn test_handle_library_unhandled_key_returns_true() {
         let mut state = test_state();
         let (tx, _rx) = channel();
-        let result = handle_library(&mut state, key_event(KeyCode::Char('x')), &tx);
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KeyCode::Char('x')), &tx);
         assert!(result);
     }
 }

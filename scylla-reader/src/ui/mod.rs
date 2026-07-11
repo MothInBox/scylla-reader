@@ -13,22 +13,22 @@ use crate::state::page::Page;
 use ratatui::prelude::*;
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
-    match state.current_page {
+    match state.ui.page {
         Page::Library | Page::AddingBook | Page::BookChapterJump | Page::InstallingPlugin => {
-            library::draw(frame, area, state);
+            library::draw(frame, area, &mut state.lib, &state.ui);
         }
         Page::Settings => {
-            settings::draw(frame, area, state);
+            settings::draw(frame, area, &state.lib, &state.ui);
         }
         Page::Reader => {
-            reader::draw(frame, area, state);
+            reader::draw(frame, area, &state.reader, &state.lib, &state.ui);
         }
         Page::Jobs => {
-            jobs::draw(frame, area, state);
+            jobs::draw(frame, area, &mut state.jobs, &state.ui);
         }
     }
 
-    modal::draw_modal(frame, area, state);
+    modal::draw_modal(frame, area, &mut state.ui, &mut state.lib);
 }
 
 #[cfg(test)]
@@ -42,7 +42,7 @@ mod tests {
     #[test]
     fn test_draw_library_does_not_panic() {
         let mut state = test_state();
-        state.current_page = Page::Library;
+        state.ui.page = Page::Library;
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn test_draw_settings_does_not_panic() {
         let mut state = test_state();
-        state.current_page = Page::Settings;
+        state.ui.page = Page::Settings;
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -68,8 +68,8 @@ mod tests {
     #[test]
     fn test_draw_reader_does_not_panic() {
         let mut state = test_state();
-        state.library.add_book("Test Book".into(), "url".into());
-        state.current_page = Page::Reader;
+        state.lib.library.add_book("Test Book".into(), "url".into());
+        state.ui.page = Page::Reader;
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
