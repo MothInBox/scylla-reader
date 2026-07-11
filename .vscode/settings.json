@@ -1,0 +1,11 @@
+{
+  "rust-analyzer.checkOnSave.command": "clippy",
+  "rust-analyzer.checkOnSave.extraArgs": ["--", "-D", "warnings"],
+  "rust-analyzer.cargo.features": [],
+  "[rust]": {
+    "editor.formatOnSave": true
+  },
+  "files.exclude": {
+    "**/target": true
+  }
+}

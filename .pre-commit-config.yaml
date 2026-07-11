@@ -1,0 +1,16 @@
+repos:
+  - repo: local
+    hooks:
+      - id: fmt
+        name: cargo fmt
+        entry: nix develop --command bash -c "cd scylla-reader && cargo fmt --check"
+        language: system
+        pass_filenames: false
+        types: [rust]
+
+      - id: clippy
+        name: cargo clippy
+        entry: nix develop --command bash -c "cd scylla-reader && cargo clippy -- -D warnings"
+        language: system
+        pass_filenames: false
+        types: [rust]

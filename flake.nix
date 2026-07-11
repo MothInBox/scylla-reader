@@ -50,6 +50,7 @@
           extism-cli
           cargo-watch
           just
+          pre-commit
         ];
       };
     });
