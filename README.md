@@ -148,15 +148,71 @@ Develop your own or find one someone else has written.
 
 See the `plugin-template/` directory for a reference implementation.
 
-To test with the template plugin, do:
-```
-i (open add book window)
-type "template"
-Ctrl+S (submit)
-```
-
 > [!WARNING]
 > Plugins run arbitrary wasm on your machine. Verify the plugin yourself or only use trusted sources.
+
+### How do I install a plugin from GitHub?
+
+Open the command palette (`:`), select "Install Plugin from GitHub", and enter a GitHub repo URL like `https://github.com/owner/repo`.
+
+Scylla fetches the latest release from GitHub, scans it for `.wasm` files named `plugin-<domain>.wasm`, and installs them. The domain is extracted from the filename — e.g., `plugin-example.com.wasm` registers for `example.com`.
+
+### How do I make a plugin repo?
+
+Create a GitHub repository with a Rust crate that targets `wasm32-unknown-unknown` and depends on `scylla-plugin-api` and `extism-pdk`:
+
+```toml
+# Cargo.toml
+[package]
+name = "my-plugin"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+scylla-plugin-api = "0.2"
+extism-pdk = "1"
+serde_json = "1"
+```
+
+Implement the three plugin exports:
+
+```rust
+#[plugin_fn]
+pub fn get_config_schema(Json(()): Json<()>) -> FnResult<Json<PluginSchema>> {
+    Ok(Json(PluginSchema {
+        fields: vec![
+            ConfigField {
+                key: "key".into(),
+                label: "Display label".into(),
+                field_type: "string".into(),
+                default: "".into(),
+            },
+        ],
+        accepts_cookies: false,
+    }))
+}
+
+#[plugin_fn]
+pub fn scrape_book(Json(input): Json<ScrapeInput>) -> FnResult<Json<ScrapeOutput>> {
+    // Use host_curl_fetch to fetch pages, parse HTML, return book metadata + chapters
+}
+
+#[plugin_fn]
+pub fn scrape_chapter(Json(input): Json<ScrapeInput>) -> FnResult<Json<ChapterOutput>> {
+    // Return chapter title + content
+}
+```
+
+Build with:
+
+```bash
+cargo build --target wasm32-unknown-unknown --release
+```
+
+Create a GitHub release and attach `plugin-<domain>.wasm` (e.g., `plugin-example.com.wasm`). Users install it by entering the repo URL in the Install Plugin modal.
 
 ### Where is data stored?
 
