@@ -212,7 +212,9 @@ Build with:
 cargo build --target wasm32-unknown-unknown --release
 ```
 
-Create a GitHub release and attach `plugin-<domain>.wasm` (e.g., `plugin-example.com.wasm`). Users install it by entering the repo URL in the Install Plugin modal.
+Create a GitHub release and attach your `plugin-<domain>.wasm` file(s) as assets. GitHub releases are flat — every `.wasm` asset attached to the release is downloaded, regardless of directory structure in your repo. A single release can bundle multiple plugins (e.g., `plugin-site-a.com.wasm`, `plugin-site-b.org.wasm`).
+
+Users install by entering the repo URL in the Install Plugin modal.
 
 ### Where is data stored?
 
