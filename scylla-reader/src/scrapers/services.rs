@@ -330,14 +330,15 @@ impl ScraperRegistry {
                 host == domain || host.ends_with(&format!(".{}", domain))
             } else {
                 let segments: Vec<&str> = host.split('.').collect();
-                segments
-                    .contains(&domain)
-                    && segments.last().is_some_and(|last| last != &domain)
+                segments.contains(&domain) && segments.last().is_some_and(|last| last != &domain)
             }
         };
 
-        let mut matched: Vec<&(String, std::path::PathBuf)> =
-            self.plugins.iter().filter(|(d, _)| match_domain(d)).collect();
+        let mut matched: Vec<&(String, std::path::PathBuf)> = self
+            .plugins
+            .iter()
+            .filter(|(d, _)| match_domain(d))
+            .collect();
         matched.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
         matched
@@ -518,7 +519,9 @@ mod tests {
             plugins: vec![("com".into(), PathBuf::from("/p/com.wasm"))],
             plugin_cache: Mutex::new(vec![]),
         };
-        let err = registry.find_plugin("https://example.com/page").unwrap_err();
+        let err = registry
+            .find_plugin("https://example.com/page")
+            .unwrap_err();
         assert!(err.to_string().contains("No plugin found for:"));
     }
 

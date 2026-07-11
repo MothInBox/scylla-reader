@@ -1,11 +1,11 @@
 //! Render dispatch — routes by current page to page-specific draw functions.
 
+pub mod jobs;
 pub mod library;
 pub mod modal;
 pub mod palette;
 pub mod reader;
 pub mod settings;
-pub mod jobs;
 pub mod widgets;
 
 use crate::state::AppState;
@@ -14,7 +14,7 @@ use ratatui::prelude::*;
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
     match state.ui.page {
-        Page::Library | Page::AddingBook | Page::BookChapterJump | Page::InstallingPlugin => {
+        Page::Library => {
             library::draw(frame, area, &mut state.lib, &state.ui);
         }
         Page::Settings => {
@@ -35,9 +35,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
 mod tests {
     use super::*;
     use crate::state::Page;
+    use crate::test_helpers::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use crate::test_helpers::*;
 
     #[test]
     fn test_draw_library_does_not_panic() {

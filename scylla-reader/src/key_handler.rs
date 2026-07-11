@@ -16,12 +16,6 @@ pub fn handle_key(
     if state.ui.modal != Modal::None {
         if key.code == KEY_ESCAPE {
             state.close_modal();
-            if matches!(
-                state.ui.page,
-                Page::AddingBook | Page::BookChapterJump | Page::InstallingPlugin
-            ) {
-                state.ui.page = Page::Library;
-            }
             return true;
         }
         return input::handle_input(state, key, cmd_tx, size);
@@ -29,20 +23,12 @@ pub fn handle_key(
 
     match key.code {
         KEY_LIBRARY => {
-            crate::settings::log(
-                crate::settings::LogLevel::Debug,
-                "NAV",
-                "Page: Library",
-            );
+            crate::settings::log(crate::settings::LogLevel::Debug, "NAV", "Page: Library");
             state.ui.page = Page::Library;
             return true;
         }
         KEY_READER => {
-            crate::settings::log(
-                crate::settings::LogLevel::Debug,
-                "NAV",
-                "Page: Reader",
-            );
+            crate::settings::log(crate::settings::LogLevel::Debug, "NAV", "Page: Reader");
             state.ui.page = Page::Reader;
             if let Some(book) = state.lib.library.selected_book()
                 && state.reader.book_url != book.url
@@ -65,20 +51,12 @@ pub fn handle_key(
             return true;
         }
         KEY_JOBS => {
-            crate::settings::log(
-                crate::settings::LogLevel::Debug,
-                "NAV",
-                "Page: Jobs",
-            );
+            crate::settings::log(crate::settings::LogLevel::Debug, "NAV", "Page: Jobs");
             state.ui.page = Page::Jobs;
             return true;
         }
         KEY_SETTINGS => {
-            crate::settings::log(
-                crate::settings::LogLevel::Debug,
-                "NAV",
-                "Page: Settings",
-            );
+            crate::settings::log(crate::settings::LogLevel::Debug, "NAV", "Page: Settings");
             state.ui.page = Page::Settings;
             return true;
         }
@@ -123,7 +101,8 @@ pub fn handle_key(
     }
 
     let pre_status = state
-        .lib.library
+        .lib
+        .library
         .selected_book()
         .map(|b| (b.url.clone(), b.status.clone()));
     let pre_books_len = state.lib.library.books.len();

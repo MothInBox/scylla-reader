@@ -49,11 +49,7 @@ pub fn handle_jobs(
             true
         }
         KEY_JOBS_CANCEL_ALL => {
-            crate::settings::log(
-                crate::settings::LogLevel::Debug,
-                "JOBS",
-                "Cancel all jobs",
-            );
+            crate::settings::log(crate::settings::LogLevel::Debug, "JOBS", "Cancel all jobs");
             let _ = cmd_tx.send(AppCommand::CancelAll);
             true
         }
@@ -117,51 +113,31 @@ pub fn handle_jobs(
             true
         }
         KEY_JOBS_FLUSH_ALL => {
-            crate::settings::log(
-                crate::settings::LogLevel::Debug,
-                "JOBS",
-                "Flush all jobs",
-            );
+            crate::settings::log(crate::settings::LogLevel::Debug, "JOBS", "Flush all jobs");
             let _ = cmd_tx.send(AppCommand::FlushAll);
             jobs.remove_all();
             true
         }
         KeyCode::Char('a') => {
-            crate::settings::log(
-                crate::settings::LogLevel::Debug,
-                "JOBS",
-                "Filter: All",
-            );
+            crate::settings::log(crate::settings::LogLevel::Debug, "JOBS", "Filter: All");
             jobs.filter = JobFilter::All;
             jobs.selected = 0;
             true
         }
         KeyCode::Char('s') => {
-            crate::settings::log(
-                crate::settings::LogLevel::Debug,
-                "JOBS",
-                "Filter: Running",
-            );
+            crate::settings::log(crate::settings::LogLevel::Debug, "JOBS", "Filter: Running");
             jobs.filter = JobFilter::Running;
             jobs.selected = 0;
             true
         }
         KeyCode::Char('d') => {
-            crate::settings::log(
-                crate::settings::LogLevel::Debug,
-                "JOBS",
-                "Filter: Done",
-            );
+            crate::settings::log(crate::settings::LogLevel::Debug, "JOBS", "Filter: Done");
             jobs.filter = JobFilter::Completed;
             jobs.selected = 0;
             true
         }
         KeyCode::Char('e') => {
-            crate::settings::log(
-                crate::settings::LogLevel::Debug,
-                "JOBS",
-                "Filter: Failed",
-            );
+            crate::settings::log(crate::settings::LogLevel::Debug, "JOBS", "Filter: Failed");
             jobs.filter = JobFilter::Failed;
             jobs.selected = 0;
             true

@@ -12,9 +12,9 @@ pub mod plugin_config;
 pub mod scrapers;
 pub mod settings;
 pub mod state;
-pub mod textwrap;
 #[cfg(test)]
 pub mod test_helpers;
+pub mod textwrap;
 pub mod ui;
 pub mod worker;
 

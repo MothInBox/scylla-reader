@@ -18,27 +18,30 @@ pub fn handle_reader(
     match (key.modifiers, key.code) {
         (_, KEY_NEXT_CHAPTER) => {
             if !state.reader.loading
-                && let Some(book) = state.lib.library.selected_book() {
-                    let next_idx = state.reader.current_chapter_idx.saturating_add(1);
-                    if let Some(ch) = book.chapters.get(next_idx) {
-                        let url = ch.url.clone();
-                        state.reader.loading = true;
-                        let _ = cmd_tx.send(AppCommand::FetchChapter(url, next_idx));
-                    }
+                && let Some(book) = state.lib.library.selected_book()
+            {
+                let next_idx = state.reader.current_chapter_idx.saturating_add(1);
+                if let Some(ch) = book.chapters.get(next_idx) {
+                    let url = ch.url.clone();
+                    state.reader.loading = true;
+                    let _ = cmd_tx.send(AppCommand::FetchChapter(url, next_idx));
                 }
+            }
             return true;
         }
         (_, KEY_PREV_CHAPTER) => {
             if !state.reader.loading
-                && let Some(book) = state.lib.library.selected_book() {
-                    let prev_idx = state.reader.current_chapter_idx.saturating_sub(1);
-                    if prev_idx != state.reader.current_chapter_idx
-                        && let Some(ch) = book.chapters.get(prev_idx) {
-                            let url = ch.url.clone();
-                            state.reader.loading = true;
-                            let _ = cmd_tx.send(AppCommand::FetchChapter(url, prev_idx));
-                        }
+                && let Some(book) = state.lib.library.selected_book()
+            {
+                let prev_idx = state.reader.current_chapter_idx.saturating_sub(1);
+                if prev_idx != state.reader.current_chapter_idx
+                    && let Some(ch) = book.chapters.get(prev_idx)
+                {
+                    let url = ch.url.clone();
+                    state.reader.loading = true;
+                    let _ = cmd_tx.send(AppCommand::FetchChapter(url, prev_idx));
                 }
+            }
             return true;
         }
         (_, KEY_MANAGE_SESSIONS) => {
@@ -87,8 +90,8 @@ pub fn handle_reader(
 mod tests {
     use super::*;
     use crate::models::Chapter;
-    use crossterm::event::KeyCode;
     use crate::test_helpers::*;
+    use crossterm::event::KeyCode;
 
     fn state_with_book_and_chapters() -> AppState {
         let mut state = test_state();

@@ -9,7 +9,7 @@ pub enum AppCommand {
     SetRateLimit(u64),
     FetchCover(String),
     // new job commands
-    Enqueue(JobKind, String, JobPriority),  // kind, target display, priority
+    Enqueue(JobKind, String, JobPriority), // kind, target display, priority
     CancelJob(JobId),
     CancelAll,
     RetryJob(JobId),
@@ -37,8 +37,8 @@ pub enum AppEvent {
     JobStatusChanged(JobId, JobStatus),
     WorkersChanged(u8),
     JobOutcome(JobId, JobOutcome),
-    PluginInstalled(String, String),   // domain, wasm path
-    PluginInstallFailed(String),       // error message
+    PluginInstalled(String, String), // domain, wasm path
+    PluginInstallFailed(String),     // error message
 }
 
 #[cfg(test)]
@@ -149,7 +149,8 @@ mod tests {
     fn test_app_event_cover_fetched_construction() {
         let img = image::DynamicImage::new(1, 1, image::ColorType::Rgb8);
         let source = ratatui_image::protocol::ImageSource::new(img, (10, 10));
-        let halfblocks = ratatui_image::protocol::halfblocks::StatefulHalfblocks::new(source, (10, 10));
+        let halfblocks =
+            ratatui_image::protocol::halfblocks::StatefulHalfblocks::new(source, (10, 10));
         let protocol = ratatui_image::protocol::StatefulProtocol::Halfblocks(halfblocks);
         let event = AppEvent::CoverFetched("http://example.com/cover.jpg".into(), protocol);
         if let AppEvent::CoverFetched(url, _proto) = &event {

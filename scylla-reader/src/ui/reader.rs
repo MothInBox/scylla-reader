@@ -41,7 +41,13 @@ fn draw_no_book(frame: &mut Frame, area: Rect) {
     frame.render_widget(para, area);
 }
 
-fn draw_paged(frame: &mut Frame, area: Rect, reader: &ReaderState, _lib: &LibraryState, ui: &UiState) {
+fn draw_paged(
+    frame: &mut Frame,
+    area: Rect,
+    reader: &ReaderState,
+    _lib: &LibraryState,
+    ui: &UiState,
+) {
     let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -67,8 +73,7 @@ fn draw_paged(frame: &mut Frame, area: Rect, reader: &ReaderState, _lib: &Librar
     .style(Style::default().fg(Color::Yellow));
     frame.render_widget(header, chunks[0]);
 
-    let lines = reader
-        .page_lines_wrapped(chunks[1].width, chunks[1].height);
+    let lines = reader.page_lines_wrapped(chunks[1].width, chunks[1].height);
     let content = lines.join("\n");
     let block = Block::default().borders(Borders::LEFT);
     let paragraph = Paragraph::new(content)
@@ -89,16 +94,19 @@ fn draw_paged(frame: &mut Frame, area: Rect, reader: &ReaderState, _lib: &Librar
             hint_chunks[0],
         );
         frame.render_widget(
-            Paragraph::new(hint_line(
-                "Nav",
-                crate::ui::widgets::NAV_HINTS,
-            )),
+            Paragraph::new(hint_line("Nav", crate::ui::widgets::NAV_HINTS)),
             hint_chunks[1],
         );
     }
 }
 
-fn draw_scrollable(frame: &mut Frame, area: Rect, reader: &ReaderState, _lib: &LibraryState, ui: &UiState) {
+fn draw_scrollable(
+    frame: &mut Frame,
+    area: Rect,
+    reader: &ReaderState,
+    _lib: &LibraryState,
+    ui: &UiState,
+) {
     let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -124,8 +132,7 @@ fn draw_scrollable(frame: &mut Frame, area: Rect, reader: &ReaderState, _lib: &L
     .style(Style::default().fg(Color::Yellow));
     frame.render_widget(header, chunks[0]);
 
-    let lines = reader
-        .visible_wrapped_lines(chunks[1].width, chunks[1].height);
+    let lines = reader.visible_wrapped_lines(chunks[1].width, chunks[1].height);
     let content = lines.join("\n");
     let block = Block::default().borders(Borders::LEFT);
     let paragraph = Paragraph::new(content).block(block);
@@ -145,10 +152,7 @@ fn draw_scrollable(frame: &mut Frame, area: Rect, reader: &ReaderState, _lib: &L
             hint_chunks[0],
         );
         frame.render_widget(
-            Paragraph::new(hint_line(
-                "Nav",
-                crate::ui::widgets::NAV_HINTS,
-            )),
+            Paragraph::new(hint_line("Nav", crate::ui::widgets::NAV_HINTS)),
             hint_chunks[1],
         );
     }

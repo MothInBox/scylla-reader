@@ -349,8 +349,6 @@ fn parse_status(s: &str) -> BookStatus {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;

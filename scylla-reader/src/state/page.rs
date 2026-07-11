@@ -4,9 +4,6 @@
 pub enum Page {
     Library,
     Settings,
-    AddingBook,
-    BookChapterJump,
     Reader,
     Jobs,
-    InstallingPlugin,
 }

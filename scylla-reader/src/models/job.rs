@@ -45,8 +45,15 @@ pub enum JobPriority {
 
 #[derive(Debug, Clone)]
 pub enum JobOutcome {
-    BookScraped { title: String, chapters: usize, cover: bool },
-    ChapterFetched { title: String, content_chars: usize },
+    BookScraped {
+        title: String,
+        chapters: usize,
+        cover: bool,
+    },
+    ChapterFetched {
+        title: String,
+        content_chars: usize,
+    },
     CoverFetched,
 }
 
@@ -55,8 +62,8 @@ pub struct Job {
     pub id: JobId,
     pub kind: JobKind,
     pub status: JobStatus,
-    pub target: String,              // display string (title or URL)
-    pub priority: JobPriority,       // stub for future use
+    pub target: String,        // display string (title or URL)
+    pub priority: JobPriority, // stub for future use
     // stub for future use: grouped jobs (UpdateAll -> multiple Scrape)
     // group_id: Option<u64>,
     pub created_at: Instant,

@@ -1,6 +1,6 @@
 use crate::input::keybinds::*;
 use crate::messenger::AppCommand;
-use crate::state::{UiState, Modal, Page};
+use crate::state::{Modal, Page, UiState};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_adding_book(
@@ -89,8 +89,8 @@ pub fn handle_adding_book(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::KeyCode;
     use crate::test_helpers::*;
+    use crossterm::event::KeyCode;
 
     fn key_event_ctrl_s() -> KeyEvent {
         KeyEvent::new(KEY_SUBMIT, KEY_SUBMIT_MODIFIER)
@@ -103,7 +103,6 @@ mod tests {
             cursor,
             scroll_offset: 0,
         };
-        state.ui.page = Page::AddingBook;
         state
     }
 

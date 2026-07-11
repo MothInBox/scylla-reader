@@ -1,6 +1,6 @@
 use crate::input::keybinds::*;
 use crate::messenger::AppCommand;
-use crate::state::{UiState, Modal, Page};
+use crate::state::{Modal, Page, UiState};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_installing_plugin(
@@ -95,7 +95,6 @@ mod tests {
             cursor,
             scroll_offset: 0,
         };
-        state.ui.page = Page::InstallingPlugin;
         state
     }
 

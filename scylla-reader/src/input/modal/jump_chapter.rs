@@ -117,7 +117,6 @@ mod tests {
             scroll_offset: 0,
             show_titles: true,
         };
-        state.ui.page = Page::BookChapterJump;
         state
     }
 

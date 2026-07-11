@@ -40,7 +40,6 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
                     cursor: 0,
                     scroll_offset: 0,
                 };
-                s.ui.page = Page::AddingBook;
             },
         },
         PaletteAction {
@@ -57,7 +56,6 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
                         scroll_offset: 0,
                         show_titles: true,
                     };
-                    s.ui.page = Page::BookChapterJump;
                 }
             },
         },
@@ -67,7 +65,8 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
             keys: "u", // KEY_UPDATE_ALL
             handler: |s, tx| {
                 let urls: Vec<String> = s
-                    .lib.library
+                    .lib
+                    .library
                     .books
                     .iter()
                     .map(|b| b.url.clone())
@@ -177,7 +176,6 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
                     cursor: 0,
                     scroll_offset: 0,
                 };
-                s.ui.page = Page::InstallingPlugin;
             },
         },
         // Debug

@@ -60,7 +60,11 @@ pub fn install_plugin(repo_url: &str) -> Result<(String, String), String> {
         std::fs::write(&wasm_path, &wasm_data).map_err(|e| e.to_string())?;
 
         let schema = discover_schema_from_bytes(&wasm_data, &wasm_path);
-        crate::plugin_config::PluginConfig::init_config_file(domain, &schema.fields, schema.accepts_cookies);
+        crate::plugin_config::PluginConfig::init_config_file(
+            domain,
+            &schema.fields,
+            schema.accepts_cookies,
+        );
 
         crate::settings::log(
             crate::settings::LogLevel::Debug,

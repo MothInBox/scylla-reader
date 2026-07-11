@@ -154,8 +154,7 @@ impl JobManager {
                         }
                     }
                     JobKind::FetchCover(url) => {
-                        let mut picker =
-                            ratatui_image::picker::Picker::from_fontsize(font_size);
+                        let mut picker = ratatui_image::picker::Picker::from_fontsize(font_size);
                         picker.set_protocol_type(protocol_type);
                         match reqwest::blocking::get(url) {
                             Ok(resp) => match resp.bytes() {
@@ -165,7 +164,8 @@ impl JobManager {
                                         let _ = event_tx
                                             .send(AppEvent::CoverFetched(url.clone(), protocol));
                                         let o = JobOutcome::CoverFetched;
-                                        let _ = event_tx.send(AppEvent::JobOutcome(job.id, o.clone()));
+                                        let _ =
+                                            event_tx.send(AppEvent::JobOutcome(job.id, o.clone()));
                                         (Ok(()), Some(o))
                                     }
                                     Err(e) => (Err(format!("Image decode: {}", e)), None),

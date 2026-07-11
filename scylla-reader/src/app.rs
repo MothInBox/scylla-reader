@@ -52,9 +52,13 @@ impl App {
         let rate_limit = state.lib.settings.rate_limit_secs;
 
         Self::spawn_worker_thread(
-            cmd_rx, event_tx, registry,
-            picker_font_size, picker_protocol_type,
-            max_workers, rate_limit,
+            cmd_rx,
+            event_tx,
+            registry,
+            picker_font_size,
+            picker_protocol_type,
+            max_workers,
+            rate_limit,
         );
 
         Ok(Self {
@@ -107,10 +111,7 @@ impl App {
 
     fn main_loop(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         loop {
-            event::drain_events(
-                &mut self.state,
-                &self.event_rx,
-            );
+            event::drain_events(&mut self.state, &self.event_rx);
             event::update_covers(&mut self.state, &self.cmd_tx, &mut self.fetched_covers);
 
             let area = self.draw()?;
@@ -239,7 +240,6 @@ mod tests {
             filtered: vec![],
             selected: 0,
         };
-        state.ui.page = Page::AddingBook;
         let (tx, _rx) = mpsc::channel();
         let result =
             key_handler::handle_key(&mut state, key_event(KEY_ESCAPE), &tx, Rect::default());

@@ -7,8 +7,8 @@ use crate::plugin_config::PluginConfig;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -145,7 +145,10 @@ fn compiled_defaults() -> PersistedSettings {
 pub static CONFIG_DIR_OVERRIDE: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
 pub static DATA_DIR_OVERRIDE: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
 
-pub fn set_path_overrides(config_dir: Option<std::path::PathBuf>, data_dir: Option<std::path::PathBuf>) {
+pub fn set_path_overrides(
+    config_dir: Option<std::path::PathBuf>,
+    data_dir: Option<std::path::PathBuf>,
+) {
     let _ = CONFIG_DIR_OVERRIDE.set(config_dir);
     let _ = DATA_DIR_OVERRIDE.set(data_dir);
 }
@@ -254,11 +257,11 @@ impl Settings {
         };
         if let Some(field) = config.schema.get(selected_plugin_field)
             && field.field_type == "number"
-                && !plugin_field_buffer.is_empty()
-                && plugin_field_buffer.parse::<f64>().is_err()
-            {
-                return Err("Invalid number".to_string());
-            }
+            && !plugin_field_buffer.is_empty()
+            && plugin_field_buffer.parse::<f64>().is_err()
+        {
+            return Err("Invalid number".to_string());
+        }
         config.update_value(&key, plugin_field_buffer.to_string());
         config.save()
     }

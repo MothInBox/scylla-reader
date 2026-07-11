@@ -24,13 +24,7 @@ fn draw_main(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
     let fields = SettingsField::all();
     let items: Vec<ListItem> = fields
         .iter()
-        .map(|f| {
-            ListItem::new(format!(
-                "  {}: {}",
-                f.label(),
-                lib.settings.field_value(f)
-            ))
-        })
+        .map(|f| ListItem::new(format!("  {}: {}", f.label(), lib.settings.field_value(f))))
         .collect();
 
     let list = List::new(items)
@@ -56,11 +50,7 @@ fn draw_debug_log(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiStat
         ])
         .split(area);
 
-    let toggle_status = if lib.settings.debug_log {
-        "ON"
-    } else {
-        "OFF"
-    };
+    let toggle_status = if lib.settings.debug_log { "ON" } else { "OFF" };
     let toggle_line = Paragraph::new(format!(
         " Debug Logging: {}    [Enter] Toggle",
         toggle_status,
@@ -219,10 +209,7 @@ fn draw_hints(frame: &mut Frame, area: Rect, show_hints: bool) {
         hint_chunks[0],
     );
     frame.render_widget(
-        Paragraph::new(hint_line(
-            "Nav",
-            crate::ui::widgets::NAV_HINTS,
-        )),
+        Paragraph::new(hint_line("Nav", crate::ui::widgets::NAV_HINTS)),
         hint_chunks[1],
     );
 }

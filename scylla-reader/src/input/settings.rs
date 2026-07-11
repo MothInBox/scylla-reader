@@ -26,7 +26,8 @@ pub fn handle_settings_main(
     let num_fields = SettingsField::all().len();
     match key.code {
         KEY_NAV_DOWN => {
-            lib.settings_ui.selected_field = (lib.settings_ui.selected_field + 1).min(num_fields - 1);
+            lib.settings_ui.selected_field =
+                (lib.settings_ui.selected_field + 1).min(num_fields - 1);
             true
         }
         KEY_NAV_UP => {
@@ -217,8 +218,8 @@ mod tests {
     use super::*;
     use crate::settings::ReaderMode;
     use crate::state::Page;
-    use crossterm::event::KeyCode;
     use crate::test_helpers::*;
+    use crossterm::event::KeyCode;
 
     #[test]
     fn test_handle_settings_main_navigate() {
@@ -303,7 +304,10 @@ mod tests {
         state.lib.settings_ui.settings_page = SettingsPage::PluginFieldEdit;
         let result = handle_plugin_field_edit(&mut state.lib, key_event(KEY_ENTER));
         assert!(result);
-        assert_eq!(state.lib.settings_ui.settings_page, SettingsPage::PluginFields);
+        assert_eq!(
+            state.lib.settings_ui.settings_page,
+            SettingsPage::PluginFields
+        );
     }
 
     #[test]

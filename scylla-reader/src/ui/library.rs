@@ -216,7 +216,8 @@ mod tests {
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
         state
-            .lib.library
+            .lib
+            .library
             .add_book("Test Book Title".into(), "url".into());
 
         let backend = TestBackend::new(80, 24);

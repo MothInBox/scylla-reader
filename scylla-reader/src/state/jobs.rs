@@ -7,7 +7,7 @@ pub struct JobsState {
     pub selected: usize,
     pub max_workers: u8,
     pub active_count: u8,
-    pub detail_expanded: Option<usize>,  // index into jobs[] (unfiltered)
+    pub detail_expanded: Option<usize>, // index into jobs[] (unfiltered)
 }
 
 impl Default for JobsState {
@@ -42,10 +42,7 @@ impl JobsState {
                             | crate::models::job::JobStatus::Cancelled
                     )
                 }
-                JobFilter::Failed => matches!(
-                    j.status,
-                    crate::models::job::JobStatus::Failed(_)
-                ),
+                JobFilter::Failed => matches!(j.status, crate::models::job::JobStatus::Failed(_)),
             })
             .map(|(i, _)| i)
             .collect()
@@ -58,16 +55,24 @@ impl JobsState {
 
     pub fn selected_job_mut(&mut self) -> Option<&mut Job> {
         let indices = self.filtered_jobs();
-        indices.get(self.selected).copied().map(move |i| &mut self.jobs[i])
+        indices
+            .get(self.selected)
+            .copied()
+            .map(move |i| &mut self.jobs[i])
     }
 
-    pub fn update_from_event(&mut self, id: crate::models::job::JobId, status: crate::models::job::JobStatus) {
+    pub fn update_from_event(
+        &mut self,
+        id: crate::models::job::JobId,
+        status: crate::models::job::JobStatus,
+    ) {
         if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id) {
             match &status {
                 crate::models::job::JobStatus::Running => {
                     job.started_at = Some(std::time::Instant::now());
                 }
-                crate::models::job::JobStatus::Completed | crate::models::job::JobStatus::Failed(_) => {
+                crate::models::job::JobStatus::Completed
+                | crate::models::job::JobStatus::Failed(_) => {
                     job.completed_at = Some(std::time::Instant::now());
                     if let crate::models::job::JobStatus::Failed(e) = &status {
                         job.error = Some(e.clone());
@@ -79,11 +84,7 @@ impl JobsState {
         }
     }
 
-    pub fn set_outcome(
-        &mut self,
-        id: crate::models::job::JobId,
-        outcome: JobOutcome,
-    ) {
+    pub fn set_outcome(&mut self, id: crate::models::job::JobId, outcome: JobOutcome) {
         if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id) {
             job.outcome = Some(outcome);
         }
@@ -94,8 +95,7 @@ impl JobsState {
         self.jobs.retain(|j| {
             !matches!(
                 j.status,
-                crate::models::job::JobStatus::Completed
-                    | crate::models::job::JobStatus::Cancelled
+                crate::models::job::JobStatus::Completed | crate::models::job::JobStatus::Cancelled
             )
         });
         let removed = before - self.jobs.len();

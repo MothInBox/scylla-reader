@@ -3,10 +3,7 @@ use crate::models::job::JobStatus;
 use crate::state::AppState;
 use std::sync::mpsc;
 
-pub fn drain_events(
-    state: &mut AppState,
-    event_rx: &mpsc::Receiver<AppEvent>,
-) {
+pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<AppEvent>) {
     while let Ok(event) = event_rx.try_recv() {
         match event {
             AppEvent::BookScraped(book) => {
@@ -15,7 +12,13 @@ pub fn drain_events(
                     "UI",
                     &format!("UI received book: {}", book.title),
                 );
-                if let Some(existing) = state.lib.library.books.iter_mut().find(|b| b.url == book.url) {
+                if let Some(existing) = state
+                    .lib
+                    .library
+                    .books
+                    .iter_mut()
+                    .find(|b| b.url == book.url)
+                {
                     existing.title = book.title.clone();
                     existing.cover_url = book.cover_url.clone();
                     existing.description = book.description.clone();
@@ -40,7 +43,12 @@ pub fn drain_events(
                     });
                     let book_url = book.url.clone();
                     state.lib.library.books.push(book);
-                    if let Some(b) = state.lib.library.books.iter_mut().find(|b| b.url == book_url)
+                    if let Some(b) = state
+                        .lib
+                        .library
+                        .books
+                        .iter_mut()
+                        .find(|b| b.url == book_url)
                         && let Ok(sessions) = state.db.load_sessions_for_book(&book_url)
                     {
                         b.sessions = sessions;
@@ -169,7 +177,8 @@ pub fn update_covers(
     fetched_covers: &mut std::collections::HashSet<String>,
 ) {
     let current_cover_url = state
-        .lib.library
+        .lib
+        .library
         .selected_book()
         .and_then(|b| b.cover_url.clone());
 

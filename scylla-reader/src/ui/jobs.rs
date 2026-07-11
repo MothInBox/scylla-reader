@@ -69,23 +69,19 @@ pub fn draw(frame: &mut Frame, area: Rect, jobs: &mut JobsState, ui: &UiState) {
         let filter_status = format!(
             " [{}]  {} queued | {} running | {} failed | {} completed",
             jobs.filter,
-            jobs
-                .jobs
+            jobs.jobs
                 .iter()
                 .filter(|j| matches!(j.status, JobStatus::Queued))
                 .count(),
-            jobs
-                .jobs
+            jobs.jobs
                 .iter()
                 .filter(|j| matches!(j.status, JobStatus::Running))
                 .count(),
-            jobs
-                .jobs
+            jobs.jobs
                 .iter()
                 .filter(|j| matches!(j.status, JobStatus::Failed(_)))
                 .count(),
-            jobs
-                .jobs
+            jobs.jobs
                 .iter()
                 .filter(|j| matches!(j.status, JobStatus::Completed | JobStatus::Cancelled))
                 .count(),
@@ -190,13 +186,25 @@ fn render_job_row<'a>(job: &Job, _selected: bool, expanded: bool) -> ListItem<'a
         }
         if let Some(outcome) = &job.outcome {
             match outcome {
-                JobOutcome::BookScraped { title, chapters, cover } => {
+                JobOutcome::BookScraped {
+                    title,
+                    chapters,
+                    cover,
+                } => {
                     lines.push(Line::from(Span::styled(
-                        format!("  Book: {} ({} chapters, cover: {})", title, chapters, if *cover { "yes" } else { "no" }),
+                        format!(
+                            "  Book: {} ({} chapters, cover: {})",
+                            title,
+                            chapters,
+                            if *cover { "yes" } else { "no" }
+                        ),
                         Style::default().fg(Color::Cyan),
                     )));
                 }
-                JobOutcome::ChapterFetched { title, content_chars } => {
+                JobOutcome::ChapterFetched {
+                    title,
+                    content_chars,
+                } => {
                     lines.push(Line::from(Span::styled(
                         format!("  Chapter: {} ({} chars)", title, content_chars),
                         Style::default().fg(Color::Cyan),

@@ -103,19 +103,20 @@ impl PluginConfig {
                 }
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
                     && let Some(domain) = stem.strip_prefix("plugin-")
-                        && !configs.contains_key(domain) {
-                            configs.insert(
-                                domain.to_string(),
-                                PluginConfig {
-                                    domain: domain.to_string(),
-                                    schema: vec![],
-                                    accepts_cookies: true,
-                                    values: HashMap::new(),
-                                    cookies: String::new(),
-                                    path: plugin_config_path(domain),
-                                },
-                            );
-                        }
+                    && !configs.contains_key(domain)
+                {
+                    configs.insert(
+                        domain.to_string(),
+                        PluginConfig {
+                            domain: domain.to_string(),
+                            schema: vec![],
+                            accepts_cookies: true,
+                            values: HashMap::new(),
+                            cookies: String::new(),
+                            path: plugin_config_path(domain),
+                        },
+                    );
+                }
             }
         }
 
@@ -207,20 +208,22 @@ impl PluginConfig {
 
             if let Ok(s) = serde_json::to_value(schema)
                 && json.get("_schema") != Some(&s)
-                    && let Some(obj) = json.as_object_mut() {
-                        obj.insert("_schema".into(), s);
-                        changed = true;
-                    }
+                && let Some(obj) = json.as_object_mut()
+            {
+                obj.insert("_schema".into(), s);
+                changed = true;
+            }
 
             let current_ac = json.get("_accepts_cookies").and_then(|v| v.as_bool());
             if current_ac != Some(accepts_cookies)
-                && let Some(obj) = json.as_object_mut() {
-                    obj.insert(
-                        "_accepts_cookies".into(),
-                        serde_json::Value::Bool(accepts_cookies),
-                    );
-                    changed = true;
-                }
+                && let Some(obj) = json.as_object_mut()
+            {
+                obj.insert(
+                    "_accepts_cookies".into(),
+                    serde_json::Value::Bool(accepts_cookies),
+                );
+                changed = true;
+            }
 
             if json.get("_cookies").is_none() {
                 let txt_path = config_dir().join(format!("{}.txt", domain));
@@ -228,10 +231,11 @@ impl PluginConfig {
                     let txt_content = fs::read_to_string(&txt_path).unwrap_or_default();
                     fs::remove_file(&txt_path).ok();
                     if !txt_content.trim().is_empty()
-                        && let Some(obj) = json.as_object_mut() {
-                            obj.insert("_cookies".into(), serde_json::Value::String(txt_content));
-                            changed = true;
-                        }
+                        && let Some(obj) = json.as_object_mut()
+                    {
+                        obj.insert("_cookies".into(), serde_json::Value::String(txt_content));
+                        changed = true;
+                    }
                 }
             }
 
@@ -247,10 +251,9 @@ impl PluginConfig {
                 }
             }
 
-            if changed
-                && let Ok(contents) = serde_json::to_string_pretty(&json) {
-                    fs::write(&path, contents).ok();
-                }
+            if changed && let Ok(contents) = serde_json::to_string_pretty(&json) {
+                fs::write(&path, contents).ok();
+            }
         } else {
             let mut map = serde_json::Map::new();
 

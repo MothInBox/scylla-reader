@@ -176,11 +176,14 @@ mod tests {
 
     #[test]
     fn test_modal_partial_eq_different_variants_not_equal() {
-        assert_ne!(Modal::None, Modal::AddBook {
-            inputs: vec![],
-            cursor: 0,
-            scroll_offset: 0,
-        });
+        assert_ne!(
+            Modal::None,
+            Modal::AddBook {
+                inputs: vec![],
+                cursor: 0,
+                scroll_offset: 0,
+            }
+        );
     }
 
     #[test]

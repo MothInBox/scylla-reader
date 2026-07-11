@@ -68,8 +68,8 @@ pub fn handle_palette(
 mod tests {
     use super::*;
     use crate::state::Page;
-    use crossterm::event::KeyCode;
     use crate::test_helpers::*;
+    use crossterm::event::KeyCode;
 
     fn setup_palette_state(query: &str, selected: usize) -> AppState {
         let (tx, _) = channel();
@@ -199,7 +199,8 @@ mod tests {
     fn test_handle_palette_backspace_removes_char() {
         let mut state = setup_palette_state("Se", 0);
         let (tx, _rx) = channel();
-        let count_after_two_chars = if let Modal::CommandPalette { filtered, .. } = &state.ui.modal {
+        let count_after_two_chars = if let Modal::CommandPalette { filtered, .. } = &state.ui.modal
+        {
             filtered.len()
         } else {
             0

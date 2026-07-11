@@ -56,7 +56,9 @@ pub fn handle_session_picker(
             {
                 *pending_delete_url = None;
             }
-            let session = state.lib.library
+            let session = state
+                .lib
+                .library
                 .books
                 .iter()
                 .find(|b| b.url == book_url)
@@ -65,7 +67,13 @@ pub fn handle_session_picker(
             if let Some(session) = session {
                 state.reader.session_id = session.id;
                 state.reader.session_name = session.name.clone();
-                if let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == book_url) {
+                if let Some(book) = state
+                    .lib
+                    .library
+                    .books
+                    .iter_mut()
+                    .find(|b| b.url == book_url)
+                {
                     book.active_session_id = Some(session.id);
                 }
                 state
@@ -118,7 +126,9 @@ pub fn handle_session_picker(
             }
         }
         KEY_DELETE_SESSION => {
-            let session_count = state.lib.library
+            let session_count = state
+                .lib
+                .library
                 .books
                 .iter()
                 .find(|b| b.url == book_url)
@@ -137,7 +147,9 @@ pub fn handle_session_picker(
                     }
                     *pending_delete_url = None;
                 }
-                let session_id = state.lib.library
+                let session_id = state
+                    .lib
+                    .library
                     .books
                     .iter()
                     .find(|b| b.url == book_url)
@@ -147,8 +159,12 @@ pub fn handle_session_picker(
                     if session_count > 1 {
                         state.db.delete_session(session_id).ok();
                         if let Ok(loaded) = state.db.load_sessions_for_book(&book_url)
-                            && let Some(book) =
-                                state.lib.library.books.iter_mut().find(|b| b.url == book_url)
+                            && let Some(book) = state
+                                .lib
+                                .library
+                                .books
+                                .iter_mut()
+                                .find(|b| b.url == book_url)
                         {
                             book.sessions = loaded;
                         }
@@ -220,41 +236,56 @@ fn handle_session_picker_editing(
                 return true;
             }
             if let Some(session_id) = editing_id {
-                if let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == book_url)
+                if let Some(book) = state
+                    .lib
+                    .library
+                    .books
+                    .iter_mut()
+                    .find(|b| b.url == book_url)
                     && let Some(session) = book.sessions.iter_mut().find(|s| s.id == session_id)
                 {
                     session.name = name.clone();
                 }
                 state.db.rename_session(session_id, &name).ok();
                 if let Ok(loaded) = state.db.load_sessions_for_book(&book_url)
-                    && let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == book_url)
+                    && let Some(book) = state
+                        .lib
+                        .library
+                        .books
+                        .iter_mut()
+                        .find(|b| b.url == book_url)
                 {
                     book.sessions = loaded;
                 }
             } else {
-                if let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == book_url)
+                if let Some(book) = state
+                    .lib
+                    .library
+                    .books
+                    .iter_mut()
+                    .find(|b| b.url == book_url)
                     && let Ok(session) =
                         state
                             .db
                             .create_session(&book_url, &name, book.chapters.len() as u32)
                 {
-                        if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
-                            book.sessions = loaded;
-                        }
-                        if let Some(s) = book.sessions.iter().find(|s| s.id == session.id) {
-                            book.active_session_id = Some(s.id);
-                            state.reader.session_id = s.id;
-                            state.reader.session_name = s.name.clone();
-                            state.db.set_active_session(&book_url, Some(s.id)).ok();
-                        }
-                        if !book.chapters.is_empty() {
-                            state.reader.loading = true;
-                            state.ui.page = Page::Reader;
-                            if let Some(ch) = book.chapters.first() {
-                                let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), 0));
-                            }
+                    if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
+                        book.sessions = loaded;
+                    }
+                    if let Some(s) = book.sessions.iter().find(|s| s.id == session.id) {
+                        book.active_session_id = Some(s.id);
+                        state.reader.session_id = s.id;
+                        state.reader.session_name = s.name.clone();
+                        state.db.set_active_session(&book_url, Some(s.id)).ok();
+                    }
+                    if !book.chapters.is_empty() {
+                        state.reader.loading = true;
+                        state.ui.page = Page::Reader;
+                        if let Some(ch) = book.chapters.first() {
+                            let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), 0));
                         }
                     }
+                }
             }
             if let Modal::SessionPicker {
                 input,
@@ -269,12 +300,18 @@ fn handle_session_picker_editing(
             }
         }
         KEY_BACKSPACE => {
-            if let Modal::SessionPicker { input: Some(text), .. } = &mut state.ui.modal {
+            if let Modal::SessionPicker {
+                input: Some(text), ..
+            } = &mut state.ui.modal
+            {
                 text.pop();
             }
         }
         KeyCode::Char(c) => {
-            if let Modal::SessionPicker { input: Some(text), .. } = &mut state.ui.modal {
+            if let Modal::SessionPicker {
+                input: Some(text), ..
+            } = &mut state.ui.modal
+            {
                 text.push(c);
             }
         }
@@ -287,12 +324,15 @@ fn handle_session_picker_editing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::KeyCode;
     use crate::test_helpers::*;
+    use crossterm::event::KeyCode;
 
     fn setup_session_picker_state(sessions: usize, cursor: usize) -> AppState {
         let mut state = test_state();
-        state.lib.library.add_book("Test Book".into(), "test_url".into());
+        state
+            .lib
+            .library
+            .add_book("Test Book".into(), "test_url".into());
         if let Some(book) = state.lib.library.books.iter().find(|b| b.url == "test_url") {
             let _ = state.db.upsert_book(book);
         }
@@ -310,7 +350,13 @@ mod tests {
         }
         // Reload sessions from DB into library model
         if let Ok(loaded) = state.db.load_sessions_for_book("test_url") {
-            if let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == "test_url") {
+            if let Some(book) = state
+                .lib
+                .library
+                .books
+                .iter_mut()
+                .find(|b| b.url == "test_url")
+            {
                 book.sessions = loaded;
             }
         }

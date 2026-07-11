@@ -25,13 +25,19 @@ pub fn handle_input(
     if matches!(&state.ui.modal, Modal::SessionPicker { .. }) {
         return modal::handle_session_picker(state, key, cmd_tx);
     }
+    if matches!(&state.ui.modal, Modal::AddBook { .. }) {
+        return modal::handle_adding_book(&mut state.ui, key, cmd_tx);
+    }
+    if matches!(&state.ui.modal, Modal::JumpChapter { .. }) {
+        return modal::handle_jumping_chapter(state, key, cmd_tx);
+    }
+    if matches!(&state.ui.modal, Modal::InstallPlugin { .. }) {
+        return modal::handle_installing_plugin(&mut state.ui, key, cmd_tx);
+    }
     match &state.ui.page {
-        Page::AddingBook => modal::handle_adding_book(&mut state.ui, key, cmd_tx),
         Page::Library => library::handle_library(&mut state.ui, &mut state.lib, key, cmd_tx),
         Page::Settings => settings::handle_settings(&mut state.lib, key, cmd_tx),
         Page::Reader => reader::handle_reader(state, key, cmd_tx, size),
-        Page::BookChapterJump => modal::handle_jumping_chapter(state, key, cmd_tx),
-        Page::InstallingPlugin => modal::handle_installing_plugin(&mut state.ui, key, cmd_tx),
         Page::Jobs => jobs::handle_jobs(&mut state.jobs, &mut state.lib, key, cmd_tx),
     }
 }
@@ -40,13 +46,12 @@ pub fn handle_input(
 mod tests {
     use super::*;
     use crate::state::{Modal, Page};
-    use crossterm::event::KeyCode;
     use crate::test_helpers::*;
+    use crossterm::event::KeyCode;
 
     #[test]
     fn test_handle_input_adding_book_dispatches_correctly() {
         let mut state = test_state();
-        state.ui.page = Page::AddingBook;
         state.ui.modal = Modal::AddBook {
             inputs: vec!["he".into()],
             cursor: 0,
@@ -69,7 +74,7 @@ mod tests {
         let (tx, _rx) = channel();
         let result = handle_input(&mut state, key_event(KeyCode::Char('i')), &tx, rect());
         assert!(result);
-        assert_eq!(state.ui.page, Page::AddingBook);
+        assert_eq!(state.ui.page, Page::Library);
         assert_eq!(
             state.ui.modal,
             Modal::AddBook {
