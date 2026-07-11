@@ -19,7 +19,7 @@ pub fn handle_jumping_chapter(
         cursor,
         show_titles,
         ..
-    } = &mut state.modal
+    } = &mut state.ui.modal
     {
         match key.code {
             KEY_NAV_UP => {
@@ -55,7 +55,7 @@ pub fn handle_jumping_chapter(
     if let Some(cursor_val) = selected_cursor {
         let real_idx = if let Modal::JumpChapter {
             filtered, chapters, ..
-        } = &state.modal
+        } = &state.ui.modal
         {
             filtered
                 .get(cursor_val)
@@ -70,7 +70,7 @@ pub fn handle_jumping_chapter(
                 "INPUT",
                 &format!("Attempting jump: {}", idx),
             );
-            if let Some(book) = state.library.selected_book_mut() {
+            if let Some(book) = state.lib.library.selected_book_mut() {
                 let active_id = book.active_session_id;
                 if let Some(session) = book.sessions.iter_mut().find(|s| Some(s.id) == active_id) {
                     session.progress.current = idx as u32;
@@ -80,8 +80,8 @@ pub fn handle_jumping_chapter(
                 }
             }
         }
-        state.modal = Modal::None;
-        state.current_page = Page::Library;
+        state.ui.modal = Modal::None;
+        state.ui.page = Page::Library;
     }
     true
 }
@@ -105,11 +105,11 @@ mod tests {
 
     fn setup_jump_chapter_state(chapters: Vec<Chapter>, cursor: usize) -> AppState {
         let mut state = test_state();
-        state.library.add_book("Test Book".into(), "url".into());
-        if let Some(book) = state.library.selected_book_mut() {
+        state.lib.library.add_book("Test Book".into(), "url".into());
+        if let Some(book) = state.lib.library.selected_book_mut() {
             book.chapters = chapters.clone();
         }
-        state.modal = Modal::JumpChapter {
+        state.ui.modal = Modal::JumpChapter {
             chapters: chapters.clone(),
             query: String::new(),
             filtered: chapters,
@@ -117,7 +117,7 @@ mod tests {
             scroll_offset: 0,
             show_titles: true,
         };
-        state.current_page = Page::BookChapterJump;
+        state.ui.page = Page::BookChapterJump;
         state
     }
 
@@ -137,7 +137,7 @@ mod tests {
         ];
         let mut state = setup_jump_chapter_state(chapters, 1);
         state.reader.session_id = 0;
-        if let Some(book) = state.library.selected_book_mut() {
+        if let Some(book) = state.lib.library.selected_book_mut() {
             book.active_session_id = Some(0);
             book.sessions.push(crate::models::Session {
                 id: 0,
@@ -154,9 +154,9 @@ mod tests {
         let (tx, _rx) = channel();
         let result = handle_jumping_chapter(&mut state, key_event(KEY_ENTER), &tx);
         assert!(result);
-        assert_eq!(state.modal, Modal::None);
-        assert_eq!(state.current_page, Page::Library);
-        if let Some(book) = state.library.selected_book() {
+        assert_eq!(state.ui.modal, Modal::None);
+        assert_eq!(state.ui.page, Page::Library);
+        if let Some(book) = state.lib.library.selected_book() {
             if let Some(session) = book.sessions.iter().find(|s| s.id == 0) {
                 assert_eq!(session.progress.current, 1);
             } else {
@@ -189,13 +189,13 @@ mod tests {
         let mut state = setup_jump_chapter_state(chapters, 1);
         let (tx, _rx) = channel();
         handle_jumping_chapter(&mut state, key_event(KEY_NAV_UP), &tx);
-        if let Modal::JumpChapter { cursor, .. } = &state.modal {
+        if let Modal::JumpChapter { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         } else {
             panic!("Expected JumpChapter modal");
         }
         handle_jumping_chapter(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        if let Modal::JumpChapter { cursor, .. } = &state.modal {
+        if let Modal::JumpChapter { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 1);
         } else {
             panic!("Expected JumpChapter modal");
@@ -212,7 +212,7 @@ mod tests {
         let mut state = setup_jump_chapter_state(chapters, 0);
         let (tx, _rx) = channel();
         handle_jumping_chapter(&mut state, key_event(KEY_TOGGLE_TITLES), &tx);
-        if let Modal::JumpChapter { show_titles, .. } = &state.modal {
+        if let Modal::JumpChapter { show_titles, .. } = &state.ui.modal {
             assert!(!show_titles);
         } else {
             panic!("Expected JumpChapter modal");
@@ -229,7 +229,7 @@ mod tests {
         let mut state = setup_jump_chapter_state(chapters, 0);
         let (tx, _rx) = channel();
         handle_jumping_chapter(&mut state, key_event(KEY_NAV_UP), &tx);
-        if let Modal::JumpChapter { cursor, .. } = &state.modal {
+        if let Modal::JumpChapter { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         } else {
             panic!("Expected JumpChapter modal");
@@ -246,7 +246,7 @@ mod tests {
         let mut state = setup_jump_chapter_state(chapters, 0);
         let (tx, _rx) = channel();
         handle_jumping_chapter(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        if let Modal::JumpChapter { cursor, .. } = &state.modal {
+        if let Modal::JumpChapter { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         } else {
             panic!("Expected JumpChapter modal");

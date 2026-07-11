@@ -102,10 +102,10 @@ fn parse_github_url(url: &str) -> Result<(String, String), String> {
 
 fn discover_schema_from_bytes(wasm_data: &[u8], wasm_path: &std::path::Path) -> PluginSchema {
     let schema_path = wasm_path.with_extension("schema.json");
-    if let Ok(contents) = std::fs::read_to_string(&schema_path) {
-        if let Ok(schema) = serde_json::from_str(&contents) {
-            return schema;
-        }
+    if let Ok(contents) = std::fs::read_to_string(&schema_path)
+        && let Ok(schema) = serde_json::from_str(&contents)
+    {
+        return schema;
     }
 
     let curl_fetch_fn = Function::new(

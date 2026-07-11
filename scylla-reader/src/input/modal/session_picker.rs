@@ -13,7 +13,7 @@ pub fn handle_session_picker(
         cursor,
         input,
         ..
-    } = &state.modal
+    } = &state.ui.modal
     {
         (book_url.clone(), *cursor, input.is_some())
     } else {
@@ -26,39 +26,37 @@ pub fn handle_session_picker(
 
     match key.code {
         KEY_NAV_UP => {
-            if let Modal::SessionPicker { cursor, .. } = &mut state.modal {
-                if *cursor > 0 {
-                    *cursor -= 1;
-                }
+            if let Modal::SessionPicker { cursor, .. } = &mut state.ui.modal
+                && *cursor > 0
+            {
+                *cursor -= 1;
             }
         }
         KEY_NAV_DOWN => {
-            if let Modal::SessionPicker { cursor, .. } = &mut state.modal {
-                if let Some(book) = state.library.books.iter().find(|b| b.url == book_url) {
-                    if *cursor < book.sessions.len().saturating_sub(1) {
-                        *cursor += 1;
-                    }
-                }
+            if let Modal::SessionPicker { cursor, .. } = &mut state.ui.modal
+                && let Some(book) = state.lib.library.books.iter().find(|b| b.url == book_url)
+                && *cursor < book.sessions.len().saturating_sub(1)
+            {
+                *cursor += 1;
             }
         }
         KEY_ESCAPE => {
             if let Modal::SessionPicker {
                 pending_delete_url, ..
-            } = &mut state.modal
+            } = &mut state.ui.modal
             {
                 *pending_delete_url = None;
             }
-            state.modal = Modal::None;
+            state.ui.modal = Modal::None;
         }
         KEY_ENTER => {
             if let Modal::SessionPicker {
                 pending_delete_url, ..
-            } = &mut state.modal
+            } = &mut state.ui.modal
             {
                 *pending_delete_url = None;
             }
-            let session = state
-                .library
+            let session = state.lib.library
                 .books
                 .iter()
                 .find(|b| b.url == book_url)
@@ -67,25 +65,25 @@ pub fn handle_session_picker(
             if let Some(session) = session {
                 state.reader.session_id = session.id;
                 state.reader.session_name = session.name.clone();
-                if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
+                if let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == book_url) {
                     book.active_session_id = Some(session.id);
                 }
                 state
                     .db
                     .set_active_session(&book_url, Some(session.id))
                     .ok();
-                if let Some(book) = state.library.books.iter().find(|b| b.url == book_url) {
-                    if !book.chapters.is_empty() {
-                        let idx = (session.progress.current as usize).min(book.chapters.len() - 1);
-                        state.reader.loading = true;
-                        state.current_page = Page::Reader;
-                        if let Some(ch) = book.chapters.get(idx) {
-                            let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), idx));
-                        }
+                if let Some(book) = state.lib.library.books.iter().find(|b| b.url == book_url)
+                    && !book.chapters.is_empty()
+                {
+                    let idx = (session.progress.current as usize).min(book.chapters.len() - 1);
+                    state.reader.loading = true;
+                    state.ui.page = Page::Reader;
+                    if let Some(ch) = book.chapters.get(idx) {
+                        let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), idx));
                     }
                 }
             }
-            state.modal = Modal::None;
+            state.ui.modal = Modal::None;
         }
         KEY_NEW_SESSION => {
             if let Modal::SessionPicker {
@@ -94,7 +92,7 @@ pub fn handle_session_picker(
                 editing_id,
                 pending_delete_url,
                 ..
-            } = &mut state.modal
+            } = &mut state.ui.modal
             {
                 *cursor = 0;
                 *input = Some(String::new());
@@ -105,25 +103,22 @@ pub fn handle_session_picker(
         KEY_RENAME_SESSION => {
             if let Modal::SessionPicker {
                 pending_delete_url, ..
-            } = &mut state.modal
+            } = &mut state.ui.modal
             {
                 *pending_delete_url = None;
             }
-            if let Some(book) = state.library.books.iter().find(|b| b.url == book_url) {
-                if let Some(session) = book.sessions.get(cursor) {
-                    if let Modal::SessionPicker {
-                        input, editing_id, ..
-                    } = &mut state.modal
-                    {
-                        *input = Some(session.name.clone());
-                        *editing_id = Some(session.id);
-                    }
-                }
+            if let Some(book) = state.lib.library.books.iter().find(|b| b.url == book_url)
+                && let Some(session) = book.sessions.get(cursor)
+                && let Modal::SessionPicker {
+                    input, editing_id, ..
+                } = &mut state.ui.modal
+            {
+                *input = Some(session.name.clone());
+                *editing_id = Some(session.id);
             }
         }
         KEY_DELETE_SESSION => {
-            let session_count = state
-                .library
+            let session_count = state.lib.library
                 .books
                 .iter()
                 .find(|b| b.url == book_url)
@@ -131,20 +126,18 @@ pub fn handle_session_picker(
                 .unwrap_or(0);
             if cursor < session_count {
                 let is_last_session = session_count == 1;
-                if is_last_session {
-                    if let Modal::SessionPicker {
+                if is_last_session
+                    && let Modal::SessionPicker {
                         pending_delete_url, ..
-                    } = &mut state.modal
-                    {
-                        if pending_delete_url.is_none() {
-                            *pending_delete_url = Some(book_url.clone());
-                            return true;
-                        }
-                        *pending_delete_url = None;
+                    } = &mut state.ui.modal
+                {
+                    if pending_delete_url.is_none() {
+                        *pending_delete_url = Some(book_url.clone());
+                        return true;
                     }
+                    *pending_delete_url = None;
                 }
-                let session_id = state
-                    .library
+                let session_id = state.lib.library
                     .books
                     .iter()
                     .find(|b| b.url == book_url)
@@ -153,27 +146,26 @@ pub fn handle_session_picker(
                 if let Some(session_id) = session_id {
                     if session_count > 1 {
                         state.db.delete_session(session_id).ok();
-                        if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
-                            if let Some(book) =
-                                state.library.books.iter_mut().find(|b| b.url == book_url)
-                            {
-                                book.sessions = loaded;
-                            }
+                        if let Ok(loaded) = state.db.load_sessions_for_book(&book_url)
+                            && let Some(book) =
+                                state.lib.library.books.iter_mut().find(|b| b.url == book_url)
+                        {
+                            book.sessions = loaded;
                         }
                         let new_cursor = cursor.min(session_count.saturating_sub(2));
-                        if let Modal::SessionPicker { cursor: c, .. } = &mut state.modal {
+                        if let Modal::SessionPicker { cursor: c, .. } = &mut state.ui.modal {
                             *c = new_cursor;
                         }
                     } else {
                         state.db.delete_book(&book_url).ok();
-                        state.library.books.retain(|b| b.url != book_url);
-                        let new_len = state.library.visible_indices().len();
-                        if state.library.selected_index > 0
-                            && state.library.selected_index >= new_len
+                        state.lib.library.books.retain(|b| b.url != book_url);
+                        let new_len = state.lib.library.visible_indices().len();
+                        if state.lib.library.selected_index > 0
+                            && state.lib.library.selected_index >= new_len
                         {
-                            state.library.selected_index -= 1;
+                            state.lib.library.selected_index -= 1;
                         }
-                        state.modal = Modal::None;
+                        state.ui.modal = Modal::None;
                     }
                 }
             }
@@ -181,7 +173,7 @@ pub fn handle_session_picker(
         _ => {
             if let Modal::SessionPicker {
                 pending_delete_url, ..
-            } = &mut state.modal
+            } = &mut state.ui.modal
             {
                 *pending_delete_url = None;
             }
@@ -201,7 +193,7 @@ fn handle_session_picker_editing(
         editing_id,
         input,
         ..
-    } = &state.modal
+    } = &state.ui.modal
     {
         (
             book_url.clone(),
@@ -216,7 +208,7 @@ fn handle_session_picker_editing(
         KEY_ESCAPE => {
             if let Modal::SessionPicker {
                 input, editing_id, ..
-            } = &mut state.modal
+            } = &mut state.ui.modal
             {
                 *input = None;
                 *editing_id = None;
@@ -228,24 +220,24 @@ fn handle_session_picker_editing(
                 return true;
             }
             if let Some(session_id) = editing_id {
-                if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
-                    if let Some(session) = book.sessions.iter_mut().find(|s| s.id == session_id) {
-                        session.name = name.clone();
-                    }
+                if let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == book_url)
+                    && let Some(session) = book.sessions.iter_mut().find(|s| s.id == session_id)
+                {
+                    session.name = name.clone();
                 }
                 state.db.rename_session(session_id, &name).ok();
-                if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
-                    if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
-                        book.sessions = loaded;
-                    }
+                if let Ok(loaded) = state.db.load_sessions_for_book(&book_url)
+                    && let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == book_url)
+                {
+                    book.sessions = loaded;
                 }
             } else {
-                if let Some(book) = state.library.books.iter_mut().find(|b| b.url == book_url) {
-                    if let Ok(session) =
+                if let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == book_url)
+                    && let Ok(session) =
                         state
                             .db
                             .create_session(&book_url, &name, book.chapters.len() as u32)
-                    {
+                {
                         if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
                             book.sessions = loaded;
                         }
@@ -257,20 +249,19 @@ fn handle_session_picker_editing(
                         }
                         if !book.chapters.is_empty() {
                             state.reader.loading = true;
-                            state.current_page = Page::Reader;
+                            state.ui.page = Page::Reader;
                             if let Some(ch) = book.chapters.first() {
                                 let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), 0));
                             }
                         }
                     }
-                }
             }
             if let Modal::SessionPicker {
                 input,
                 editing_id,
                 cursor,
                 ..
-            } = &mut state.modal
+            } = &mut state.ui.modal
             {
                 *input = None;
                 *editing_id = None;
@@ -278,17 +269,13 @@ fn handle_session_picker_editing(
             }
         }
         KEY_BACKSPACE => {
-            if let Modal::SessionPicker { input, .. } = &mut state.modal {
-                if let Some(text) = input {
-                    text.pop();
-                }
+            if let Modal::SessionPicker { input: Some(text), .. } = &mut state.ui.modal {
+                text.pop();
             }
         }
         KeyCode::Char(c) => {
-            if let Modal::SessionPicker { input, .. } = &mut state.modal {
-                if let Some(text) = input {
-                    text.push(c);
-                }
+            if let Modal::SessionPicker { input: Some(text), .. } = &mut state.ui.modal {
+                text.push(c);
             }
         }
         _ => {}
@@ -305,8 +292,8 @@ mod tests {
 
     fn setup_session_picker_state(sessions: usize, cursor: usize) -> AppState {
         let mut state = test_state();
-        state.library.add_book("Test Book".into(), "test_url".into());
-        if let Some(book) = state.library.books.iter().find(|b| b.url == "test_url") {
+        state.lib.library.add_book("Test Book".into(), "test_url".into());
+        if let Some(book) = state.lib.library.books.iter().find(|b| b.url == "test_url") {
             let _ = state.db.upsert_book(book);
         }
         // Remove the default "Initial" session that upsert_book created
@@ -323,11 +310,11 @@ mod tests {
         }
         // Reload sessions from DB into library model
         if let Ok(loaded) = state.db.load_sessions_for_book("test_url") {
-            if let Some(book) = state.library.books.iter_mut().find(|b| b.url == "test_url") {
+            if let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == "test_url") {
                 book.sessions = loaded;
             }
         }
-        state.modal = Modal::SessionPicker {
+        state.ui.modal = Modal::SessionPicker {
             book_url: "test_url".into(),
             cursor,
             scroll_offset: 0,
@@ -343,11 +330,11 @@ mod tests {
         let mut state = setup_session_picker_state(3, 1);
         let (tx, _rx) = channel();
         handle_session_picker(&mut state, key_event(KEY_NAV_UP), &tx);
-        if let Modal::SessionPicker { cursor, .. } = &state.modal {
+        if let Modal::SessionPicker { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         }
         handle_session_picker(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        if let Modal::SessionPicker { cursor, .. } = &state.modal {
+        if let Modal::SessionPicker { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 1);
         }
     }
@@ -357,7 +344,7 @@ mod tests {
         let mut state = setup_session_picker_state(2, 0);
         let (tx, _rx) = channel();
         handle_session_picker(&mut state, key_event(KEY_ESCAPE), &tx);
-        assert_eq!(state.modal, Modal::None);
+        assert_eq!(state.ui.modal, Modal::None);
     }
 
     #[test]
@@ -365,7 +352,7 @@ mod tests {
         let mut state = setup_session_picker_state(1, 0);
         let (tx, _rx) = channel();
         handle_session_picker(&mut state, key_event(KEY_NEW_SESSION), &tx);
-        if let Modal::SessionPicker { input, .. } = &state.modal {
+        if let Modal::SessionPicker { input, .. } = &state.ui.modal {
             assert!(input.is_some());
         } else {
             panic!("Expected SessionPicker modal");
@@ -377,9 +364,9 @@ mod tests {
         let mut state = setup_session_picker_state(3, 0);
         let (tx, _rx) = channel();
         handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
-        if let Modal::SessionPicker { cursor, .. } = &state.modal {
+        if let Modal::SessionPicker { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
-            if let Some(book) = state.library.books.iter().find(|b| b.url == "test_url") {
+            if let Some(book) = state.lib.library.books.iter().find(|b| b.url == "test_url") {
                 assert_eq!(book.sessions.len(), 2);
             } else {
                 panic!("Expected book");
@@ -397,7 +384,7 @@ mod tests {
         handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
         if let Modal::SessionPicker {
             pending_delete_url, ..
-        } = &state.modal
+        } = &state.ui.modal
         {
             assert_eq!(
                 pending_delete_url.as_deref(),
@@ -408,8 +395,8 @@ mod tests {
             panic!("Expected SessionPicker modal");
         }
         // Book should still exist
-        assert_eq!(state.library.books.len(), 1);
-        assert!(!matches!(state.modal, Modal::None));
+        assert_eq!(state.lib.library.books.len(), 1);
+        assert!(!matches!(state.ui.modal, Modal::None));
     }
 
     #[test]
@@ -418,15 +405,15 @@ mod tests {
         // Set pending_delete_url to simulate first press
         if let Modal::SessionPicker {
             pending_delete_url, ..
-        } = &mut state.modal
+        } = &mut state.ui.modal
         {
             *pending_delete_url = Some("test_url".into());
         }
         let (tx, _rx) = channel();
         // Second 'd' press: confirms deletion
         handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
-        assert_eq!(state.library.books.len(), 0, "Book should be deleted");
-        assert_eq!(state.modal, Modal::None, "Modal should be closed");
+        assert_eq!(state.lib.library.books.len(), 0, "Book should be deleted");
+        assert_eq!(state.ui.modal, Modal::None, "Modal should be closed");
     }
 
     #[test]
@@ -434,7 +421,7 @@ mod tests {
         let mut state = setup_session_picker_state(1, 0);
         if let Modal::SessionPicker {
             pending_delete_url, ..
-        } = &mut state.modal
+        } = &mut state.ui.modal
         {
             *pending_delete_url = Some("test_url".into());
         }
@@ -443,7 +430,7 @@ mod tests {
         handle_session_picker(&mut state, key_event(KeyCode::Char('x')), &tx);
         if let Modal::SessionPicker {
             pending_delete_url, ..
-        } = &state.modal
+        } = &state.ui.modal
         {
             assert!(
                 pending_delete_url.is_none(),
@@ -453,7 +440,7 @@ mod tests {
             panic!("Expected SessionPicker modal");
         }
         // Book should still exist
-        assert_eq!(state.library.books.len(), 1);
+        assert_eq!(state.lib.library.books.len(), 1);
     }
 
     #[test]
@@ -461,14 +448,14 @@ mod tests {
         let mut state = setup_session_picker_state(1, 0);
         if let Modal::SessionPicker {
             pending_delete_url, ..
-        } = &mut state.modal
+        } = &mut state.ui.modal
         {
             *pending_delete_url = Some("test_url".into());
         }
         let (tx, _rx) = channel();
         // Esc should close the modal entirely (it already clears pending_delete_url in the Esc handler)
         handle_session_picker(&mut state, key_event(KEY_ESCAPE), &tx);
-        assert_eq!(state.modal, Modal::None);
+        assert_eq!(state.ui.modal, Modal::None);
     }
 
     #[test]
@@ -476,7 +463,7 @@ mod tests {
         let mut state = setup_session_picker_state(2, 0);
         let (tx, _rx) = channel();
         handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
-        assert_eq!(state.modal, Modal::None);
+        assert_eq!(state.ui.modal, Modal::None);
         assert_eq!(state.reader.session_name, "Session 0");
     }
 }

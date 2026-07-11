@@ -1,5 +1,7 @@
 //! Top-level app state — owns reader, library, settings, and modal substates.
 
+pub mod lib;
+pub use lib::LibraryState;
 pub mod modal;
 pub use modal::Modal;
 pub mod page;
@@ -7,25 +9,22 @@ pub use page::Page;
 pub mod palette_action;
 pub mod reader;
 pub use reader::ReaderState;
+pub mod ui;
+pub use ui::UiState;
 pub mod jobs;
 pub use jobs::JobsState;
 pub mod settings_ui;
 
 use crate::db::Db;
-use crate::library::Library;
-use crate::settings::Settings;
 
 pub struct AppState {
-    pub library: Library,
-    pub current_page: Page,
-    pub modal: Modal,
-    pub settings: Settings,
-    pub settings_ui: settings_ui::SettingsUiState,
-    pub reader: ReaderState,
-    pub jobs_state: JobsState,
-    pub db: Db,
-    pub show_hints: bool,
+    pub(crate) ui: UiState,
+    pub(crate) lib: LibraryState,
+    pub(crate) reader: ReaderState,
+    pub(crate) jobs: JobsState,
+    pub(crate) db: Db,
 }
+
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
@@ -35,13 +34,10 @@ impl Default for AppState {
 impl AppState {
     pub fn new() -> Self {
         let mut state = Self {
-            library: Library::new(),
-            current_page: Page::Library,
-            modal: Modal::None,
-            settings: Settings::new(),
-            settings_ui: settings_ui::SettingsUiState::new(),
+            ui: UiState::new(),
+            lib: LibraryState::new(),
             reader: ReaderState::new(),
-            jobs_state: JobsState::new(),
+            jobs: JobsState::new(),
             db: Db::open().unwrap_or_else(|e| {
                 crate::settings::log(
                     crate::settings::LogLevel::Error,
@@ -50,29 +46,44 @@ impl AppState {
                 );
                 panic!("Could not open database");
             }),
-            show_hints: true,
         };
-        state.jobs_state.max_workers = state.settings.max_workers;
+        state.jobs.max_workers = state.lib.settings.max_workers;
         state
     }
 
     pub fn close_modal(&mut self) {
-        self.modal = Modal::None;
+        self.ui.modal = Modal::None;
     }
 
     #[cfg(test)]
     pub fn from_parts(db: crate::db::Db, library: crate::library::Library) -> Self {
         Self {
-            library,
-            current_page: Page::Library,
-            modal: Modal::None,
-            settings: Settings::new(),
-            settings_ui: settings_ui::SettingsUiState::new(),
+            ui: UiState::new(),
+            lib: LibraryState {
+                library,
+                settings: crate::settings::Settings::new(),
+                settings_ui: crate::state::settings_ui::SettingsUiState::new(),
+            },
             reader: ReaderState::new(),
-            jobs_state: JobsState::new(),
+            jobs: JobsState::new(),
             db,
-            show_hints: true,
         }
+    }
+
+    pub fn set_page(&mut self, page: Page) {
+        self.ui.page = page;
+    }
+
+    pub fn set_modal(&mut self, modal: Modal) {
+        self.ui.modal = modal;
+    }
+
+    pub fn page(&self) -> &Page {
+        &self.ui.page
+    }
+
+    pub fn modal(&self) -> &Modal {
+        &self.ui.modal
     }
 
     pub fn open_reader_chapter(
@@ -84,11 +95,13 @@ impl AppState {
         session_name: String,
     ) {
         let book_title = self
+            .lib
             .library
             .selected_book()
             .map(|b| b.title.clone())
             .unwrap_or_default();
         let book_url = self
+            .lib
             .library
             .selected_book()
             .map(|b| b.url.clone())
@@ -97,7 +110,7 @@ impl AppState {
             .load(book_title, book_url, chapter_title, content, chapter_idx);
         self.reader.session_id = session_id;
         self.reader.session_name = session_name;
-        self.current_page = Page::Reader;
+        self.ui.page = Page::Reader;
     }
 }
 
@@ -105,6 +118,7 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::db::Db;
+    use crate::library::Library;
 
     fn test_state() -> AppState {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -115,21 +129,21 @@ mod tests {
     #[test]
     fn test_close_modal_sets_none() {
         let mut state = test_state();
-        state.modal = Modal::AddBook {
+        state.ui.modal = Modal::AddBook {
             inputs: vec!["url".into()],
             cursor: 0,
             scroll_offset: 0,
         };
         state.close_modal();
-        assert_eq!(state.modal, Modal::None);
+        assert_eq!(state.ui.modal, Modal::None);
     }
 
     #[test]
     fn test_open_reader_chapter_with_selected_book() {
         let mut state = test_state();
-        state.library.add_book("Test Book".into(), "url".into());
+        state.lib.library.add_book("Test Book".into(), "url".into());
         state.open_reader_chapter("Ch1".into(), "content".into(), 0, 1, "default".into());
-        assert_eq!(state.current_page, Page::Reader);
+        assert_eq!(state.ui.page, Page::Reader);
         assert_eq!(state.reader.book_title, "Test Book");
         assert_eq!(state.reader.chapter_title, "Ch1");
         assert_eq!(state.reader.session_id, 1);
@@ -140,22 +154,22 @@ mod tests {
     fn test_open_reader_chapter_without_selected_book() {
         let mut state = test_state();
         state.open_reader_chapter("Ch1".into(), "content".into(), 0, 1, "default".into());
-        assert_eq!(state.current_page, Page::Reader);
+        assert_eq!(state.ui.page, Page::Reader);
         assert!(state.reader.book_title.is_empty());
     }
 
     #[test]
     fn test_show_hints_defaults_to_true() {
         let state = test_state();
-        assert!(state.show_hints);
+        assert!(state.ui.show_hints);
     }
 
     #[test]
     fn test_toggle_show_hints() {
         let mut state = test_state();
-        assert!(state.show_hints);
-        state.show_hints = false;
-        assert!(!state.show_hints);
+        assert!(state.ui.show_hints);
+        state.ui.show_hints = false;
+        assert!(!state.ui.show_hints);
     }
 
     #[test]
@@ -182,10 +196,10 @@ mod tests {
     #[test]
     fn test_page_transitions() {
         let mut state = test_state();
-        assert_eq!(state.current_page, Page::Library);
-        state.current_page = Page::Settings;
-        assert_eq!(state.current_page, Page::Settings);
-        state.current_page = Page::Library;
-        assert_eq!(state.current_page, Page::Library);
+        assert_eq!(state.ui.page, Page::Library);
+        state.ui.page = Page::Settings;
+        assert_eq!(state.ui.page, Page::Settings);
+        state.ui.page = Page::Library;
+        assert_eq!(state.ui.page, Page::Library);
     }
 }

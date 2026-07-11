@@ -36,16 +36,11 @@ pub enum JobStatus {
 }
 
 // stub for future use: JobPriority
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum JobPriority {
+    #[default]
     Normal,
     High,
-}
-
-impl Default for JobPriority {
-    fn default() -> Self {
-        JobPriority::Normal
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -88,18 +83,13 @@ impl Job {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum JobFilter {
+    #[default]
     All,
     Running,
     Completed,
     Failed,
-}
-
-impl Default for JobFilter {
-    fn default() -> Self {
-        JobFilter::All
-    }
 }
 
 impl std::fmt::Display for JobFilter {

@@ -1,15 +1,15 @@
 use crate::input::keybinds::*;
 use crate::messenger::AppCommand;
-use crate::state::{AppState, Modal, Page};
+use crate::state::{UiState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_adding_book(
-    state: &mut AppState,
+    ui: &mut UiState,
     key: KeyEvent,
     cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
 ) -> bool {
     if let (KEY_SUBMIT_MODIFIER, KEY_SUBMIT) = (key.modifiers, key.code) {
-        let urls: Vec<String> = if let Modal::AddBook { inputs, .. } = &state.modal {
+        let urls: Vec<String> = if let Modal::AddBook { inputs, .. } = &ui.modal {
             inputs
                 .iter()
                 .map(|s| s.trim().to_string())
@@ -42,12 +42,12 @@ pub fn handle_adding_book(
             }
         }
 
-        state.modal = Modal::None;
-        state.current_page = Page::Library;
+        ui.modal = Modal::None;
+        ui.page = Page::Library;
         return true;
     }
 
-    if let Modal::AddBook { inputs, cursor, .. } = &mut state.modal {
+    if let Modal::AddBook { inputs, cursor, .. } = &mut ui.modal {
         match key.code {
             KEY_ENTER => {
                 inputs.insert(*cursor + 1, String::new());
@@ -96,14 +96,14 @@ mod tests {
         KeyEvent::new(KEY_SUBMIT, KEY_SUBMIT_MODIFIER)
     }
 
-    fn setup_add_book_state(inputs: Vec<String>, cursor: usize) -> AppState {
+    fn setup_add_book_state(inputs: Vec<String>, cursor: usize) -> crate::state::AppState {
         let mut state = test_state();
-        state.modal = Modal::AddBook {
+        state.ui.modal = Modal::AddBook {
             inputs,
             cursor,
             scroll_offset: 0,
         };
-        state.current_page = Page::AddingBook;
+        state.ui.page = Page::AddingBook;
         state
     }
 
@@ -114,10 +114,10 @@ mod tests {
             0,
         );
         let (tx, rx) = channel();
-        let result = handle_adding_book(&mut state, key_event_ctrl_s(), &tx);
+        let result = handle_adding_book(&mut state.ui, key_event_ctrl_s(), &tx);
         assert!(result);
-        assert_eq!(state.modal, Modal::None);
-        assert_eq!(state.current_page, Page::Library);
+        assert_eq!(state.ui.modal, Modal::None);
+        assert_eq!(state.ui.page, Page::Library);
 
         let received: Vec<AppCommand> = rx.try_iter().collect();
         assert_eq!(received.len(), 2);
@@ -129,10 +129,10 @@ mod tests {
     fn test_handle_adding_book_ctrl_s_empty_inputs_does_not_submit() {
         let mut state = setup_add_book_state(vec!["".into(), "  ".into()], 0);
         let (tx, rx) = channel();
-        let result = handle_adding_book(&mut state, key_event_ctrl_s(), &tx);
+        let result = handle_adding_book(&mut state.ui, key_event_ctrl_s(), &tx);
         assert!(result);
-        assert_eq!(state.modal, Modal::None);
-        assert_eq!(state.current_page, Page::Library);
+        assert_eq!(state.ui.modal, Modal::None);
+        assert_eq!(state.ui.page, Page::Library);
 
         let received: Vec<AppCommand> = rx.try_iter().collect();
         assert!(received.is_empty());
@@ -142,9 +142,9 @@ mod tests {
     fn test_handle_adding_book_enter_adds_new_line() {
         let mut state = setup_add_book_state(vec!["line1".into(), "line2".into()], 0);
         let (tx, _rx) = channel();
-        let result = handle_adding_book(&mut state, key_event(KEY_ENTER), &tx);
+        let result = handle_adding_book(&mut state.ui, key_event(KEY_ENTER), &tx);
         assert!(result);
-        if let Modal::AddBook { inputs, cursor, .. } = &state.modal {
+        if let Modal::AddBook { inputs, cursor, .. } = &state.ui.modal {
             assert_eq!(inputs.len(), 3);
             assert_eq!(inputs[0], "line1");
             assert_eq!(inputs[1], "");
@@ -159,9 +159,9 @@ mod tests {
     fn test_handle_adding_book_backspace_deletes_empty_line() {
         let mut state = setup_add_book_state(vec!["a".into(), "".into(), "b".into()], 1);
         let (tx, _rx) = channel();
-        let result = handle_adding_book(&mut state, key_event(KEY_BACKSPACE), &tx);
+        let result = handle_adding_book(&mut state.ui, key_event(KEY_BACKSPACE), &tx);
         assert!(result);
-        if let Modal::AddBook { inputs, cursor, .. } = &state.modal {
+        if let Modal::AddBook { inputs, cursor, .. } = &state.ui.modal {
             assert_eq!(inputs.len(), 2);
             assert_eq!(inputs[0], "a");
             assert_eq!(inputs[1], "b");
@@ -175,9 +175,9 @@ mod tests {
     fn test_handle_adding_book_backspace_pops_char_on_non_empty_line() {
         let mut state = setup_add_book_state(vec!["hello".into()], 0);
         let (tx, _rx) = channel();
-        let result = handle_adding_book(&mut state, key_event(KEY_BACKSPACE), &tx);
+        let result = handle_adding_book(&mut state.ui, key_event(KEY_BACKSPACE), &tx);
         assert!(result);
-        if let Modal::AddBook { inputs, .. } = &state.modal {
+        if let Modal::AddBook { inputs, .. } = &state.ui.modal {
             assert_eq!(inputs[0], "hell");
         } else {
             panic!("Expected AddBook modal");
@@ -188,14 +188,14 @@ mod tests {
     fn test_handle_adding_book_up_down_navigation() {
         let mut state = setup_add_book_state(vec!["a".into(), "b".into(), "c".into()], 1);
         let (tx, _rx) = channel();
-        handle_adding_book(&mut state, key_event(KEY_NAV_UP), &tx);
-        if let Modal::AddBook { cursor, .. } = &state.modal {
+        handle_adding_book(&mut state.ui, key_event(KEY_NAV_UP), &tx);
+        if let Modal::AddBook { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         } else {
             panic!("Expected AddBook modal");
         }
-        handle_adding_book(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        if let Modal::AddBook { cursor, .. } = &state.modal {
+        handle_adding_book(&mut state.ui, key_event(KEY_NAV_DOWN), &tx);
+        if let Modal::AddBook { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 1);
         } else {
             panic!("Expected AddBook modal");
@@ -206,8 +206,8 @@ mod tests {
     fn test_handle_adding_book_up_stays_at_top() {
         let mut state = setup_add_book_state(vec!["a".into(), "b".into()], 0);
         let (tx, _rx) = channel();
-        handle_adding_book(&mut state, key_event(KEY_NAV_UP), &tx);
-        if let Modal::AddBook { cursor, .. } = &state.modal {
+        handle_adding_book(&mut state.ui, key_event(KEY_NAV_UP), &tx);
+        if let Modal::AddBook { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         } else {
             panic!("Expected AddBook modal");
@@ -218,8 +218,8 @@ mod tests {
     fn test_handle_adding_book_down_stays_at_bottom() {
         let mut state = setup_add_book_state(vec!["a".into(), "b".into()], 1);
         let (tx, _rx) = channel();
-        handle_adding_book(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        if let Modal::AddBook { cursor, .. } = &state.modal {
+        handle_adding_book(&mut state.ui, key_event(KEY_NAV_DOWN), &tx);
+        if let Modal::AddBook { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 1);
         } else {
             panic!("Expected AddBook modal");
@@ -230,9 +230,9 @@ mod tests {
     fn test_handle_adding_book_types_characters() {
         let mut state = setup_add_book_state(vec!["he".into()], 0);
         let (tx, _rx) = channel();
-        handle_adding_book(&mut state, key_event(KeyCode::Char('l')), &tx);
-        handle_adding_book(&mut state, key_event(KeyCode::Char('o')), &tx);
-        if let Modal::AddBook { inputs, .. } = &state.modal {
+        handle_adding_book(&mut state.ui, key_event(KeyCode::Char('l')), &tx);
+        handle_adding_book(&mut state.ui, key_event(KeyCode::Char('o')), &tx);
+        if let Modal::AddBook { inputs, .. } = &state.ui.modal {
             assert_eq!(inputs[0], "helo");
         } else {
             panic!("Expected AddBook modal");

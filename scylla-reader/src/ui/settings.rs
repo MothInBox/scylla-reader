@@ -1,21 +1,21 @@
 use crate::settings::{SettingsField, SettingsPage};
-use crate::state::AppState;
+use crate::state::{LibraryState, UiState};
 use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
-    match state.settings_ui.settings_page {
-        SettingsPage::Main => draw_main(frame, area, state),
-        SettingsPage::DebugLog => draw_debug_log(frame, area, state),
-        SettingsPage::PluginList => draw_plugin_list(frame, area, state),
-        SettingsPage::PluginFields => draw_plugin_fields(frame, area, state),
-        SettingsPage::PluginFieldEdit => draw_plugin_field_edit(frame, area, state),
+pub fn draw(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
+    match lib.settings_ui.settings_page {
+        SettingsPage::Main => draw_main(frame, area, lib, ui),
+        SettingsPage::DebugLog => draw_debug_log(frame, area, lib, ui),
+        SettingsPage::PluginList => draw_plugin_list(frame, area, lib, ui),
+        SettingsPage::PluginFields => draw_plugin_fields(frame, area, lib, ui),
+        SettingsPage::PluginFieldEdit => draw_plugin_field_edit(frame, area, lib, ui),
     }
 }
 
-fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
-    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
+fn draw_main(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
+    let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
@@ -28,7 +28,7 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
             ListItem::new(format!(
                 "  {}: {}",
                 f.label(),
-                state.settings.field_value(f)
+                lib.settings.field_value(f)
             ))
         })
         .collect();
@@ -39,14 +39,14 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &AppState) {
         .highlight_symbol(">> ");
 
     let mut list_state = ListState::default();
-    list_state.select(Some(state.settings_ui.selected_field));
+    list_state.select(Some(lib.settings_ui.selected_field));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    draw_hints(frame, chunks[1], state.show_hints);
+    draw_hints(frame, chunks[1], ui.show_hints);
 }
 
-fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
-    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
+fn draw_debug_log(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
+    let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -56,7 +56,7 @@ fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
         ])
         .split(area);
 
-    let toggle_status = if state.settings.debug_log {
+    let toggle_status = if lib.settings.debug_log {
         "ON"
     } else {
         "OFF"
@@ -68,24 +68,24 @@ fn draw_debug_log(frame: &mut Frame, area: Rect, state: &AppState) {
     .block(Block::default().title(" Debug Log ").borders(Borders::ALL));
     frame.render_widget(toggle_line, chunks[0]);
 
-    let log_content = state.settings_ui.log_lines.join("\n");
+    let log_content = lib.settings_ui.log_lines.join("\n");
     let log_widget = Paragraph::new(log_content)
         .block(Block::default().title(" Log ").borders(Borders::ALL))
-        .scroll((state.settings_ui.log_scroll as u16, 0))
+        .scroll((lib.settings_ui.log_scroll as u16, 0))
         .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(log_widget, chunks[1]);
 
-    draw_hints(frame, chunks[2], state.show_hints);
+    draw_hints(frame, chunks[2], ui.show_hints);
 }
 
-fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
-    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
+fn draw_plugin_list(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
+    let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
-    let items: Vec<ListItem> = state
+    let items: Vec<ListItem> = lib
         .settings
         .plugin_configs
         .iter()
@@ -102,23 +102,23 @@ fn draw_plugin_list(frame: &mut Frame, area: Rect, state: &AppState) {
         .highlight_symbol(">> ");
 
     let mut list_state = ListState::default();
-    list_state.select(Some(state.settings_ui.selected_plugin));
+    list_state.select(Some(lib.settings_ui.selected_plugin));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    draw_hints(frame, chunks[1], state.show_hints);
+    draw_hints(frame, chunks[1], ui.show_hints);
 }
 
-fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
-    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
+fn draw_plugin_fields(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
+    let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
-    let Some(config) = state
+    let Some(config) = lib
         .settings
         .plugin_configs
-        .get(state.settings_ui.selected_plugin)
+        .get(lib.settings_ui.selected_plugin)
     else {
         return;
     };
@@ -141,7 +141,7 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let cookie_extra = if config.accepts_cookies { 1 } else { 0 };
     let field_count = config.schema.len() + cookie_extra;
-    let clamped = state
+    let clamped = lib
         .settings_ui
         .selected_plugin_field
         .min(field_count.saturating_sub(1));
@@ -158,22 +158,22 @@ fn draw_plugin_fields(frame: &mut Frame, area: Rect, state: &AppState) {
     list_state.select(Some(clamped));
     frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-    draw_hints(frame, chunks[1], state.show_hints);
+    draw_hints(frame, chunks[1], ui.show_hints);
 }
 
-fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
-    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
+fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
+    let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
         .split(area);
 
-    let config = state
+    let config = lib
         .settings
         .plugin_configs
-        .get(state.settings_ui.selected_plugin);
+        .get(lib.settings_ui.selected_plugin);
     let is_cookie = config
-        .map(|c| state.settings_ui.selected_plugin_field == c.schema.len() && c.accepts_cookies)
+        .map(|c| lib.settings_ui.selected_plugin_field == c.schema.len() && c.accepts_cookies)
         .unwrap_or(false);
 
     let title = match (config, is_cookie) {
@@ -181,7 +181,7 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
         (Some(c), false) => {
             let label = c
                 .schema
-                .get(state.settings_ui.selected_plugin_field)
+                .get(lib.settings_ui.selected_plugin_field)
                 .map(|f| f.label.as_str())
                 .unwrap_or("unknown");
             format!(" {} \u{2014} {} ", c.domain, label)
@@ -194,13 +194,13 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, state: &AppState) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 
-    let paragraph = Paragraph::new(state.settings_ui.plugin_field_buffer.as_str())
+    let paragraph = Paragraph::new(lib.settings_ui.plugin_field_buffer.as_str())
         .block(block)
         .wrap(ratatui::widgets::Wrap { trim: false });
 
     frame.render_widget(paragraph, chunks[0]);
 
-    draw_hints(frame, chunks[1], state.show_hints);
+    draw_hints(frame, chunks[1], ui.show_hints);
 }
 
 fn draw_hints(frame: &mut Frame, area: Rect, show_hints: bool) {
@@ -232,6 +232,7 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use crate::library::Library;
+    use crate::state::AppState;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -240,13 +241,13 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
-        state.show_hints = true;
+        state.ui.show_hints = true;
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &state);
+                draw(f, f.area(), &state.lib, &state.ui);
             })
             .unwrap();
 
@@ -260,13 +261,13 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
-        state.show_hints = true;
+        state.ui.show_hints = true;
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &state);
+                draw(f, f.area(), &state.lib, &state.ui);
             })
             .unwrap();
 
@@ -280,13 +281,13 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
-        state.show_hints = false;
+        state.ui.show_hints = false;
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &state);
+                draw(f, f.area(), &state.lib, &state.ui);
             })
             .unwrap();
 

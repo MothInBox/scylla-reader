@@ -16,7 +16,7 @@ pub fn handle_palette(
         query,
         filtered,
         selected,
-    } = &mut state.modal
+    } = &mut state.ui.modal
     {
         match key.code {
             KEY_ENTER => {
@@ -24,7 +24,7 @@ pub fn handle_palette(
                     (action.handler)(state, cmd_tx);
                 }
                 // Only close palette if the handler didn't set a new modal
-                if matches!(state.modal, Modal::CommandPalette { .. }) {
+                if matches!(state.ui.modal, Modal::CommandPalette { .. }) {
                     state.close_modal();
                 }
                 true
@@ -76,12 +76,12 @@ mod tests {
         let actions = crate::ui::palette::build_palette_actions(tx);
         let filtered = crate::ui::palette::filter_actions(&actions, query);
         let mut state = test_state();
-        state.modal = Modal::CommandPalette {
+        state.ui.modal = Modal::CommandPalette {
             query: query.to_string(),
             filtered,
             selected,
         };
-        state.current_page = Page::Library;
+        state.ui.page = Page::Library;
         state
     }
 
@@ -89,7 +89,7 @@ mod tests {
     fn test_handle_palette_enter_executes_handler_and_closes() {
         let (tx, _rx) = channel();
         let mut state = setup_palette_state("Settings", 0);
-        let has_settings = match &state.modal {
+        let has_settings = match &state.ui.modal {
             Modal::CommandPalette { filtered, .. } => !filtered.is_empty(),
             _ => false,
         };
@@ -98,8 +98,8 @@ mod tests {
             "Expected at least 'Go to Settings' to match 'Settings'"
         );
         handle_palette(&mut state, key_event(KEY_ENTER), &tx);
-        assert_eq!(state.current_page, Page::Settings);
-        assert_eq!(state.modal, Modal::None);
+        assert_eq!(state.ui.page, Page::Settings);
+        assert_eq!(state.ui.modal, Modal::None);
     }
 
     #[test]
@@ -108,14 +108,14 @@ mod tests {
         let (tx, _rx) = channel();
         // Initially selected = 0, press Down -> selected = 1
         handle_palette(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        if let Modal::CommandPalette { selected, .. } = &state.modal {
+        if let Modal::CommandPalette { selected, .. } = &state.ui.modal {
             assert_eq!(*selected, 1);
         } else {
             panic!("Expected CommandPalette");
         }
         // Press Up -> selected = 0
         handle_palette(&mut state, key_event(KEY_NAV_UP), &tx);
-        if let Modal::CommandPalette { selected, .. } = &state.modal {
+        if let Modal::CommandPalette { selected, .. } = &state.ui.modal {
             assert_eq!(*selected, 0);
         } else {
             panic!("Expected CommandPalette");
@@ -127,7 +127,7 @@ mod tests {
         let mut state = setup_palette_state("", 0);
         let (tx, _rx) = channel();
         handle_palette(&mut state, key_event(KEY_NAV_UP), &tx);
-        if let Modal::CommandPalette { selected, .. } = &state.modal {
+        if let Modal::CommandPalette { selected, .. } = &state.ui.modal {
             assert_eq!(*selected, 0);
         } else {
             panic!("Expected CommandPalette");
@@ -139,17 +139,17 @@ mod tests {
         let mut state = setup_palette_state("", 0);
         let (tx, _rx) = channel();
         // Get the filtered list length
-        let action_count = if let Modal::CommandPalette { filtered, .. } = &state.modal {
+        let action_count = if let Modal::CommandPalette { filtered, .. } = &state.ui.modal {
             filtered.len()
         } else {
             0
         };
         // Set selected to last item
-        if let Modal::CommandPalette { selected, .. } = &mut state.modal {
+        if let Modal::CommandPalette { selected, .. } = &mut state.ui.modal {
             *selected = action_count.saturating_sub(1);
         }
         handle_palette(&mut state, key_event(KEY_NAV_DOWN), &tx);
-        if let Modal::CommandPalette { selected, .. } = &state.modal {
+        if let Modal::CommandPalette { selected, .. } = &state.ui.modal {
             assert_eq!(*selected, action_count.saturating_sub(1));
         } else {
             panic!("Expected CommandPalette");
@@ -161,7 +161,7 @@ mod tests {
         let mut state = setup_palette_state("", 0);
         let (tx, _rx) = channel();
         // Before typing, all actions are visible
-        let initial_count = if let Modal::CommandPalette { filtered, .. } = &state.modal {
+        let initial_count = if let Modal::CommandPalette { filtered, .. } = &state.ui.modal {
             filtered.len()
         } else {
             0
@@ -173,7 +173,7 @@ mod tests {
             query,
             filtered,
             selected,
-        } = &state.modal
+        } = &state.ui.modal
         {
             assert_eq!(query, "S");
             assert_eq!(*selected, 0);
@@ -199,7 +199,7 @@ mod tests {
     fn test_handle_palette_backspace_removes_char() {
         let mut state = setup_palette_state("Se", 0);
         let (tx, _rx) = channel();
-        let count_after_two_chars = if let Modal::CommandPalette { filtered, .. } = &state.modal {
+        let count_after_two_chars = if let Modal::CommandPalette { filtered, .. } = &state.ui.modal {
             filtered.len()
         } else {
             0
@@ -210,7 +210,7 @@ mod tests {
             query,
             filtered,
             selected,
-        } = &state.modal
+        } = &state.ui.modal
         {
             assert_eq!(query, "S");
             assert_eq!(*selected, 0);
@@ -234,7 +234,7 @@ mod tests {
             query,
             filtered,
             selected,
-        } = &state.modal
+        } = &state.ui.modal
         {
             assert_eq!(query, "");
             assert_eq!(*selected, 0);
@@ -247,10 +247,10 @@ mod tests {
     #[test]
     fn test_handle_palette_not_command_palette_returns_true() {
         let mut state = test_state();
-        state.modal = Modal::None;
+        state.ui.modal = Modal::None;
         let (tx, _rx) = channel();
         let result = handle_palette(&mut state, key_event(KEY_ENTER), &tx);
         assert!(result);
-        assert_eq!(state.modal, Modal::None);
+        assert_eq!(state.ui.modal, Modal::None);
     }
 }

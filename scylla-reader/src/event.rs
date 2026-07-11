@@ -15,7 +15,7 @@ pub fn drain_events(
                     "UI",
                     &format!("UI received book: {}", book.title),
                 );
-                if let Some(existing) = state.library.books.iter_mut().find(|b| b.url == book.url) {
+                if let Some(existing) = state.lib.library.books.iter_mut().find(|b| b.url == book.url) {
                     existing.title = book.title.clone();
                     existing.cover_url = book.cover_url.clone();
                     existing.description = book.description.clone();
@@ -39,11 +39,11 @@ pub fn drain_events(
                         );
                     });
                     let book_url = book.url.clone();
-                    state.library.books.push(book);
-                    if let Some(b) = state.library.books.iter_mut().find(|b| b.url == book_url) {
-                        if let Ok(sessions) = state.db.load_sessions_for_book(&book_url) {
-                            b.sessions = sessions;
-                        }
+                    state.lib.library.books.push(book);
+                    if let Some(b) = state.lib.library.books.iter_mut().find(|b| b.url == book_url)
+                        && let Ok(sessions) = state.db.load_sessions_for_book(&book_url)
+                    {
+                        b.sessions = sessions;
                     }
                 }
             }
@@ -53,34 +53,33 @@ pub fn drain_events(
                     "UI",
                     &format!("Chapter received: {}", chapter.title),
                 );
-                if let Some(book) = state.library.selected_book_mut() {
-                    if let Some(session) = book
+                if let Some(book) = state.lib.library.selected_book_mut()
+                    && let Some(session) = book
                         .sessions
                         .iter_mut()
                         .find(|s| s.id == state.reader.session_id)
-                    {
-                        session.progress.current = chapter.chapter_idx as u32;
-                        state
-                            .db
-                            .update_session_progress(session.id, session.progress.current)
-                            .unwrap_or_else(|e| {
-                                crate::settings::log(
-                                    crate::settings::LogLevel::Debug,
-                                    "UI",
-                                    &format!("DB session progress update failed: {}", e),
-                                );
-                            });
-                        state
-                            .db
-                            .set_active_session(&book.url, Some(session.id))
-                            .unwrap_or_else(|e| {
-                                crate::settings::log(
-                                    crate::settings::LogLevel::Debug,
-                                    "UI",
-                                    &format!("DB set active session failed: {}", e),
-                                );
-                            });
-                    }
+                {
+                    session.progress.current = chapter.chapter_idx as u32;
+                    state
+                        .db
+                        .update_session_progress(session.id, session.progress.current)
+                        .unwrap_or_else(|e| {
+                            crate::settings::log(
+                                crate::settings::LogLevel::Debug,
+                                "UI",
+                                &format!("DB session progress update failed: {}", e),
+                            );
+                        });
+                    state
+                        .db
+                        .set_active_session(&book.url, Some(session.id))
+                        .unwrap_or_else(|e| {
+                            crate::settings::log(
+                                crate::settings::LogLevel::Debug,
+                                "UI",
+                                &format!("DB set active session failed: {}", e),
+                            );
+                        });
                 }
                 state.open_reader_chapter(
                     chapter.title,
@@ -104,7 +103,7 @@ pub fn drain_events(
                     "UI",
                     &format!("Cover fetched: {}", url),
                 );
-                state.library.cover_cache.insert(url, protocol);
+                state.lib.library.cover_cache.insert(url, protocol);
             }
             AppEvent::JobEnqueued(job) => {
                 crate::settings::log(
@@ -112,7 +111,7 @@ pub fn drain_events(
                     "UI",
                     &format!("Job enqueued: {} ({})", job.target, job.id),
                 );
-                state.jobs_state.jobs.push(job);
+                state.jobs.jobs.push(job);
             }
             AppEvent::JobStatusChanged(id, status) => {
                 crate::settings::log(
@@ -120,9 +119,9 @@ pub fn drain_events(
                     "UI",
                     &format!("Job {} status: {:?}", id, status),
                 );
-                state.jobs_state.update_from_event(id, status);
-                state.jobs_state.active_count = state
-                    .jobs_state
+                state.jobs.update_from_event(id, status);
+                state.jobs.active_count = state
+                    .jobs
                     .jobs
                     .iter()
                     .filter(|j| matches!(j.status, JobStatus::Running))
@@ -134,8 +133,8 @@ pub fn drain_events(
                     "UI",
                     &format!("Workers changed to {}", n),
                 );
-                state.jobs_state.max_workers = n;
-                state.settings.max_workers = n;
+                state.jobs.max_workers = n;
+                state.lib.settings.max_workers = n;
             }
             AppEvent::JobOutcome(id, outcome) => {
                 crate::settings::log(
@@ -143,7 +142,7 @@ pub fn drain_events(
                     "UI",
                     &format!("Job {} outcome", id),
                 );
-                state.jobs_state.set_outcome(id, outcome);
+                state.jobs.set_outcome(id, outcome);
             }
             AppEvent::PluginInstalled(domain, path) => {
                 crate::settings::log(
@@ -151,7 +150,7 @@ pub fn drain_events(
                     "PLUGIN",
                     &format!("Plugin installed: {} at {}", domain, path),
                 );
-                state.settings.reload_plugins();
+                state.lib.settings.reload_plugins();
             }
             AppEvent::PluginInstallFailed(msg) => {
                 crate::settings::log(
@@ -170,14 +169,14 @@ pub fn update_covers(
     fetched_covers: &mut std::collections::HashSet<String>,
 ) {
     let current_cover_url = state
-        .library
+        .lib.library
         .selected_book()
         .and_then(|b| b.cover_url.clone());
 
-    if let Some(url) = current_cover_url {
-        if !fetched_covers.contains(&url) {
-            fetched_covers.insert(url.clone());
-            let _ = cmd_tx.send(AppCommand::FetchCover(url));
-        }
+    if let Some(url) = current_cover_url
+        && !fetched_covers.contains(&url)
+    {
+        fetched_covers.insert(url.clone());
+        let _ = cmd_tx.send(AppCommand::FetchCover(url));
     }
 }

@@ -13,14 +13,14 @@ pub fn handle_key(
     cmd_tx: &mpsc::Sender<AppCommand>,
     size: Rect,
 ) -> bool {
-    if state.modal != Modal::None {
+    if state.ui.modal != Modal::None {
         if key.code == KEY_ESCAPE {
             state.close_modal();
             if matches!(
-                state.current_page,
+                state.ui.page,
                 Page::AddingBook | Page::BookChapterJump | Page::InstallingPlugin
             ) {
-                state.current_page = Page::Library;
+                state.ui.page = Page::Library;
             }
             return true;
         }
@@ -34,7 +34,7 @@ pub fn handle_key(
                 "NAV",
                 "Page: Library",
             );
-            state.current_page = Page::Library;
+            state.ui.page = Page::Library;
             return true;
         }
         KEY_READER => {
@@ -43,8 +43,8 @@ pub fn handle_key(
                 "NAV",
                 "Page: Reader",
             );
-            state.current_page = Page::Reader;
-            if let Some(book) = state.library.selected_book()
+            state.ui.page = Page::Reader;
+            if let Some(book) = state.lib.library.selected_book()
                 && state.reader.book_url != book.url
             {
                 let session = book
@@ -70,7 +70,7 @@ pub fn handle_key(
                 "NAV",
                 "Page: Jobs",
             );
-            state.current_page = Page::Jobs;
+            state.ui.page = Page::Jobs;
             return true;
         }
         KEY_SETTINGS => {
@@ -79,13 +79,13 @@ pub fn handle_key(
                 "NAV",
                 "Page: Settings",
             );
-            state.current_page = Page::Settings;
+            state.ui.page = Page::Settings;
             return true;
         }
         KEY_COMMAND_PALETTE => {
             let actions = crate::ui::palette::build_palette_actions(cmd_tx.clone());
             let filtered = crate::ui::palette::filter_actions(&actions, "");
-            state.modal = Modal::CommandPalette {
+            state.ui.modal = Modal::CommandPalette {
                 query: String::new(),
                 filtered,
                 selected: 0,
@@ -93,26 +93,26 @@ pub fn handle_key(
             return true;
         }
         KEY_TOGGLE_HINTS => {
-            state.show_hints = !state.show_hints;
+            state.ui.show_hints = !state.ui.show_hints;
             return true;
         }
         KEY_ESCAPE => {
-            if state.current_page == Page::Settings {
-                match state.settings_ui.settings_page {
+            if state.ui.page == Page::Settings {
+                match state.lib.settings_ui.settings_page {
                     SettingsPage::Main => return false,
                     SettingsPage::DebugLog => {
-                        state.settings_ui.settings_page = SettingsPage::Main;
+                        state.lib.settings_ui.settings_page = SettingsPage::Main;
                     }
                     SettingsPage::PluginList => {
-                        state.settings_ui.settings_page = SettingsPage::Main;
+                        state.lib.settings_ui.settings_page = SettingsPage::Main;
                     }
                     SettingsPage::PluginFields => {
-                        state.settings_ui.settings_page = SettingsPage::PluginList;
+                        state.lib.settings_ui.settings_page = SettingsPage::PluginList;
                     }
                     SettingsPage::PluginFieldEdit => {
-                        state.settings_ui.plugin_field_buffer.clear();
-                        state.settings_ui.plugin_field_editing = false;
-                        state.settings_ui.settings_page = SettingsPage::PluginFields;
+                        state.lib.settings_ui.plugin_field_buffer.clear();
+                        state.lib.settings_ui.plugin_field_editing = false;
+                        state.lib.settings_ui.settings_page = SettingsPage::PluginFields;
                     }
                 }
                 return true;
@@ -123,12 +123,12 @@ pub fn handle_key(
     }
 
     let pre_status = state
-        .library
+        .lib.library
         .selected_book()
         .map(|b| (b.url.clone(), b.status.clone()));
-    let pre_books_len = state.library.books.len();
+    let pre_books_len = state.lib.library.books.len();
     let removed_url = if key.code == KEY_DELETE {
-        state.library.selected_book().map(|b| b.url.clone())
+        state.lib.library.selected_book().map(|b| b.url.clone())
     } else {
         None
     };
@@ -138,7 +138,7 @@ pub fn handle_key(
     }
 
     if let Some(url) = removed_url
-        && state.library.books.len() < pre_books_len
+        && state.lib.library.books.len() < pre_books_len
     {
         state.db.delete_book(&url).unwrap_or_else(|e| {
             crate::settings::log(
@@ -150,7 +150,7 @@ pub fn handle_key(
     }
 
     if let Some((url, old_status)) = pre_status
-        && let Some(book) = state.library.books.iter().find(|b| b.url == url)
+        && let Some(book) = state.lib.library.books.iter().find(|b| b.url == url)
         && book.status != old_status
     {
         state

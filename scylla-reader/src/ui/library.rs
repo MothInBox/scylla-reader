@@ -1,6 +1,6 @@
 //! Library page renderer — book list, detail side panel, filter bar.
 
-use crate::state::AppState;
+use crate::state::{LibraryState, UiState};
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
@@ -8,8 +8,8 @@ use ratatui_image::StatefulImage;
 
 use crate::ui::widgets::hint_line;
 
-pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    let hint_height: u16 = if state.show_hints { 2 } else { 1 };
+pub fn draw(frame: &mut Frame, area: Rect, lib: &mut LibraryState, ui: &UiState) {
+    let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -19,7 +19,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
         ])
         .split(area);
 
-    let filter_bar = Paragraph::new(format!(" Filter: {}", state.library.filter))
+    let filter_bar = Paragraph::new(format!(" Filter: {}", lib.library.filter))
         .style(Style::default().fg(Color::Yellow));
     frame.render_widget(filter_bar, chunks[0]);
 
@@ -28,10 +28,10 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(chunks[1]);
 
-    draw_book_list(frame, main_chunks[0], state);
-    draw_side_panel(frame, main_chunks[1], state);
+    draw_book_list(frame, main_chunks[0], lib);
+    draw_side_panel(frame, main_chunks[1], lib);
 
-    if state.show_hints {
+    if ui.show_hints {
         let hint_area = chunks[2];
         let hint_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -56,20 +56,18 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut AppState) {
             hint_chunks[1],
         );
     }
-
-    crate::ui::modal::draw_modal(frame, area, state);
 }
 
-fn draw_book_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
+fn draw_book_list(frame: &mut Frame, area: Rect, lib: &mut LibraryState) {
     let block = Block::default().title(" Library ").borders(Borders::ALL);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let visible = state.library.visible_indices();
+    let visible = lib.library.visible_indices();
     let items: Vec<ListItem> = visible
         .iter()
         .map(|&i| {
-            let b = &state.library.books[i];
+            let b = &lib.library.books[i];
             let tags = if b.tags.is_empty() {
                 String::new()
             } else {
@@ -104,7 +102,7 @@ fn draw_book_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .collect();
 
     let mut list_state = ListState::default();
-    list_state.select(Some(state.library.selected_index));
+    list_state.select(Some(lib.library.selected_index));
 
     let list = List::new(items)
         .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
@@ -113,12 +111,12 @@ fn draw_book_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
     frame.render_stateful_widget(list, inner, &mut list_state);
 }
 
-fn draw_side_panel(frame: &mut Frame, area: Rect, state: &mut AppState) {
+fn draw_side_panel(frame: &mut Frame, area: Rect, lib: &mut LibraryState) {
     let block = Block::default().title(" Details ").borders(Borders::ALL);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let book_data = state.library.selected_book().map(|b| {
+    let book_data = lib.library.selected_book().map(|b| {
         (
             b.title.clone(),
             b.status.clone(),
@@ -142,10 +140,10 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .constraints([Constraint::Length(12), Constraint::Min(0)])
         .split(inner);
 
-    if let Some(url) = &cover_url {
-        if let Some(protocol) = state.library.cover_cache.get_mut(url) {
-            frame.render_stateful_widget(StatefulImage::new(None), side_chunks[0], protocol);
-        }
+    if let Some(url) = &cover_url
+        && let Some(protocol) = lib.library.cover_cache.get_mut(url)
+    {
+        frame.render_stateful_widget(StatefulImage::new(None), side_chunks[0], protocol);
     }
 
     let active_session = active_session_id
@@ -188,6 +186,7 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use crate::library::Library;
+    use crate::state::AppState;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -196,13 +195,13 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
-        state.show_hints = true;
+        state.ui.show_hints = true;
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &mut state);
+                draw(f, f.area(), &mut state.lib, &state.ui);
             })
             .unwrap();
 
@@ -217,14 +216,14 @@ mod tests {
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
         state
-            .library
+            .lib.library
             .add_book("Test Book Title".into(), "url".into());
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &mut state);
+                draw(f, f.area(), &mut state.lib, &state.ui);
             })
             .unwrap();
 
@@ -238,13 +237,13 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Db::open_conn(conn).unwrap();
         let mut state = AppState::from_parts(db, Library::new());
-        state.show_hints = false;
+        state.ui.show_hints = false;
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &mut state);
+                draw(f, f.area(), &mut state.lib, &state.ui);
             })
             .unwrap();
 

@@ -70,14 +70,12 @@ impl ScraperRegistry {
             .ok();
 
         // Use cache if schema is newer than wasm
-        if let (Some(wasm_t), Some(schema_t)) = (wasm_modified, schema_modified) {
-            if schema_t >= wasm_t {
-                if let Ok(contents) = std::fs::read_to_string(&schema_path) {
-                    if let Ok(schema) = serde_json::from_str::<PluginSchema>(&contents) {
-                        return schema;
-                    }
-                }
-            }
+        if let (Some(wasm_t), Some(schema_t)) = (wasm_modified, schema_modified)
+            && schema_t >= wasm_t
+            && let Ok(contents) = std::fs::read_to_string(&schema_path)
+            && let Ok(schema) = serde_json::from_str::<PluginSchema>(&contents)
+        {
+            return schema;
         }
 
         let curl_fetch_fn = Function::new(
@@ -145,7 +143,7 @@ impl ScraperRegistry {
             obj.remove("_cookies");
             obj.remove("_accepts_cookies");
         }
-        Some(serde_json::to_string(&json).ok()?)
+        serde_json::to_string(&json).ok()
     }
 
     pub async fn scrape_url(
@@ -333,15 +331,14 @@ impl ScraperRegistry {
             } else {
                 let segments: Vec<&str> = host.split('.').collect();
                 segments
-                    .iter()
-                    .any(|s| *s == domain)
-                    && segments.last().map_or(false, |last| last != &domain)
+                    .contains(&domain)
+                    && segments.last().is_some_and(|last| last != &domain)
             }
         };
 
         let mut matched: Vec<&(String, std::path::PathBuf)> =
             self.plugins.iter().filter(|(d, _)| match_domain(d)).collect();
-        matched.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        matched.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
         matched
             .first()
