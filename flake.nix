@@ -48,6 +48,8 @@
           openssl
           curl
           extism-cli
+          cargo-watch
+          just
         ];
       };
     });
