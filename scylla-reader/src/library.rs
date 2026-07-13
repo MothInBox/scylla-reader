@@ -10,6 +10,7 @@ pub enum LibraryFilter {
     All,
     ByStatus(BookStatus),
     ByTag(String),
+    Backend(String),
 }
 
 impl std::fmt::Display for LibraryFilter {
@@ -18,6 +19,7 @@ impl std::fmt::Display for LibraryFilter {
             LibraryFilter::All => write!(f, "All"),
             LibraryFilter::ByStatus(s) => write!(f, "{}", s),
             LibraryFilter::ByTag(t) => write!(f, "#{}", t),
+            LibraryFilter::Backend(name) => write!(f, "Backend:{}", name),
         }
     }
 }
@@ -53,6 +55,7 @@ impl Library {
                 LibraryFilter::All => true,
                 LibraryFilter::ByStatus(s) => &b.status == s,
                 LibraryFilter::ByTag(t) => b.tags.iter().any(|tag| tag == t),
+                LibraryFilter::Backend(_) => true,
             })
             .map(|(i, _)| i)
             .collect()
@@ -116,7 +119,13 @@ impl Library {
             }
             LibraryFilter::ByStatus(BookStatus::Completed) => LibraryFilter::All,
             LibraryFilter::ByTag(_) => LibraryFilter::All,
+            LibraryFilter::Backend(_) => LibraryFilter::All,
         };
+        self.selected_index = 0;
+    }
+
+    pub fn set_backend_filter(&mut self, name: &str) {
+        self.filter = LibraryFilter::Backend(name.to_string());
         self.selected_index = 0;
     }
 

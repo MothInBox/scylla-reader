@@ -16,6 +16,11 @@ pub use jobs::JobsState;
 pub mod settings_ui;
 
 use crate::db::Db;
+use crate::library::Library;
+use crate::storage::config;
+use crate::storage::manager::LibraryManager;
+use crate::storage::remote::RemoteApi;
+use scylla_core::types::StorageBackend;
 
 pub struct AppState {
     pub(crate) ui: UiState,
@@ -33,9 +38,19 @@ impl Default for AppState {
 
 impl AppState {
     pub fn new() -> Self {
+        let backends: Vec<Box<dyn StorageBackend>> = config::load_libraries()
+            .into_iter()
+            .map(|cfg| Box::new(RemoteApi::new(cfg.name, cfg.url)) as Box<dyn StorageBackend>)
+            .collect();
+        let manager = LibraryManager::new(backends);
         let mut state = Self {
             ui: UiState::new(),
-            lib: LibraryState::new(),
+            lib: LibraryState {
+                library: Library::new(),
+                manager,
+                settings: crate::settings::Settings::new(),
+                settings_ui: crate::state::settings_ui::SettingsUiState::new(),
+            },
             reader: ReaderState::new(),
             jobs: JobsState::new(),
             db: Db::open().unwrap_or_else(|e| {
@@ -61,6 +76,7 @@ impl AppState {
             ui: UiState::new(),
             lib: LibraryState {
                 library,
+                manager: LibraryManager::new(vec![]),
                 settings: crate::settings::Settings::new(),
                 settings_ui: crate::state::settings_ui::SettingsUiState::new(),
             },

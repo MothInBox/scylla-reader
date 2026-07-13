@@ -204,6 +204,53 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                 " [Enter] Install  [Esc] Cancel ",
             );
         }
+
+        Modal::AddLibrary {
+            name,
+            url,
+            cursor: _,
+            focused_field,
+        } => {
+            let popup_area = centered_rect(60, 30, area);
+            frame.render_widget(Clear, popup_area);
+
+            let name_style = if *focused_field == 0 {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            let url_style = if *focused_field == 1 {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+
+            let display_name = if name.is_empty() {
+                "Enter library name...".to_string()
+            } else {
+                name.clone()
+            };
+            let display_url = if url.is_empty() {
+                "Enter library URL...".to_string()
+            } else {
+                url.clone()
+            };
+
+            let items = vec![
+                ListItem::new(format!("Name: {}", display_name)).style(name_style),
+                ListItem::new(format!("URL:  {}", display_url)).style(url_style),
+            ];
+
+            draw_scrollable_list(
+                frame,
+                popup_area,
+                " Add Library ".to_string(),
+                items,
+                0,
+                &mut 0,
+                " [Tab] Switch field  [Enter] Save  [Esc] Cancel ",
+            );
+        }
     }
 }
 

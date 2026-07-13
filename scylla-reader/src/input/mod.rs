@@ -34,6 +34,9 @@ pub fn handle_input(
     if matches!(&state.ui.modal, Modal::InstallPlugin { .. }) {
         return modal::handle_installing_plugin(&mut state.ui, key, cmd_tx);
     }
+    if matches!(&state.ui.modal, Modal::AddLibrary { .. }) {
+        return modal::handle_key(state, key);
+    }
     match &state.ui.page {
         Page::Library => library::handle_library(&mut state.ui, &mut state.lib, key, cmd_tx),
         Page::Settings => settings::handle_settings(&mut state.lib, key, cmd_tx),

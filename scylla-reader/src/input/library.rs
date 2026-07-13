@@ -20,6 +20,26 @@ pub fn handle_library(
             };
             true
         }
+        KEY_ADD_LIBRARY => {
+            ui.modal = Modal::AddLibrary {
+                name: String::new(),
+                url: String::new(),
+                cursor: 0,
+                focused_field: 0,
+            };
+            true
+        }
+        KEY_CYCLE_BACKEND_FILTER => {
+            lib.manager.cycle_filter_to_next_backend();
+            lib.library.filter = match &lib.manager.active_filter {
+                scylla_core::types::LibraryFilter::All => crate::library::LibraryFilter::All,
+                scylla_core::types::LibraryFilter::Backend(name) => {
+                    crate::library::LibraryFilter::Backend(name.clone())
+                }
+                _ => crate::library::LibraryFilter::All,
+            };
+            true
+        }
         KEY_JUMP_CHAPTER => {
             if let Some(book) = lib.library.selected_book() {
                 crate::settings::log(
