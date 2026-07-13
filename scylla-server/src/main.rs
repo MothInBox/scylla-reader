@@ -12,11 +12,7 @@ async fn main() {
         .join("scylla-reader")
         .join("library.db");
 
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-
-    let _db = db::ServerDb::open(&db_path).expect("Failed to open database");
+    let _db = db::ServerDb::open_path(&db_path).expect("Failed to open database");
 
     let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel();
     let (event_tx, _event_rx) = std::sync::mpsc::channel();
