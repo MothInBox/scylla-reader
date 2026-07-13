@@ -1,0 +1,19 @@
+[package]
+name = "scylla-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+scylla-plugin-api = { path = "../scylla-plugin-api" }
+curl = "0.4"
+extism = "1"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+tokio = { version = "1.40", features = ["full"] }
+image = "0.25"
+ratatui-image = { version = "3" }
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
