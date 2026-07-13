@@ -3026,6 +3026,7 @@ dependencies = [
 name = "scylla-reader"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "crossterm",
  "curl",
  "dirs",
@@ -3035,11 +3036,13 @@ dependencies = [
  "ratatui-image",
  "reqwest",
  "rusqlite",
+ "scylla-core",
  "scylla-plugin-api",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "url",
 ]
 
 [[package]]
