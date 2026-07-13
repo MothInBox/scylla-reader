@@ -2934,6 +2934,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "curl",
+ "dirs",
  "extism",
  "image",
  "ratatui-image",
