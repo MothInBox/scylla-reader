@@ -244,3 +244,4 @@ Users install by entering the repo URL in the Install Plugin modal.
 - **Customizable file paths** — add `data_dir`, `config_dir`, `plugin_dir` to `PersistedSettings`. `config_dir()` checks these overrides before `dirs`-based defaults.
 - **HTTPS server** — new `scylla-server` crate with axum/actix-web. Shares DB and plugin system. Start API-only (serve chapters, manage library), add web UI later. Replaces old daemon idea.
 - **Scylla as server client** — optionally run TUI as a client to the HTTPS server API instead of direct DB access. Concurrent SQLite with WAL mode, or independent consumers of the same DB.
+- **AI Classification Model** — Have a vauge recollection of a book you made? Generate an embedding upon book creation to search. We may wish to update the embedding with each chapter read, as to limit spam but gain a good embedding over time.
