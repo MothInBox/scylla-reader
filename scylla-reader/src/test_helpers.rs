@@ -11,11 +11,8 @@ use crate::storage::server_settings::ServerSettingsState;
 use async_trait::async_trait;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::prelude::Rect;
-use scylla_core::messenger::AppCommand;
-use scylla_core::types::{
-    BackendKind, Book, BookStatus, ChapterContent, Progress, Session, StorageBackend,
-};
-use std::sync::{Arc, Mutex, mpsc};
+use scylla_core::types::{BackendKind, Book, BookStatus, Progress, Session, StorageBackend};
+use std::sync::{Arc, Mutex};
 
 pub fn test_state() -> AppState {
     AppState::from_parts(Library::new())
@@ -40,6 +37,7 @@ pub fn test_state_with_backends(backends: Vec<Box<dyn StorageBackend>>) -> AppSt
         },
         reader: ReaderState::new(),
         jobs: JobsState::new(),
+        cover_picker: ratatui_image::picker::Picker::from_fontsize((8, 12)),
     };
     state.jobs.max_workers = state.lib.settings.max_workers;
     state
@@ -47,10 +45,6 @@ pub fn test_state_with_backends(backends: Vec<Box<dyn StorageBackend>>) -> AppSt
 
 pub fn key_event(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
-}
-
-pub fn channel() -> (mpsc::Sender<AppCommand>, mpsc::Receiver<AppCommand>) {
-    mpsc::channel()
 }
 
 pub fn rect() -> Rect {
@@ -262,26 +256,6 @@ impl StorageBackend for MockBackend {
             return Err("mock failure".to_string());
         }
         Ok(())
-    }
-
-    async fn get_chapter_content(
-        &self,
-        _book_url: &str,
-        _chapter_url: &str,
-    ) -> Result<String, String> {
-        Ok(String::new())
-    }
-
-    async fn scrape_book(&self, url: &str) -> Result<Book, String> {
-        Err(format!("not supported: {}", url))
-    }
-
-    async fn fetch_chapter(
-        &self,
-        _book_url: &str,
-        _chapter_url: &str,
-    ) -> Result<ChapterContent, String> {
-        Err("not supported".to_string())
     }
 
     async fn get_server_settings(&self) -> Result<serde_json::Value, String> {

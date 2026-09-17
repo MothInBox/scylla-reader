@@ -17,8 +17,6 @@ pub struct JobManager {
     next_job_id: JobId,
     rate_limit_secs: u64,
     max_workers: u8,
-    picker_font_size: (u16, u16),
-    picker_protocol_type: ratatui_image::picker::ProtocolType,
 }
 
 impl JobManager {
@@ -26,8 +24,6 @@ impl JobManager {
         cmd_rx: mpsc::Receiver<AppCommand>,
         event_tx: mpsc::Sender<AppEvent>,
         registry: ScraperRegistry,
-        picker_font_size: (u16, u16),
-        picker_protocol_type: ratatui_image::picker::ProtocolType,
         max_workers: u8,
         rate_limit_secs: u64,
     ) -> Self {
@@ -42,8 +38,6 @@ impl JobManager {
             next_job_id: 1,
             rate_limit_secs,
             max_workers,
-            picker_font_size,
-            picker_protocol_type,
         }
     }
 
@@ -110,8 +104,6 @@ impl JobManager {
             let event_tx = self.event_tx.clone();
             let registry = self.registry.clone();
             let runtime_ref = runtime.handle().clone();
-            let font_size = self.picker_font_size;
-            let protocol_type = self.picker_protocol_type;
 
             let handle = runtime.spawn_blocking(move || {
                 let (result, outcome) = match &job.kind {
@@ -136,6 +128,7 @@ impl JobManager {
                         match runtime_ref.block_on(reg.scrape_chapter(url)) {
                             Ok((title, content)) => {
                                 let _ = event_tx.send(AppEvent::ChapterFetched(ChapterContent {
+                                    url: url.clone(),
                                     chapter_idx: *idx,
                                     title: title.clone(),
                                     content: content.clone(),
@@ -150,28 +143,19 @@ impl JobManager {
                             Err(e) => (Err(e.to_string()), None),
                         }
                     }
-                    JobKind::FetchCover(url) => {
-                        let mut picker = ratatui_image::picker::Picker::from_fontsize(font_size);
-                        picker.set_protocol_type(protocol_type);
-                        match reqwest::blocking::get(url) {
-                            Ok(resp) => match resp.bytes() {
-                                Ok(bytes) => match image::load_from_memory(&bytes) {
-                                    Ok(img) => {
-                                        let protocol = picker.new_resize_protocol(img);
-                                        let _ = event_tx
-                                            .send(AppEvent::CoverFetched(url.clone(), protocol));
-                                        let o = JobOutcome::CoverFetched;
-                                        let _ =
-                                            event_tx.send(AppEvent::JobOutcome(job.id, o.clone()));
-                                        (Ok(()), Some(o))
-                                    }
-                                    Err(e) => (Err(format!("Image decode: {}", e)), None),
-                                },
-                                Err(e) => (Err(format!("Cover bytes: {}", e)), None),
-                            },
-                            Err(e) => (Err(format!("Cover fetch: {}", e)), None),
-                        }
-                    }
+                    JobKind::FetchCover(url) => match reqwest::blocking::get(url) {
+                        Ok(resp) => match resp.bytes() {
+                            Ok(bytes) => {
+                                let _ = event_tx
+                                    .send(AppEvent::CoverFetched(url.clone(), bytes.to_vec()));
+                                let o = JobOutcome::CoverFetched;
+                                let _ = event_tx.send(AppEvent::JobOutcome(job.id, o.clone()));
+                                (Ok(()), Some(o))
+                            }
+                            Err(e) => (Err(format!("Cover bytes: {}", e)), None),
+                        },
+                        Err(e) => (Err(format!("Cover fetch: {}", e)), None),
+                    },
                 };
 
                 if outcome.is_some() {
@@ -198,13 +182,6 @@ impl JobManager {
 
     fn handle_command(&mut self, cmd: AppCommand) {
         match cmd {
-            AppCommand::Enqueue(kind, target, priority) => {
-                let id = self.next_job_id;
-                self.next_job_id += 1;
-                let job = Job::new(id, kind, target, priority);
-                self.job_queue.push(job.clone());
-                let _ = self.event_tx.send(AppEvent::JobEnqueued(job));
-            }
             AppCommand::CancelJob(id) => {
                 if let Some(handle) = self.active_jobs.remove(&id) {
                     handle.abort();
@@ -242,6 +219,9 @@ impl JobManager {
                     retry.started_at = None;
                     retry.completed_at = None;
                     self.job_queue.push(retry);
+                    let _ = self
+                        .event_tx
+                        .send(AppEvent::JobStatusChanged(id, JobStatus::Queued));
                 }
             }
             AppCommand::RetryAllFailed => {
@@ -263,6 +243,9 @@ impl JobManager {
                         retry.started_at = None;
                         retry.completed_at = None;
                         self.job_queue.push(retry);
+                        let _ = self
+                            .event_tx
+                            .send(AppEvent::JobStatusChanged(id, JobStatus::Queued));
                     }
                 }
             }
@@ -291,13 +274,6 @@ impl JobManager {
             AppCommand::SetMaxWorkers(n) => {
                 self.max_workers = n;
                 let _ = self.event_tx.send(AppEvent::WorkersChanged(n));
-            }
-            AppCommand::ReorderJob(id, new_pos) => {
-                if let Some(pos) = self.job_queue.iter().position(|j| j.id == id) {
-                    let job = self.job_queue.remove(pos);
-                    let new_pos = new_pos.min(self.job_queue.len());
-                    self.job_queue.insert(new_pos, job);
-                }
             }
             // Legacy commands — wrap as Enqueue
             AppCommand::Scrape(url) => {
@@ -500,5 +476,71 @@ mod tests {
     #[test]
     fn test_extract_domain_empty() {
         assert_eq!(extract_domain(""), None);
+    }
+
+    fn test_manager() -> (JobManager, std::sync::mpsc::Receiver<AppEvent>) {
+        let (_cmd_tx, cmd_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let manager = JobManager::new(cmd_rx, event_tx, ScraperRegistry::new(), 4, 2);
+        (manager, event_rx)
+    }
+
+    #[test]
+    fn test_retry_job_emits_queued_event() {
+        let (mut manager, event_rx) = test_manager();
+        manager.handle_command(AppCommand::Scrape("http://example.com".into()));
+        let id = manager.job_queue[0].id;
+        manager.job_queue[0].status = JobStatus::Failed("boom".into());
+
+        manager.handle_command(AppCommand::RetryJob(id));
+
+        // First event is the JobEnqueued from the Scrape command.
+        let _ = event_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let event = event_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            event,
+            AppEvent::JobStatusChanged(jid, JobStatus::Queued) if jid == id
+        ));
+        // Original failed job + re-queued retry.
+        assert_eq!(manager.job_queue.len(), 2);
+        assert_eq!(manager.job_queue[1].status, JobStatus::Queued);
+        assert_eq!(manager.job_queue[1].error, None);
+    }
+
+    #[test]
+    fn test_retry_all_failed_emits_queued_events() {
+        let (mut manager, event_rx) = test_manager();
+        manager.handle_command(AppCommand::Scrape("http://example.com/a".into()));
+        manager.handle_command(AppCommand::Scrape("http://example.com/b".into()));
+        let ids: Vec<JobId> = manager.job_queue.iter().map(|j| j.id).collect();
+        for job in manager.job_queue.iter_mut() {
+            job.status = JobStatus::Failed("boom".into());
+        }
+
+        manager.handle_command(AppCommand::RetryAllFailed);
+
+        // Two JobEnqueued events from the Scrape commands.
+        let _ = event_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let _ = event_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let e1 = event_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let e2 = event_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            e1,
+            AppEvent::JobStatusChanged(jid, JobStatus::Queued) if ids.contains(&jid)
+        ));
+        assert!(matches!(
+            e2,
+            AppEvent::JobStatusChanged(jid, JobStatus::Queued) if ids.contains(&jid)
+        ));
+        // Original failed jobs + two re-queued retries.
+        assert_eq!(manager.job_queue.len(), 4);
+        assert!(
+            manager
+                .job_queue
+                .iter()
+                .filter(|j| j.status == JobStatus::Queued)
+                .count()
+                == 2
+        );
     }
 }

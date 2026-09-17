@@ -1,12 +1,13 @@
 //! Filter modal input — edit the library filter facets and commit on Enter.
+//! The AI row runs a chapter-mode search (transient `ai_query`, not a facet).
 
+use crate::event_types::ServerEvent;
 use crate::input::keybinds::*;
 use crate::library::{BookFilter, filter_tags, known_tags};
 use crate::models::BookStatus;
-use crate::state::modal::FilterRow;
+use crate::state::modal::{FilterRow, SearchStatus};
 use crate::state::{AppState, Modal};
 use crossterm::event::{KeyCode, KeyEvent};
-use scylla_core::messenger::AppCommand;
 
 const STATUS_ROWS: [Option<BookStatus>; 5] = [
     None,
@@ -16,11 +17,7 @@ const STATUS_ROWS: [Option<BookStatus>; 5] = [
     Some(BookStatus::Completed),
 ];
 
-pub fn handle_filter(
-    state: &mut AppState,
-    key: KeyEvent,
-    _cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
-) -> bool {
+pub fn handle_filter(state: &mut AppState, key: KeyEvent) -> bool {
     if !matches!(&state.ui.modal, Modal::Filter { .. }) {
         return true;
     }
@@ -34,16 +31,79 @@ pub fn handle_filter(
         KEY_ROW_PREV => cycle_focus(state, -1),
         KEY_NAV_UP => move_cursor(state, -1),
         KEY_NAV_DOWN => move_cursor(state, 1),
-        // `c` clears and space toggles only on choice rows; on Search they
-        // must type into the name (multi-word names contain spaces and `c`).
-        KEY_TOGGLE_ITEM if focus != FilterRow::Search => toggle_item(state),
-        KEY_FILTER_CLEAR if focus != FilterRow::Search => clear_working(state),
-        KEY_ENTER => commit(state),
+        // `c` clears and space toggles only on choice rows; on Search and Ai
+        // they must type into the text (multi-word queries contain spaces and
+        // `c`).
+        KEY_TOGGLE_ITEM if focus != FilterRow::Search && focus != FilterRow::Ai => {
+            toggle_item(state)
+        }
+        KEY_FILTER_CLEAR if focus != FilterRow::Search && focus != FilterRow::Ai => {
+            clear_working(state)
+        }
+        KEY_ENTER => {
+            if focus == FilterRow::Ai {
+                run_ai_search(state);
+            } else {
+                commit(state);
+            }
+        }
         KEY_BACKSPACE => backspace(state),
         KeyCode::Char(c) => type_char(state, c),
         _ => {}
     }
     true
+}
+
+/// Enter on the AI row: spawn a one-shot search thread and switch to the
+/// chapter-results modal. Empty queries are a no-op (stay in the modal).
+fn run_ai_search(state: &mut AppState) {
+    let query = if let Modal::Filter { ai_query, .. } = &state.ui.modal {
+        ai_query.trim().to_string()
+    } else {
+        return;
+    };
+    if query.is_empty() {
+        crate::settings::log(
+            crate::settings::LogLevel::Debug,
+            "AI",
+            "Empty AI query — ignoring",
+        );
+        return;
+    }
+    crate::settings::log(
+        crate::settings::LogLevel::Debug,
+        "AI",
+        &format!("Searching chapters for: {}", query),
+    );
+    let base = crate::storage::client::api_base(state);
+    let Some(tx) = crate::event_types::event_tx() else {
+        crate::settings::log(
+            crate::settings::LogLevel::Error,
+            "AI",
+            "No event channel — cannot run AI search",
+        );
+        return;
+    };
+    let thread_query = query.clone();
+    std::thread::spawn(move || {
+        let result = crate::storage::client::block_on(crate::storage::client::search(
+            &base,
+            &thread_query,
+            "chapter",
+            50,
+        ));
+        let _ = tx.send(ServerEvent::AiSearchResults {
+            query: thread_query,
+            result,
+        });
+    });
+    state.ui.modal = Modal::ChapterResults {
+        query,
+        groups: vec![],
+        cursor: 0,
+        scroll_offset: 0,
+        status: SearchStatus::Loading,
+    };
 }
 
 fn cycle_focus(state: &mut AppState, dir: i32) {
@@ -147,12 +207,14 @@ fn type_char(state: &mut AppState, c: char) {
         focus,
         working,
         tag_query,
+        ai_query,
         ..
     } = &mut state.ui.modal
     {
         match focus {
             FilterRow::Search => working.name.push(c),
             FilterRow::Tags => tag_query.push(c),
+            FilterRow::Ai => ai_query.push(c),
             _ => {}
         }
     }
@@ -163,6 +225,7 @@ fn backspace(state: &mut AppState) {
         focus,
         working,
         tag_query,
+        ai_query,
         ..
     } = &mut state.ui.modal
     {
@@ -172,6 +235,9 @@ fn backspace(state: &mut AppState) {
             }
             FilterRow::Tags => {
                 tag_query.pop();
+            }
+            FilterRow::Ai => {
+                ai_query.pop();
             }
             _ => {}
         }
@@ -242,6 +308,7 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 0,
+            ai_query: String::new(),
         };
         state
     }
@@ -265,43 +332,39 @@ mod tests {
     #[test]
     fn test_handle_filter_typing_edits_name_when_search_focused() {
         let mut state = filter_state();
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KeyCode::Char('g')), &tx);
-        handle_filter(&mut state, key_event(KeyCode::Char('l')), &tx);
-        handle_filter(&mut state, key_event(KeyCode::Char('o')), &tx);
+        handle_filter(&mut state, key_event(KeyCode::Char('g')));
+        handle_filter(&mut state, key_event(KeyCode::Char('l')));
+        handle_filter(&mut state, key_event(KeyCode::Char('o')));
         assert_eq!(working(&state).name, "glo");
     }
 
     #[test]
     fn test_handle_filter_backspace_edits_name_when_search_focused() {
         let mut state = filter_state();
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KeyCode::Char('g')), &tx);
-        handle_filter(&mut state, key_event(KEY_BACKSPACE), &tx);
+        handle_filter(&mut state, key_event(KeyCode::Char('g')));
+        handle_filter(&mut state, key_event(KEY_BACKSPACE));
         assert_eq!(working(&state).name, "");
     }
 
     #[test]
     fn test_handle_filter_tab_cycles_focus() {
         let mut state = filter_state();
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_ROW_NEXT), &tx);
+        handle_filter(&mut state, key_event(KEY_ROW_NEXT));
         assert_eq!(focus(&state), FilterRow::Tags);
-        handle_filter(&mut state, key_event(KEY_ROW_NEXT), &tx);
+        handle_filter(&mut state, key_event(KEY_ROW_NEXT));
         assert_eq!(focus(&state), FilterRow::Library);
-        handle_filter(&mut state, key_event(KEY_ROW_NEXT), &tx);
+        handle_filter(&mut state, key_event(KEY_ROW_NEXT));
         assert_eq!(focus(&state), FilterRow::Ai);
-        handle_filter(&mut state, key_event(KEY_ROW_NEXT), &tx);
+        handle_filter(&mut state, key_event(KEY_ROW_NEXT));
         assert_eq!(focus(&state), FilterRow::Status);
     }
 
     #[test]
     fn test_handle_filter_backtab_cycles_focus_backwards() {
         let mut state = filter_state();
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_ROW_PREV), &tx);
+        handle_filter(&mut state, key_event(KEY_ROW_PREV));
         assert_eq!(focus(&state), FilterRow::Status);
-        handle_filter(&mut state, key_event(KEY_ROW_PREV), &tx);
+        handle_filter(&mut state, key_event(KEY_ROW_PREV));
         assert_eq!(focus(&state), FilterRow::Ai);
     }
 
@@ -317,8 +380,7 @@ mod tests {
             *focus = FilterRow::Tags;
             tag_query.push_str("fan");
         }
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KeyCode::Char('t')), &tx);
+        handle_filter(&mut state, key_event(KeyCode::Char('t')));
         if let Modal::Filter { tag_query, .. } = &state.ui.modal {
             assert_eq!(tag_query, "fant");
         }
@@ -334,10 +396,9 @@ mod tests {
         if let Modal::Filter { focus, .. } = &mut state.ui.modal {
             *focus = FilterRow::Tags;
         }
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM), &tx);
+        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM));
         assert_eq!(working(&state).tags, vec!["fantasy"]);
-        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM), &tx);
+        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM));
         assert!(working(&state).tags.is_empty());
     }
 
@@ -353,8 +414,7 @@ mod tests {
             *focus = FilterRow::Status;
             *status_cursor = 2;
         }
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM), &tx);
+        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM));
         assert_eq!(working(&state).status, Some(BookStatus::Paused));
     }
 
@@ -372,8 +432,7 @@ mod tests {
             working.status = Some(BookStatus::Reading);
             *status_cursor = 0;
         }
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM), &tx);
+        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM));
         assert_eq!(working(&state).status, None);
     }
 
@@ -388,9 +447,9 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 1,
+            ai_query: String::new(),
         };
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM), &tx);
+        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM));
         assert_eq!(working(&state).library.as_deref(), Some("remote1"));
     }
 
@@ -404,8 +463,7 @@ mod tests {
             working.status = Some(BookStatus::Reading);
             working.library = Some("remote1".into());
         }
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_FILTER_CLEAR), &tx);
+        handle_filter(&mut state, key_event(KEY_FILTER_CLEAR));
         let w = working(&state);
         assert!(w.name.is_empty());
         assert!(w.tags.is_empty());
@@ -416,25 +474,22 @@ mod tests {
     #[test]
     fn test_handle_filter_c_types_when_search_focused() {
         let mut state = filter_state();
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_FILTER_CLEAR), &tx);
+        handle_filter(&mut state, key_event(KEY_FILTER_CLEAR));
         assert_eq!(working(&state).name, "c");
     }
 
     #[test]
     fn test_handle_filter_space_types_when_search_focused() {
         let mut state = filter_state();
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM), &tx);
+        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM));
         assert_eq!(working(&state).name, " ");
     }
 
     #[test]
     fn test_handle_filter_multi_word_name_with_c_and_space() {
         let mut state = filter_state();
-        let (tx, _rx) = channel();
         for c in "dragon heart".chars() {
-            handle_filter(&mut state, key_event(KeyCode::Char(c)), &tx);
+            handle_filter(&mut state, key_event(KeyCode::Char(c)));
         }
         assert_eq!(working(&state).name, "dragon heart");
     }
@@ -447,8 +502,7 @@ mod tests {
         }
         state.lib.library.add_book("Gloom".into(), "u".into());
         state.lib.library.add_book("Other".into(), "u2".into());
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_ENTER), &tx);
+        handle_filter(&mut state, key_event(KEY_ENTER));
         assert_eq!(state.ui.modal, Modal::None);
         assert_eq!(state.lib.library.filter.name, "glo");
         assert_eq!(state.lib.library.selected_index, 0);
@@ -470,9 +524,9 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 1,
+            ai_query: String::new(),
         };
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_ENTER), &tx);
+        handle_filter(&mut state, key_event(KEY_ENTER));
         assert_eq!(state.ui.modal, Modal::None);
         assert_eq!(
             state.lib.manager.active_filter,
@@ -493,9 +547,9 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 0,
+            ai_query: String::new(),
         };
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_ENTER), &tx);
+        handle_filter(&mut state, key_event(KEY_ENTER));
         assert_eq!(
             state.lib.manager.active_filter,
             scylla_core::types::LibraryFilter::All
@@ -530,9 +584,9 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 1,
+            ai_query: String::new(),
         };
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_ENTER), &tx);
+        handle_filter(&mut state, key_event(KEY_ENTER));
         assert_eq!(state.lib.library.books.len(), 1);
         assert_eq!(state.lib.library.books[0].title, "From Backend");
     }
@@ -554,9 +608,9 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 1,
+            ai_query: String::new(),
         };
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_ENTER), &tx);
+        handle_filter(&mut state, key_event(KEY_ENTER));
         assert_eq!(state.lib.library.books.len(), 1);
         assert_eq!(state.lib.library.books[0].title, "Local");
     }
@@ -587,9 +641,9 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 0,
+            ai_query: String::new(),
         };
-        let (tx, _rx) = channel();
-        handle_filter(&mut state, key_event(KEY_ENTER), &tx);
+        handle_filter(&mut state, key_event(KEY_ENTER));
         assert_eq!(state.lib.library.books.len(), 1);
         assert_eq!(state.lib.library.books[0].title, "Local");
         let calls = calls.lock().unwrap().clone();
@@ -598,5 +652,114 @@ mod tests {
             "expected no list_books call, got: {:?}",
             calls
         );
+    }
+
+    fn ai_focus_state(query: &str) -> AppState {
+        // MockBackend's url() is "http://mock" (non-resolvable) so the AI
+        // search request fails deterministically regardless of whether a real
+        // server is running on 127.0.0.1:8080.
+        let mut state = test_state_with_backend(Box::new(MockBackend::new("mock")));
+        state.ui.modal = Modal::Filter {
+            working: BookFilter::default(),
+            focus: FilterRow::Ai,
+            tag_query: String::new(),
+            tag_cursor: 0,
+            tag_scroll: 0,
+            status_cursor: 0,
+            lib_cursor: 0,
+            ai_query: query.to_string(),
+        };
+        state
+    }
+
+    fn ai_query(state: &AppState) -> String {
+        if let Modal::Filter { ai_query, .. } = &state.ui.modal {
+            ai_query.clone()
+        } else {
+            panic!("Expected Filter modal");
+        }
+    }
+
+    #[test]
+    fn test_handle_filter_typing_edits_ai_query_when_ai_focused() {
+        let mut state = ai_focus_state("");
+        handle_filter(&mut state, key_event(KeyCode::Char('d')));
+        handle_filter(&mut state, key_event(KeyCode::Char('r')));
+        handle_filter(&mut state, key_event(KeyCode::Char('a')));
+        assert_eq!(ai_query(&state), "dra");
+        // typing in Ai must not touch working.name
+        assert!(working(&state).name.is_empty());
+    }
+
+    #[test]
+    fn test_handle_filter_backspace_edits_ai_query_when_ai_focused() {
+        let mut state = ai_focus_state("dragon");
+        handle_filter(&mut state, key_event(KEY_BACKSPACE));
+        assert_eq!(ai_query(&state), "drago");
+    }
+
+    #[test]
+    fn test_handle_filter_c_types_when_ai_focused() {
+        let mut state = ai_focus_state("");
+        handle_filter(&mut state, key_event(KEY_FILTER_CLEAR));
+        assert_eq!(ai_query(&state), "c");
+    }
+
+    #[test]
+    fn test_handle_filter_space_types_when_ai_focused() {
+        let mut state = ai_focus_state("");
+        handle_filter(&mut state, key_event(KEY_TOGGLE_ITEM));
+        assert_eq!(ai_query(&state), " ");
+    }
+
+    #[test]
+    fn test_handle_filter_multi_word_ai_query_with_c_and_space() {
+        let mut state = ai_focus_state("");
+        for c in "dragon heart".chars() {
+            handle_filter(&mut state, key_event(KeyCode::Char(c)));
+        }
+        assert_eq!(ai_query(&state), "dragon heart");
+    }
+
+    #[test]
+    fn test_handle_filter_enter_on_ai_opens_chapter_results_loading() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        crate::event_types::set_event_tx(tx);
+        let mut state = ai_focus_state("dragon");
+        handle_filter(&mut state, key_event(KEY_ENTER));
+        match &state.ui.modal {
+            Modal::ChapterResults {
+                query,
+                status,
+                groups,
+                ..
+            } => {
+                assert_eq!(query, "dragon");
+                assert_eq!(*status, SearchStatus::Loading);
+                assert!(groups.is_empty());
+            }
+            _ => panic!("Expected ChapterResults modal"),
+        }
+        // The search thread delivers an AiSearchResults event (fails fast in
+        // the test environment — no server — but the event still arrives).
+        let event = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        match event {
+            ServerEvent::AiSearchResults { query, result } => {
+                assert_eq!(query, "dragon");
+                assert!(
+                    result.is_err(),
+                    "expected Err in test env, got {:?}",
+                    result
+                );
+            }
+            _ => panic!("expected AiSearchResults"),
+        }
+    }
+
+    #[test]
+    fn test_handle_filter_enter_on_ai_empty_query_is_noop() {
+        let mut state = ai_focus_state("   ");
+        handle_filter(&mut state, key_event(KEY_ENTER));
+        assert!(matches!(state.ui.modal, Modal::Filter { .. }));
     }
 }

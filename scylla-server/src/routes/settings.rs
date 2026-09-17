@@ -21,10 +21,14 @@ pub async fn update_settings(
     Json(payload): Json<serde_json::Value>,
 ) -> StatusCode {
     if let Some(n) = payload.get("max_workers").and_then(|v| v.as_u64()) {
-        *state.max_workers.lock().unwrap() = n as u8;
+        if n == 0 || n > u8::MAX as u64 {
+            return StatusCode::BAD_REQUEST;
+        }
+        let n = n as u8;
+        *state.max_workers.lock().unwrap() = n;
         let _ = state
             .cmd_tx
-            .send(scylla_core::messenger::AppCommand::SetMaxWorkers(n as u8));
+            .send(scylla_core::messenger::AppCommand::SetMaxWorkers(n));
     }
     if let Some(s) = payload.get("rate_limit").and_then(|v| v.as_u64()) {
         *state.rate_limit.lock().unwrap() = s;

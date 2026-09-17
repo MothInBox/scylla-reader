@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod event;
+pub mod event_types;
 pub mod input;
 pub mod key_handler;
 pub mod library;

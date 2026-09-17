@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
+use serde_json::json;
 
 use crate::state::AppState;
 
@@ -86,4 +87,55 @@ pub async fn update_status(
     db.update_status(&url, &status)
         .map(|_| StatusCode::OK)
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// POST /api/books/:url/crawl — enqueues a FetchChapter job for every stored
+/// chapter of the book (the worker + embedding queue handle the rest).
+pub async fn crawl_book(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(url): axum::extract::Path<String>,
+) -> StatusCode {
+    let chapters = {
+        let db = state.db.lock().await;
+        match db.load_chapters(&url) {
+            Ok(c) => c,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    };
+    if chapters.is_empty() {
+        return StatusCode::NOT_FOUND;
+    }
+    for ch in &chapters {
+        let _ = state
+            .cmd_tx
+            .send(scylla_core::messenger::AppCommand::FetchChapter(
+                ch.url.clone(),
+                ch.order as usize,
+            ));
+    }
+    StatusCode::ACCEPTED
+}
+
+/// GET /api/books/:url/embedding-status — how many of the book's chapters have
+/// embeddings (and which), whether the aggregate exists, and the genres.
+pub async fn embedding_status(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(url): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let db = state.db.lock().await;
+    let status = db
+        .embedding_status(&url)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let Some((embedded_chapters, total_chapters, has_aggregate, genres, embedded_chapter_urls)) =
+        status
+    else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    Ok(Json(json!({
+        "embedded_chapters": embedded_chapters,
+        "total_chapters": total_chapters,
+        "aggregate": has_aggregate,
+        "genres": genres.unwrap_or_default(),
+        "embedded_chapter_urls": embedded_chapter_urls,
+    })))
 }

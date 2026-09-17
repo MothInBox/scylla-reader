@@ -1,12 +1,96 @@
-use crate::models::job::JobStatus;
+use crate::event_types::{ChapterGroup, ChapterHit, ServerEvent};
 use crate::state::AppState;
-use scylla_core::messenger::{AppCommand, AppEvent};
+use crate::state::modal::{Modal, SearchStatus};
 use std::sync::mpsc;
 
-pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<AppEvent>) {
+pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>) {
     while let Ok(event) = event_rx.try_recv() {
         match event {
-            AppEvent::BookScraped(book) => {
+            ServerEvent::JobsSnapshot {
+                jobs,
+                server_now_ms,
+            } => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Jobs snapshot received: {} jobs", jobs.len()),
+                );
+                state.jobs.jobs = jobs;
+                state.jobs.server_now_ms = server_now_ms;
+                state.jobs.active_count = state
+                    .jobs
+                    .jobs
+                    .iter()
+                    .filter(|j| j.status == "Running")
+                    .count() as u8;
+                // Clamp selection/detail to the new list so a shrinking
+                // snapshot never leaves a dangling index.
+                let filtered_len = state.jobs.filtered_jobs().len();
+                if state.jobs.selected >= filtered_len {
+                    state.jobs.selected = filtered_len.saturating_sub(1);
+                }
+                if let Some(idx) = state.jobs.detail_expanded
+                    && idx >= state.jobs.jobs.len()
+                {
+                    state.jobs.detail_expanded = None;
+                }
+            }
+            ServerEvent::JobEnqueued { job } => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Job enqueued: {} ({})", job.target, job.id),
+                );
+                // Dedupe against the snapshot — the same job may arrive both
+                // via the initial snapshot and the live stream.
+                if !state.jobs.jobs.iter().any(|j| j.id == job.id) {
+                    state.jobs.jobs.push(job);
+                }
+            }
+            ServerEvent::JobStatusChanged {
+                id,
+                status,
+                error,
+                started_at_ms,
+                completed_at_ms,
+            } => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Job {} status: {}", id, status),
+                );
+                state.jobs.update_from_status(
+                    id,
+                    &status,
+                    error.as_deref(),
+                    started_at_ms,
+                    completed_at_ms,
+                );
+                state.jobs.active_count = state
+                    .jobs
+                    .jobs
+                    .iter()
+                    .filter(|j| j.status == "Running")
+                    .count() as u8;
+            }
+            ServerEvent::JobOutcome { id, outcome } => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Job {} outcome", id),
+                );
+                state.jobs.set_outcome(id, outcome);
+            }
+            ServerEvent::WorkersChanged { max_workers } => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Workers changed to {}", max_workers),
+                );
+                state.jobs.max_workers = max_workers;
+                state.lib.settings.max_workers = max_workers;
+            }
+            ServerEvent::BookScraped { book } => {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
                     "UI",
@@ -67,21 +151,30 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<AppEvent>) {
                     existing.active_session_id = merged.active_session_id;
                 }
             }
-            AppEvent::ChapterFetched(chapter) => {
+            ServerEvent::ChapterFetched {
+                chapter_idx,
+                title,
+                content,
+                ..
+            } => {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
                     "UI",
-                    &format!("Chapter received: {}", chapter.title),
+                    &format!("Chapter received: {}", title),
                 );
                 let session_id = state.reader.session_id;
                 if let Some(book) = state.lib.library.selected_book_mut()
                     && let Some(session) = book.sessions.iter_mut().find(|s| s.id == session_id)
                 {
-                    session.progress.current = chapter.chapter_idx as u32;
+                    session.progress.current = chapter_idx as u32;
                 }
-                if let Some(backend) = state.lib.manager.primary_backend()
+                // Guest sessions (session_id < 0, e.g. AI-jump to a book not in
+                // the library) have no server-side progress row — skip the
+                // update to avoid a 404 error log on every chapter.
+                if session_id >= 0
+                    && let Some(backend) = state.lib.manager.primary_backend()
                     && let Err(e) = crate::storage::client::block_on(
-                        backend.update_progress(session_id, chapter.chapter_idx as u32),
+                        backend.update_progress(session_id, chapter_idx as u32),
                     )
                 {
                     crate::settings::log(
@@ -94,14 +187,14 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<AppEvent>) {
                     );
                 }
                 state.open_reader_chapter(
-                    chapter.title,
-                    chapter.content,
-                    chapter.chapter_idx,
+                    title,
+                    content,
+                    chapter_idx,
                     state.reader.session_id,
                     state.reader.session_name.clone(),
                 );
             }
-            AppEvent::ChapterFetchFailed => {
+            ServerEvent::ChapterFetchFailed => {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
                     "UI",
@@ -109,54 +202,25 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<AppEvent>) {
                 );
                 state.reader.loading = false;
             }
-            AppEvent::CoverFetched(url, protocol) => {
+            ServerEvent::CoverFetched { url, bytes } => {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
                     "UI",
                     &format!("Cover fetched: {}", url),
                 );
-                state.lib.library.cover_cache.insert(url, protocol);
+                match image::load_from_memory(&bytes) {
+                    Ok(img) => {
+                        let protocol = state.cover_picker.new_resize_protocol(img);
+                        state.lib.library.cover_cache.insert(url, protocol);
+                    }
+                    Err(e) => crate::settings::log(
+                        crate::settings::LogLevel::Error,
+                        "UI",
+                        &format!("Failed to decode cover image {}: {}", url, e),
+                    ),
+                }
             }
-            AppEvent::JobEnqueued(job) => {
-                crate::settings::log(
-                    crate::settings::LogLevel::Debug,
-                    "UI",
-                    &format!("Job enqueued: {} ({})", job.target, job.id),
-                );
-                state.jobs.jobs.push(job);
-            }
-            AppEvent::JobStatusChanged(id, status) => {
-                crate::settings::log(
-                    crate::settings::LogLevel::Debug,
-                    "UI",
-                    &format!("Job {} status: {:?}", id, status),
-                );
-                state.jobs.update_from_event(id, status);
-                state.jobs.active_count = state
-                    .jobs
-                    .jobs
-                    .iter()
-                    .filter(|j| matches!(j.status, JobStatus::Running))
-                    .count() as u8;
-            }
-            AppEvent::WorkersChanged(n) => {
-                crate::settings::log(
-                    crate::settings::LogLevel::Debug,
-                    "UI",
-                    &format!("Workers changed to {}", n),
-                );
-                state.jobs.max_workers = n;
-                state.lib.settings.max_workers = n;
-            }
-            AppEvent::JobOutcome(id, outcome) => {
-                crate::settings::log(
-                    crate::settings::LogLevel::Debug,
-                    "UI",
-                    &format!("Job {} outcome", id),
-                );
-                state.jobs.set_outcome(id, outcome);
-            }
-            AppEvent::PluginInstalled(domain, path) => {
+            ServerEvent::PluginInstalled { domain, path } => {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
                     "PLUGIN",
@@ -164,22 +228,117 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<AppEvent>) {
                 );
                 state.lib.settings.reload_plugins();
             }
-            AppEvent::PluginInstallFailed(msg) => {
+            ServerEvent::PluginInstallFailed { message } => {
                 crate::settings::log(
                     crate::settings::LogLevel::Error,
                     "PLUGIN",
-                    &format!("Plugin install failed: {}", msg),
+                    &format!("Plugin install failed: {}", message),
                 );
+            }
+            ServerEvent::ConnectionState { connected } => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!(
+                        "SSE connection {}",
+                        if connected { "established" } else { "lost" }
+                    ),
+                );
+                state.jobs.connected = connected;
+                // A dropped SSE means any in-flight chapter fetch will never
+                // resolve — don't leave the reader stuck on a spinner.
+                if !connected {
+                    state.reader.loading = false;
+                }
+            }
+            ServerEvent::AiSearchResults { query, result } => {
+                // Only apply when the chapter-results modal is open for the
+                // same query; anything else is stale.
+                let is_current = matches!(
+                    &state.ui.modal,
+                    Modal::ChapterResults { query: q, .. } if *q == query
+                );
+                if !is_current {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "AI",
+                        &format!("Stale AI search result dropped for query: {}", query),
+                    );
+                    continue;
+                }
+                match result {
+                    Ok(hits) => {
+                        let groups = build_groups(hits);
+                        let status = if groups.is_empty() {
+                            SearchStatus::Empty
+                        } else {
+                            SearchStatus::Ready
+                        };
+                        if let Modal::ChapterResults {
+                            groups: g,
+                            cursor,
+                            scroll_offset,
+                            status: s,
+                            ..
+                        } = &mut state.ui.modal
+                        {
+                            *g = groups;
+                            *cursor = 0;
+                            *scroll_offset = 0;
+                            *s = status;
+                        }
+                    }
+                    Err(e) => {
+                        crate::settings::log(
+                            crate::settings::LogLevel::Error,
+                            "AI",
+                            &format!("AI search failed: {}", e),
+                        );
+                        if let Modal::ChapterResults { status: s, .. } = &mut state.ui.modal {
+                            *s = SearchStatus::Error(e);
+                        }
+                    }
+                }
             }
         }
     }
 }
 
-pub fn update_covers(
-    state: &mut AppState,
-    cmd_tx: &mpsc::Sender<AppCommand>,
-    fetched_covers: &mut std::collections::HashSet<String>,
-) {
+/// Group flat chapter hits by book (first-appearance order), sort each group's
+/// chapters by score descending, and order the books by their best chapter's
+/// score descending.
+fn build_groups(hits: Vec<ChapterHit>) -> Vec<ChapterGroup> {
+    let mut groups: Vec<ChapterGroup> = Vec::new();
+    for hit in hits {
+        if let Some(group) = groups.iter_mut().find(|g| g.book_url == hit.book_url) {
+            group.chapters.push(hit);
+        } else {
+            groups.push(ChapterGroup {
+                book_url: hit.book_url.clone(),
+                book_title: hit.book_title.clone(),
+                genres: hit.genres.clone(),
+                chapters: vec![hit],
+                best_score: 0.0,
+            });
+        }
+    }
+    for group in &mut groups {
+        group.chapters.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        group.best_score = group.chapters.first().map(|c| c.score).unwrap_or(0.0);
+    }
+    groups.sort_by(|a, b| {
+        b.best_score
+            .partial_cmp(&a.best_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    groups
+}
+
+pub fn update_covers(state: &mut AppState, fetched_covers: &mut std::collections::HashSet<String>) {
     let current_cover_url = state
         .lib
         .library
@@ -190,7 +349,43 @@ pub fn update_covers(
         && !fetched_covers.contains(&url)
     {
         fetched_covers.insert(url.clone());
-        let _ = cmd_tx.send(AppCommand::FetchCover(url));
+        let base = crate::storage::client::api_base(state);
+        if let Err(e) = crate::storage::client::block_on(crate::storage::client::enqueue_job(
+            &base,
+            "FetchCover",
+            &url,
+            None,
+        )) {
+            crate::settings::log(
+                crate::settings::LogLevel::Error,
+                "UI",
+                &format!("Failed to enqueue cover fetch: {}", e),
+            );
+        }
+    }
+}
+
+/// Fetch the embedding status for the selected book once per session and cache
+/// it, so the details panel can show embedding progress. Failures (e.g. the
+/// book isn't embedded yet) are logged at Debug and never panic.
+pub fn update_embedding_statuses(state: &mut AppState) {
+    let current_url = state.lib.library.selected_book().map(|b| b.url.clone());
+    let Some(url) = current_url else {
+        return;
+    };
+    if state.lib.library.embedding_status_cache.contains_key(&url) {
+        return;
+    }
+    let base = crate::storage::client::api_base(state);
+    match crate::storage::client::block_on(crate::storage::client::embedding_status(&base, &url)) {
+        Ok(status) => {
+            state.lib.library.embedding_status_cache.insert(url, status);
+        }
+        Err(e) => crate::settings::log(
+            crate::settings::LogLevel::Debug,
+            "UI",
+            &format!("Failed to fetch embedding status for {}: {}", url, e),
+        ),
     }
 }
 
@@ -198,7 +393,7 @@ pub fn update_covers(
 mod tests {
     use super::*;
     use crate::test_helpers::*;
-    use scylla_core::types::{BookStatus, Chapter, Progress, Session};
+    use scylla_core::types::{BookStatus, Chapter, JobDto, Progress, Session};
 
     fn sample_book(url: &str) -> scylla_core::types::Book {
         scylla_core::types::Book {
@@ -216,6 +411,28 @@ mod tests {
                 order: 1,
             }],
         }
+    }
+
+    fn sample_job(id: u64, status: &str) -> JobDto {
+        JobDto {
+            id,
+            kind: "Scrape".into(),
+            status: status.into(),
+            target: "http://example.com".into(),
+            priority: "Normal".into(),
+            chapter_idx: None,
+            created_at_ms: 0,
+            started_at_ms: None,
+            completed_at_ms: None,
+            error: None,
+            outcome: None,
+        }
+    }
+
+    fn send(state: &mut AppState, event: ServerEvent) {
+        let (tx, rx) = mpsc::channel();
+        tx.send(event).unwrap();
+        drain_events(state, &rx);
     }
 
     #[test]
@@ -248,9 +465,7 @@ mod tests {
         scraped.tags = vec![];
         scraped.title = "Scraped Title".into();
 
-        let (tx, rx) = mpsc::channel();
-        tx.send(AppEvent::BookScraped(scraped)).unwrap();
-        drain_events(&mut state, &rx);
+        send(&mut state, ServerEvent::BookScraped { book: scraped });
 
         let calls = calls.lock().unwrap().clone();
         assert!(
@@ -285,10 +500,12 @@ mod tests {
         let calls = mock.calls.clone();
         let mut state = test_state_with_backend(Box::new(mock));
 
-        let (tx, rx) = mpsc::channel();
-        tx.send(AppEvent::BookScraped(sample_book("http://example.com/new")))
-            .unwrap();
-        drain_events(&mut state, &rx);
+        send(
+            &mut state,
+            ServerEvent::BookScraped {
+                book: sample_book("http://example.com/new"),
+            },
+        );
 
         let calls = calls.lock().unwrap().clone();
         assert!(
@@ -319,12 +536,12 @@ mod tests {
         }];
         state.lib.library.books.push(existing);
 
-        let (tx, rx) = mpsc::channel();
-        tx.send(AppEvent::BookScraped(sample_book(
-            "http://example.com/book",
-        )))
-        .unwrap();
-        drain_events(&mut state, &rx);
+        send(
+            &mut state,
+            ServerEvent::BookScraped {
+                book: sample_book("http://example.com/book"),
+            },
+        );
 
         // The mock's upsert created an "Initial" session; list_sessions returns
         // it, and the write-back must replace the stale in-memory sessions.
@@ -361,14 +578,15 @@ mod tests {
         }
         state.reader.session_id = 42;
 
-        let chapter = scylla_core::messenger::ChapterContent {
-            chapter_idx: 3,
-            title: "Ch3".into(),
-            content: "text".into(),
-        };
-        let (tx, rx) = mpsc::channel();
-        tx.send(AppEvent::ChapterFetched(chapter)).unwrap();
-        drain_events(&mut state, &rx);
+        send(
+            &mut state,
+            ServerEvent::ChapterFetched {
+                url: "".into(),
+                chapter_idx: 3,
+                title: "Ch3".into(),
+                content: "text".into(),
+            },
+        );
 
         let calls = calls.lock().unwrap().clone();
         assert!(
@@ -376,5 +594,362 @@ mod tests {
             "expected update_progress call, got: {:?}",
             calls
         );
+    }
+
+    #[test]
+    fn test_chapter_fetched_guest_session_skips_progress_update() {
+        let mock = MockBackend::new("mock");
+        let calls = mock.calls.clone();
+        let mut state = test_state_with_backend(Box::new(mock));
+        state.reader.session_id = -1; // guest session (AI jump, book not in library)
+
+        send(
+            &mut state,
+            ServerEvent::ChapterFetched {
+                url: "".into(),
+                chapter_idx: 3,
+                title: "Ch3".into(),
+                content: "text".into(),
+            },
+        );
+
+        let calls = calls.lock().unwrap().clone();
+        assert!(
+            !calls.iter().any(|c| c.starts_with("update_progress")),
+            "expected no update_progress call for guest session, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_jobs_snapshot_replaces_jobs() {
+        let mut state = test_state();
+        state.jobs.jobs.push(sample_job(1, "Running"));
+        send(
+            &mut state,
+            ServerEvent::JobsSnapshot {
+                jobs: vec![sample_job(2, "Queued"), sample_job(3, "Completed")],
+                server_now_ms: 12345,
+            },
+        );
+        assert_eq!(state.jobs.jobs.len(), 2);
+        assert_eq!(state.jobs.jobs[0].id, 2);
+        assert_eq!(state.jobs.active_count, 0);
+        assert_eq!(state.jobs.server_now_ms, 12345);
+    }
+
+    #[test]
+    fn test_jobs_snapshot_recomputes_active_count() {
+        let mut state = test_state();
+        send(
+            &mut state,
+            ServerEvent::JobsSnapshot {
+                jobs: vec![sample_job(1, "Running"), sample_job(2, "Running")],
+                server_now_ms: 0,
+            },
+        );
+        assert_eq!(state.jobs.active_count, 2);
+    }
+
+    #[test]
+    fn test_jobs_snapshot_clamps_selection_and_detail() {
+        let mut state = test_state();
+        state.jobs.jobs.push(sample_job(1, "Queued"));
+        state.jobs.jobs.push(sample_job(2, "Queued"));
+        state.jobs.selected = 1;
+        state.jobs.detail_expanded = Some(1);
+        send(
+            &mut state,
+            ServerEvent::JobsSnapshot {
+                jobs: vec![sample_job(3, "Queued")],
+                server_now_ms: 0,
+            },
+        );
+        assert_eq!(state.jobs.selected, 0);
+        assert_eq!(state.jobs.detail_expanded, None);
+    }
+
+    #[test]
+    fn test_jobs_snapshot_empty_clamps_selection() {
+        let mut state = test_state();
+        state.jobs.jobs.push(sample_job(1, "Queued"));
+        state.jobs.selected = 0;
+        send(
+            &mut state,
+            ServerEvent::JobsSnapshot {
+                jobs: vec![],
+                server_now_ms: 0,
+            },
+        );
+        assert_eq!(state.jobs.selected, 0);
+        assert!(state.jobs.jobs.is_empty());
+    }
+
+    #[test]
+    fn test_job_enqueued_dedupes() {
+        let mut state = test_state();
+        state.jobs.jobs.push(sample_job(1, "Queued"));
+        send(
+            &mut state,
+            ServerEvent::JobEnqueued {
+                job: sample_job(1, "Queued"),
+            },
+        );
+        assert_eq!(state.jobs.jobs.len(), 1);
+        send(
+            &mut state,
+            ServerEvent::JobEnqueued {
+                job: sample_job(2, "Queued"),
+            },
+        );
+        assert_eq!(state.jobs.jobs.len(), 2);
+    }
+
+    #[test]
+    fn test_job_status_changed_updates_job_dto() {
+        let mut state = test_state();
+        state.jobs.jobs.push(sample_job(1, "Queued"));
+        send(
+            &mut state,
+            ServerEvent::JobStatusChanged {
+                id: 1,
+                status: "Running".into(),
+                error: None,
+                started_at_ms: Some(200),
+                completed_at_ms: None,
+            },
+        );
+        assert_eq!(state.jobs.jobs[0].status, "Running");
+        assert_eq!(state.jobs.jobs[0].started_at_ms, Some(200));
+        assert_eq!(state.jobs.active_count, 1);
+    }
+
+    #[test]
+    fn test_connection_state_sets_connected() {
+        let mut state = test_state();
+        assert!(!state.jobs.connected);
+        send(&mut state, ServerEvent::ConnectionState { connected: true });
+        assert!(state.jobs.connected);
+        send(
+            &mut state,
+            ServerEvent::ConnectionState { connected: false },
+        );
+        assert!(!state.jobs.connected);
+    }
+
+    #[test]
+    fn test_connection_state_disconnect_clears_reader_loading() {
+        let mut state = test_state();
+        state.reader.loading = true;
+        send(
+            &mut state,
+            ServerEvent::ConnectionState { connected: false },
+        );
+        assert!(!state.reader.loading);
+        // Reconnect must not clear loading (a fresh fetch may be in flight).
+        state.reader.loading = true;
+        send(&mut state, ServerEvent::ConnectionState { connected: true });
+        assert!(state.reader.loading);
+    }
+
+    #[test]
+    fn test_cover_fetched_decodes_into_protocol() {
+        let mut state = test_state();
+        // A tiny 1x1 PNG so image::load_from_memory succeeds.
+        let img = image::RgbImage::new(1, 1);
+        let mut bytes: Vec<u8> = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+
+        send(
+            &mut state,
+            ServerEvent::CoverFetched {
+                url: "http://example.com/c.png".into(),
+                bytes,
+            },
+        );
+        assert!(
+            state
+                .lib
+                .library
+                .cover_cache
+                .contains_key("http://example.com/c.png")
+        );
+    }
+
+    #[test]
+    fn test_cover_fetched_bad_bytes_logs_without_panic() {
+        let mut state = test_state();
+        send(
+            &mut state,
+            ServerEvent::CoverFetched {
+                url: "http://example.com/bad.png".into(),
+                bytes: vec![1, 2, 3],
+            },
+        );
+        assert!(
+            !state
+                .lib
+                .library
+                .cover_cache
+                .contains_key("http://example.com/bad.png")
+        );
+    }
+
+    #[test]
+    fn test_workers_changed_updates_settings() {
+        let mut state = test_state();
+        send(&mut state, ServerEvent::WorkersChanged { max_workers: 8 });
+        assert_eq!(state.jobs.max_workers, 8);
+        assert_eq!(state.lib.settings.max_workers, 8);
+    }
+
+    fn sample_hit(book_url: &str, book_title: &str, idx: usize, score: f32) -> ChapterHit {
+        ChapterHit {
+            book_url: book_url.into(),
+            book_title: book_title.into(),
+            chapter_url: format!("{}/ch{}", book_url, idx),
+            chapter_idx: idx,
+            chapter_title: format!("Ch{}", idx),
+            score,
+            genres: vec![],
+        }
+    }
+
+    fn chapter_results_state(query: &str) -> AppState {
+        let mut state = test_state();
+        state.ui.modal = Modal::ChapterResults {
+            query: query.into(),
+            groups: vec![],
+            cursor: 0,
+            scroll_offset: 0,
+            status: SearchStatus::Loading,
+        };
+        state
+    }
+
+    #[test]
+    fn test_ai_search_results_groups_by_book() {
+        let mut state = chapter_results_state("dragon");
+        let hits = vec![
+            sample_hit("u1", "Book A", 0, 0.5),
+            sample_hit("u2", "Book B", 0, 0.9),
+            sample_hit("u1", "Book A", 1, 0.8),
+        ];
+        send(
+            &mut state,
+            ServerEvent::AiSearchResults {
+                query: "dragon".into(),
+                result: Ok(hits),
+            },
+        );
+        match &state.ui.modal {
+            Modal::ChapterResults {
+                groups,
+                status,
+                cursor,
+                ..
+            } => {
+                assert_eq!(*status, SearchStatus::Ready);
+                assert_eq!(*cursor, 0);
+                assert_eq!(groups.len(), 2);
+                // Books ordered by best chapter score desc: Book B (0.9) first.
+                assert_eq!(groups[0].book_title, "Book B");
+                assert_eq!(groups[1].book_title, "Book A");
+                // best_score mirrors the best chapter's score.
+                assert_eq!(groups[0].best_score, 0.9);
+                assert_eq!(groups[1].best_score, 0.8);
+                // Chapters within a group sorted by score desc.
+                assert_eq!(groups[1].chapters[0].chapter_idx, 1);
+                assert_eq!(groups[1].chapters[1].chapter_idx, 0);
+            }
+            _ => panic!("expected ChapterResults"),
+        }
+    }
+
+    #[test]
+    fn test_ai_search_results_empty_sets_empty_status() {
+        let mut state = chapter_results_state("dragon");
+        send(
+            &mut state,
+            ServerEvent::AiSearchResults {
+                query: "dragon".into(),
+                result: Ok(vec![]),
+            },
+        );
+        match &state.ui.modal {
+            Modal::ChapterResults { status, .. } => assert_eq!(*status, SearchStatus::Empty),
+            _ => panic!("expected ChapterResults"),
+        }
+    }
+
+    #[test]
+    fn test_ai_search_results_error_sets_error_status() {
+        let mut state = chapter_results_state("dragon");
+        send(
+            &mut state,
+            ServerEvent::AiSearchResults {
+                query: "dragon".into(),
+                result: Err("boom".into()),
+            },
+        );
+        match &state.ui.modal {
+            Modal::ChapterResults { status, .. } => {
+                assert_eq!(*status, SearchStatus::Error("boom".into()))
+            }
+            _ => panic!("expected ChapterResults"),
+        }
+    }
+
+    #[test]
+    fn test_ai_search_results_stale_query_is_dropped() {
+        let mut state = chapter_results_state("dragon");
+        send(
+            &mut state,
+            ServerEvent::AiSearchResults {
+                query: "other".into(),
+                result: Ok(vec![sample_hit("u1", "Book A", 0, 0.9)]),
+            },
+        );
+        match &state.ui.modal {
+            Modal::ChapterResults { status, groups, .. } => {
+                assert_eq!(*status, SearchStatus::Loading);
+                assert!(groups.is_empty());
+            }
+            _ => panic!("expected ChapterResults"),
+        }
+    }
+
+    #[test]
+    fn test_ai_search_results_without_modal_is_dropped() {
+        let mut state = test_state();
+        send(
+            &mut state,
+            ServerEvent::AiSearchResults {
+                query: "dragon".into(),
+                result: Ok(vec![sample_hit("u1", "Book A", 0, 0.9)]),
+            },
+        );
+        assert_eq!(state.ui.modal, Modal::None);
+    }
+
+    #[test]
+    fn test_build_groups_preserves_genres_and_sorts() {
+        let mut hits = vec![
+            sample_hit("u1", "Book A", 0, 0.5),
+            sample_hit("u1", "Book A", 1, 0.9),
+        ];
+        hits[0].genres = vec!["Fantasy".into()];
+        hits[1].genres = vec!["Fantasy".into()];
+        let groups = build_groups(hits);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].genres, vec!["Fantasy"]);
+        assert_eq!(groups[0].best_score, 0.9);
+        assert_eq!(groups[0].chapters[0].chapter_idx, 1);
+        assert_eq!(groups[0].chapters[1].chapter_idx, 0);
     }
 }

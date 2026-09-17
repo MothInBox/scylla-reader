@@ -1,8 +1,8 @@
-use crate::models::job::{Job, JobOutcome, JobStatus};
 use crate::state::{JobsState, UiState};
 use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use scylla_core::types::{JobDto, JobOutcomeDto, job_now_ms};
 
 pub fn draw(frame: &mut Frame, area: Rect, jobs: &mut JobsState, ui: &UiState) {
     let hint_height: u16 = if ui.show_hints { 4 } else { 1 };
@@ -16,9 +16,10 @@ pub fn draw(frame: &mut Frame, area: Rect, jobs: &mut JobsState, ui: &UiState) {
         .split(area);
 
     // Header bar
+    let connected = if jobs.connected { "●" } else { "○" };
     let header = format!(
-        " Jobs                      Workers: {}/{}  [+][-]",
-        jobs.active_count, jobs.max_workers,
+        " Jobs  {}  Workers: {}/{}  [+][-]",
+        connected, jobs.active_count, jobs.max_workers,
     );
     frame.render_widget(
         Paragraph::new(header).style(Style::default().fg(Color::Cyan)),
@@ -40,7 +41,7 @@ pub fn draw(frame: &mut Frame, area: Rect, jobs: &mut JobsState, ui: &UiState) {
                 .map(|&si| si == i)
                 .unwrap_or(false);
             let is_expanded = jobs.detail_expanded == Some(i);
-            render_job_row(job, is_selected, is_expanded)
+            render_job_row(job, jobs.server_now_ms, is_selected, is_expanded)
         })
         .collect();
 
@@ -69,21 +70,12 @@ pub fn draw(frame: &mut Frame, area: Rect, jobs: &mut JobsState, ui: &UiState) {
         let filter_status = format!(
             " [{}]  {} queued | {} running | {} failed | {} completed",
             jobs.filter,
+            jobs.jobs.iter().filter(|j| j.status == "Queued").count(),
+            jobs.jobs.iter().filter(|j| j.status == "Running").count(),
+            jobs.jobs.iter().filter(|j| j.status == "Failed").count(),
             jobs.jobs
                 .iter()
-                .filter(|j| matches!(j.status, JobStatus::Queued))
-                .count(),
-            jobs.jobs
-                .iter()
-                .filter(|j| matches!(j.status, JobStatus::Running))
-                .count(),
-            jobs.jobs
-                .iter()
-                .filter(|j| matches!(j.status, JobStatus::Failed(_)))
-                .count(),
-            jobs.jobs
-                .iter()
-                .filter(|j| matches!(j.status, JobStatus::Completed | JobStatus::Cancelled))
+                .filter(|j| j.status == "Completed" || j.status == "Cancelled")
                 .count(),
         );
         frame.render_widget(
@@ -125,47 +117,55 @@ pub fn draw(frame: &mut Frame, area: Rect, jobs: &mut JobsState, ui: &UiState) {
     }
 }
 
-fn status_icon(status: &JobStatus) -> &'static str {
+fn status_icon(status: &str) -> &'static str {
     match status {
-        JobStatus::Queued => "○",
-        JobStatus::Running => "●",
-        JobStatus::Completed => "✓",
-        JobStatus::Failed(_) => "✕",
-        JobStatus::Cancelled => "⊘",
+        "Queued" => "○",
+        "Running" => "●",
+        "Completed" => "✓",
+        "Failed" => "✕",
+        "Cancelled" => "⊘",
+        _ => "?",
     }
 }
 
-fn status_color(status: &JobStatus) -> Color {
+fn status_color(status: &str) -> Color {
     match status {
-        JobStatus::Queued => Color::White,
-        JobStatus::Running => Color::Green,
-        JobStatus::Completed => Color::Cyan,
-        JobStatus::Failed(_) => Color::Red,
-        JobStatus::Cancelled => Color::DarkGray,
+        "Queued" => Color::White,
+        "Running" => Color::Green,
+        "Completed" => Color::Cyan,
+        "Failed" => Color::Red,
+        "Cancelled" => Color::DarkGray,
+        _ => Color::White,
     }
 }
 
-fn render_job_row<'a>(job: &Job, _selected: bool, expanded: bool) -> ListItem<'a> {
+fn render_job_row<'a>(
+    job: &JobDto,
+    server_now_ms: u64,
+    _selected: bool,
+    expanded: bool,
+) -> ListItem<'a> {
+    // Job timestamps are server-relative; use the snapshot's `server_now_ms`
+    // as the "now" reference, falling back to the local monotonic clock until
+    // the first snapshot arrives.
+    let now_ms = if server_now_ms > 0 {
+        server_now_ms
+    } else {
+        job_now_ms()
+    };
     let icon = status_icon(&job.status);
     let color = status_color(&job.status);
-    let elapsed = match &job.status {
-        JobStatus::Running => job
-            .started_at
-            .map(|s| format!(" {:?}", s.elapsed().as_secs()) + "s")
-            .unwrap_or_default(),
-        _ => String::new(),
+    let elapsed = if job.status == "Running" {
+        job.started_at_ms
+            .map(|s| format!(" {}s", now_ms.saturating_sub(s) / 1000))
+            .unwrap_or_default()
+    } else {
+        String::new()
     };
 
     let main = format!(
         "{} {}  {}  {} {}",
-        icon,
-        job.kind.label(),
-        job.target,
-        match &job.status {
-            JobStatus::Failed(_e) => "FAILED".to_string(),
-            _ => format!("{:?}", job.status),
-        },
-        elapsed,
+        icon, job.kind, job.target, job.status, elapsed,
     );
 
     let style = Style::default().fg(color);
@@ -173,50 +173,22 @@ fn render_job_row<'a>(job: &Job, _selected: bool, expanded: bool) -> ListItem<'a
 
     if expanded {
         lines.push(Line::from(Span::raw(format!(
-            "  ID: {}  Created: {:?} ago",
+            "  ID: {}  Created: {}s ago",
             job.id,
-            job.created_at.elapsed().as_secs()
+            now_ms.saturating_sub(job.created_at_ms) / 1000
         ))));
-        if let Some(started) = job.started_at {
+        if let Some(started) = job.started_at_ms {
             lines.push(Line::from(Span::raw(format!(
-                "  Started: {:?} ago  Elapsed: {:?}s",
-                started.elapsed().as_secs(),
-                job.started_at.unwrap().elapsed().as_secs()
+                "  Started: {}s ago  Elapsed: {}s",
+                now_ms.saturating_sub(started) / 1000,
+                now_ms.saturating_sub(started) / 1000
             ))));
         }
         if let Some(outcome) = &job.outcome {
-            match outcome {
-                JobOutcome::BookScraped {
-                    title,
-                    chapters,
-                    cover,
-                } => {
-                    lines.push(Line::from(Span::styled(
-                        format!(
-                            "  Book: {} ({} chapters, cover: {})",
-                            title,
-                            chapters,
-                            if *cover { "yes" } else { "no" }
-                        ),
-                        Style::default().fg(Color::Cyan),
-                    )));
-                }
-                JobOutcome::ChapterFetched {
-                    title,
-                    content_chars,
-                } => {
-                    lines.push(Line::from(Span::styled(
-                        format!("  Chapter: {} ({} chars)", title, content_chars),
-                        Style::default().fg(Color::Cyan),
-                    )));
-                }
-                JobOutcome::CoverFetched => {
-                    lines.push(Line::from(Span::styled(
-                        "  Cover: fetched",
-                        Style::default().fg(Color::Cyan),
-                    )));
-                }
-            }
+            lines.push(Line::from(Span::styled(
+                format!("  Outcome: {}", outcome_line(outcome)),
+                Style::default().fg(Color::Cyan),
+            )));
         }
 
         if let Some(e) = &job.error {
@@ -236,4 +208,126 @@ fn render_job_row<'a>(job: &Job, _selected: bool, expanded: bool) -> ListItem<'a
     }
 
     ListItem::new(lines)
+}
+
+fn outcome_line(outcome: &JobOutcomeDto) -> String {
+    match outcome.kind.as_str() {
+        "BookScraped" => format!(
+            "Book: {} ({} chapters, cover: {})",
+            outcome.title.as_deref().unwrap_or("?"),
+            outcome.chapters.unwrap_or(0),
+            if outcome.cover.unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            }
+        ),
+        "ChapterFetched" => format!(
+            "Chapter: {} ({} chars)",
+            outcome.title.as_deref().unwrap_or("?"),
+            outcome.content_chars.unwrap_or(0)
+        ),
+        "CoverFetched" => "Cover: fetched".to_string(),
+        _ => outcome.kind.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::library::Library;
+    use crate::state::AppState;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn make_state() -> AppState {
+        AppState::from_parts(Library::new())
+    }
+
+    fn sample_job(id: u64, status: &str) -> JobDto {
+        JobDto {
+            id,
+            kind: "Scrape".into(),
+            status: status.into(),
+            target: "http://example.com".into(),
+            priority: "Normal".into(),
+            chapter_idx: None,
+            created_at_ms: 0,
+            started_at_ms: None,
+            completed_at_ms: None,
+            error: None,
+            outcome: None,
+        }
+    }
+
+    #[test]
+    fn test_jobs_draw_renders_without_panic() {
+        let mut state = make_state();
+        state.jobs.jobs.push(sample_job(1, "Running"));
+        state.jobs.jobs.push(sample_job(2, "Completed"));
+        state.jobs.connected = true;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state.jobs, &state.ui);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_jobs_draw_shows_connected_indicator() {
+        let mut state = make_state();
+        state.jobs.connected = true;
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state.jobs, &state.ui);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains('●'));
+    }
+
+    #[test]
+    fn test_status_icon_and_color() {
+        assert_eq!(status_icon("Queued"), "○");
+        assert_eq!(status_icon("Running"), "●");
+        assert_eq!(status_icon("Completed"), "✓");
+        assert_eq!(status_icon("Failed"), "✕");
+        assert_eq!(status_icon("Cancelled"), "⊘");
+        assert_eq!(status_color("Running"), Color::Green);
+        assert_eq!(status_color("Failed"), Color::Red);
+    }
+
+    #[test]
+    fn test_outcome_line_variants() {
+        let book = JobOutcomeDto {
+            kind: "BookScraped".into(),
+            title: Some("Book".into()),
+            chapters: Some(3),
+            cover: Some(true),
+            content_chars: None,
+        };
+        assert_eq!(outcome_line(&book), "Book: Book (3 chapters, cover: yes)");
+        let chapter = JobOutcomeDto {
+            kind: "ChapterFetched".into(),
+            title: Some("Ch1".into()),
+            chapters: None,
+            cover: None,
+            content_chars: Some(500),
+        };
+        assert_eq!(outcome_line(&chapter), "Chapter: Ch1 (500 chars)");
+        let cover = JobOutcomeDto {
+            kind: "CoverFetched".into(),
+            title: None,
+            chapters: None,
+            cover: None,
+            content_chars: None,
+        };
+        assert_eq!(outcome_line(&cover), "Cover: fetched");
+    }
 }

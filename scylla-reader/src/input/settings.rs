@@ -2,15 +2,10 @@ use crate::input::keybinds::*;
 use crate::settings::{SettingsField, SettingsPage};
 use crate::state::LibraryState;
 use crossterm::event::{KeyCode, KeyEvent};
-use scylla_core::messenger::AppCommand;
 
-pub fn handle_settings(
-    lib: &mut LibraryState,
-    key: KeyEvent,
-    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
-) -> bool {
+pub fn handle_settings(lib: &mut LibraryState, key: KeyEvent) -> bool {
     match lib.settings_ui.settings_page.clone() {
-        SettingsPage::Main => handle_settings_main(lib, key, cmd_tx),
+        SettingsPage::Main => handle_settings_main(lib, key),
         SettingsPage::DebugLog => handle_debug_log(lib, key),
         SettingsPage::PluginList => handle_plugin_list(lib, key),
         SettingsPage::PluginFields => handle_plugin_fields(lib, key),
@@ -19,11 +14,7 @@ pub fn handle_settings(
     }
 }
 
-pub fn handle_settings_main(
-    lib: &mut LibraryState,
-    key: KeyEvent,
-    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
-) -> bool {
+pub fn handle_settings_main(lib: &mut LibraryState, key: KeyEvent) -> bool {
     let num_fields = SettingsField::all().len();
     match key.code {
         KEY_NAV_DOWN => {
@@ -42,7 +33,20 @@ pub fn handle_settings_main(
                         if let Ok(rate) = lib.settings_ui.edit_buffer.parse::<u64>() {
                             lib.settings.rate_limit_secs = rate;
                             lib.settings.save();
-                            let _ = cmd_tx.send(AppCommand::SetRateLimit(rate));
+                            let base = crate::storage::client::api_base_for(&lib.manager);
+                            if let Err(e) = crate::storage::client::block_on(
+                                crate::storage::client::job_command(
+                                    &base,
+                                    "rate-limit",
+                                    serde_json::json!({ "rate_limit": rate }),
+                                ),
+                            ) {
+                                crate::settings::log(
+                                    crate::settings::LogLevel::Error,
+                                    "INPUT",
+                                    &format!("Failed to set rate limit: {}", e),
+                                );
+                            }
                         }
                         lib.settings_ui.editing = false;
                     } else {
@@ -258,19 +262,18 @@ mod tests {
     #[test]
     fn test_handle_settings_main_navigate() {
         let mut state = test_state();
-        let (tx, _rx) = channel();
         assert_eq!(state.lib.settings_ui.selected_field, 0);
 
-        handle_settings_main(&mut state.lib, key_event(KEY_NAV_DOWN), &tx);
+        handle_settings_main(&mut state.lib, key_event(KEY_NAV_DOWN));
         assert_eq!(state.lib.settings_ui.selected_field, 1);
 
-        handle_settings_main(&mut state.lib, key_event(KEY_NAV_DOWN), &tx);
+        handle_settings_main(&mut state.lib, key_event(KEY_NAV_DOWN));
         assert_eq!(state.lib.settings_ui.selected_field, 2);
 
-        handle_settings_main(&mut state.lib, key_event(KEY_NAV_UP), &tx);
+        handle_settings_main(&mut state.lib, key_event(KEY_NAV_UP));
         assert_eq!(state.lib.settings_ui.selected_field, 1);
 
-        handle_settings_main(&mut state.lib, key_event(KEY_NAV_UP), &tx);
+        handle_settings_main(&mut state.lib, key_event(KEY_NAV_UP));
         assert_eq!(state.lib.settings_ui.selected_field, 0);
     }
 
@@ -278,8 +281,7 @@ mod tests {
     fn test_handle_settings_main_tab_does_not_navigate() {
         let mut state = test_state();
         state.ui.page = Page::Settings;
-        let (tx, _rx) = channel();
-        let result = handle_settings_main(&mut state.lib, key_event(KeyCode::Tab), &tx);
+        let result = handle_settings_main(&mut state.lib, key_event(KeyCode::Tab));
         assert!(result);
     }
 
@@ -287,10 +289,9 @@ mod tests {
     fn test_handle_settings_main_enter_edits_rate_limit() {
         let mut state = test_state();
         state.lib.settings_ui.selected_field = 0;
-        let (tx, _rx) = channel();
         assert!(!state.lib.settings_ui.editing);
 
-        handle_settings_main(&mut state.lib, key_event(KEY_ENTER), &tx);
+        handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
         assert!(state.lib.settings_ui.editing);
         assert_eq!(state.lib.settings_ui.edit_buffer, "2");
     }
@@ -301,9 +302,8 @@ mod tests {
         state.lib.settings_ui.selected_field = 0;
         state.lib.settings_ui.editing = true;
         state.lib.settings_ui.edit_buffer = "5".to_string();
-        let (tx, _rx) = channel();
 
-        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER), &tx);
+        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
         assert!(result);
         assert!(!state.lib.settings_ui.editing);
         assert_eq!(state.lib.settings.rate_limit_secs, 5);
@@ -313,9 +313,8 @@ mod tests {
     fn test_handle_settings_main_enter_debug_log() {
         let mut state = test_state();
         state.lib.settings_ui.selected_field = 1;
-        let (tx, _rx) = channel();
 
-        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER), &tx);
+        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
         assert!(result);
         assert_eq!(state.lib.settings_ui.settings_page, SettingsPage::DebugLog);
     }
@@ -324,10 +323,9 @@ mod tests {
     fn test_handle_settings_main_enter_toggles_reader_mode() {
         let mut state = test_state();
         state.lib.settings_ui.selected_field = 2;
-        let (tx, _rx) = channel();
         assert_eq!(state.lib.settings.reader_mode, ReaderMode::Paged);
 
-        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER), &tx);
+        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
         assert!(result);
         assert_eq!(state.lib.settings.reader_mode, ReaderMode::Scrollable);
     }
@@ -350,9 +348,8 @@ mod tests {
         state.lib.settings_ui.selected_field = 0;
         state.lib.settings_ui.editing = true;
         state.lib.settings_ui.edit_buffer = "2".to_string();
-        let (tx, _rx) = channel();
 
-        handle_settings_main(&mut state.lib, key_event(KeyCode::Char('5')), &tx);
+        handle_settings_main(&mut state.lib, key_event(KeyCode::Char('5')));
         assert_eq!(state.lib.settings_ui.edit_buffer, "25");
     }
 
@@ -362,9 +359,8 @@ mod tests {
         state.lib.settings_ui.selected_field = 0;
         state.lib.settings_ui.editing = true;
         state.lib.settings_ui.edit_buffer = "25".to_string();
-        let (tx, _rx) = channel();
 
-        handle_settings_main(&mut state.lib, key_event(KEY_BACKSPACE), &tx);
+        handle_settings_main(&mut state.lib, key_event(KEY_BACKSPACE));
         assert_eq!(state.lib.settings_ui.edit_buffer, "2");
     }
 
@@ -375,9 +371,8 @@ mod tests {
         state.lib.settings_ui.editing = true;
         state.lib.settings_ui.edit_buffer = "not_a_number".to_string();
         let old_rate = state.lib.settings.rate_limit_secs;
-        let (tx, _rx) = channel();
 
-        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER), &tx);
+        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
         assert!(result);
         assert!(!state.lib.settings_ui.editing);
         assert_eq!(state.lib.settings.rate_limit_secs, old_rate);
@@ -387,13 +382,12 @@ mod tests {
     fn test_handle_settings_main_enter_toggles_reader_mode_and_saves() {
         let mut state = test_state();
         state.lib.settings_ui.selected_field = 2;
-        let (tx, _rx) = channel();
 
-        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER), &tx);
+        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
         assert!(result);
         assert_eq!(state.lib.settings.reader_mode, ReaderMode::Scrollable);
 
-        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER), &tx);
+        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
         assert!(result);
         assert_eq!(state.lib.settings.reader_mode, ReaderMode::Paged);
     }
@@ -412,8 +406,7 @@ mod tests {
         let mock = MockBackend::new("mock");
         let mut state = test_state_with_backend(Box::new(mock));
         state.lib.settings_ui.selected_field = 4; // SettingsField::Server
-        let (tx, _rx) = channel();
-        handle_settings_main(&mut state.lib, key_event(KEY_ENTER), &tx);
+        handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
         assert_eq!(state.lib.settings_ui.settings_page, SettingsPage::Server);
         // MockBackend's get_server_settings returns Err via the trait default,
         // so the refresh records an error rather than panicking.

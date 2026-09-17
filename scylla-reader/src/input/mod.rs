@@ -11,40 +11,40 @@ pub mod settings;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::KeyEvent;
 use ratatui::prelude::Rect;
-use scylla_core::messenger::AppCommand;
 
-pub fn handle_input(
-    state: &mut AppState,
-    key: KeyEvent,
-    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
-    size: Rect,
-) -> bool {
+pub fn handle_input(state: &mut AppState, key: KeyEvent, size: Rect) -> bool {
     if matches!(&state.ui.modal, Modal::CommandPalette { .. }) {
-        return palette::handle_palette(state, key, cmd_tx);
+        return palette::handle_palette(state, key);
     }
     if matches!(&state.ui.modal, Modal::SessionPicker { .. }) {
-        return modal::handle_session_picker(state, key, cmd_tx);
+        return modal::handle_session_picker(state, key);
     }
     if matches!(&state.ui.modal, Modal::AddBook { .. }) {
-        return modal::handle_adding_book(&mut state.ui, key, cmd_tx);
+        return modal::handle_adding_book(state, key);
     }
     if matches!(&state.ui.modal, Modal::JumpChapter { .. }) {
-        return modal::handle_jumping_chapter(state, key, cmd_tx);
+        return modal::handle_jumping_chapter(state, key);
     }
     if matches!(&state.ui.modal, Modal::InstallPlugin { .. }) {
-        return modal::handle_installing_plugin(&mut state.ui, key, cmd_tx);
+        return modal::handle_installing_plugin(state, key);
     }
     if matches!(&state.ui.modal, Modal::BackendPicker { .. }) {
-        return modal::handle_backend_picker(state, key, cmd_tx);
+        return modal::handle_backend_picker(state, key);
+    }
+    if matches!(&state.ui.modal, Modal::ChapterResults { .. }) {
+        return modal::handle_chapter_results(state, key);
+    }
+    if matches!(&state.ui.modal, Modal::EmbedChapters { .. }) {
+        return modal::handle_embed_chapters(state, key);
     }
     if matches!(&state.ui.modal, Modal::Filter { .. }) {
-        return modal::handle_filter(state, key, cmd_tx);
+        return modal::handle_filter(state, key);
     }
     match &state.ui.page {
-        Page::Library => library::handle_library(&mut state.ui, &mut state.lib, key, cmd_tx),
-        Page::Settings => settings::handle_settings(&mut state.lib, key, cmd_tx),
-        Page::Reader => reader::handle_reader(state, key, cmd_tx, size),
-        Page::Jobs => jobs::handle_jobs(&mut state.jobs, &mut state.lib, key, cmd_tx),
+        Page::Library => library::handle_library(&mut state.ui, &mut state.lib, key),
+        Page::Settings => settings::handle_settings(&mut state.lib, key),
+        Page::Reader => reader::handle_reader(state, key, size),
+        Page::Jobs => jobs::handle_jobs(&mut state.jobs, &mut state.lib, key),
     }
 }
 
@@ -63,8 +63,7 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
         };
-        let (tx, _rx) = channel();
-        let result = handle_input(&mut state, key_event(KeyCode::Char('l')), &tx, rect());
+        let result = handle_input(&mut state, key_event(KeyCode::Char('l')), rect());
         assert!(result);
         if let Modal::AddBook { inputs, .. } = &state.ui.modal {
             assert_eq!(inputs[0], "hel");
@@ -77,8 +76,7 @@ mod tests {
     fn test_handle_input_library_dispatches() {
         let mut state = test_state();
         state.ui.page = Page::Library;
-        let (tx, _rx) = channel();
-        let result = handle_input(&mut state, key_event(KeyCode::Char('i')), &tx, rect());
+        let result = handle_input(&mut state, key_event(KeyCode::Char('i')), rect());
         assert!(result);
         assert_eq!(state.ui.page, Page::Library);
         assert_eq!(
@@ -95,8 +93,7 @@ mod tests {
     fn test_handle_input_settings_dispatches() {
         let mut state = test_state();
         state.ui.page = Page::Settings;
-        let (tx, _rx) = channel();
-        let result = handle_input(&mut state, key_event(KeyCode::Enter), &tx, rect());
+        let result = handle_input(&mut state, key_event(KeyCode::Enter), rect());
         assert!(result);
         assert!(state.lib.settings_ui.editing);
         assert_eq!(state.lib.settings_ui.edit_buffer, "2");
@@ -107,8 +104,7 @@ mod tests {
         let mut state = test_state();
         state.lib.library.add_book("Test Book".into(), "url".into());
         state.ui.page = Page::Reader;
-        let (tx, _rx) = channel();
-        let result = handle_input(&mut state, key_event(KeyCode::Right), &tx, rect());
+        let result = handle_input(&mut state, key_event(KeyCode::Right), rect());
         assert!(result);
     }
 
@@ -121,8 +117,7 @@ mod tests {
             filtered: Vec::new(),
             selected: 0,
         };
-        let (tx, _rx) = channel();
-        let result = handle_input(&mut state, key_event(KeyCode::Char('S')), &tx, rect());
+        let result = handle_input(&mut state, key_event(KeyCode::Char('S')), rect());
         assert!(result);
         if let Modal::CommandPalette { query, .. } = &state.ui.modal {
             assert_eq!(query, "S");

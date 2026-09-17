@@ -2,14 +2,8 @@ use crate::input::keybinds::*;
 use crate::models::Chapter;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent};
-use scylla_core::messenger::AppCommand;
-use std::sync::mpsc;
 
-pub fn handle_jumping_chapter(
-    state: &mut AppState,
-    key: KeyEvent,
-    _cmd_tx: &mpsc::Sender<AppCommand>,
-) -> bool {
+pub fn handle_jumping_chapter(state: &mut AppState, key: KeyEvent) -> bool {
     let mut selected_cursor = None;
 
     if let Modal::JumpChapter {
@@ -147,8 +141,7 @@ mod tests {
                 updated_at: String::new(),
             });
         }
-        let (tx, _rx) = channel();
-        let result = handle_jumping_chapter(&mut state, key_event(KEY_ENTER), &tx);
+        let result = handle_jumping_chapter(&mut state, key_event(KEY_ENTER));
         assert!(result);
         assert_eq!(state.ui.modal, Modal::None);
         assert_eq!(state.ui.page, Page::Library);
@@ -183,14 +176,13 @@ mod tests {
             },
         ];
         let mut state = setup_jump_chapter_state(chapters, 1);
-        let (tx, _rx) = channel();
-        handle_jumping_chapter(&mut state, key_event(KEY_NAV_UP), &tx);
+        handle_jumping_chapter(&mut state, key_event(KEY_NAV_UP));
         if let Modal::JumpChapter { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         } else {
             panic!("Expected JumpChapter modal");
         }
-        handle_jumping_chapter(&mut state, key_event(KEY_NAV_DOWN), &tx);
+        handle_jumping_chapter(&mut state, key_event(KEY_NAV_DOWN));
         if let Modal::JumpChapter { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 1);
         } else {
@@ -206,8 +198,7 @@ mod tests {
             order: 0,
         }];
         let mut state = setup_jump_chapter_state(chapters, 0);
-        let (tx, _rx) = channel();
-        handle_jumping_chapter(&mut state, key_event(KEY_TOGGLE_TITLES), &tx);
+        handle_jumping_chapter(&mut state, key_event(KEY_TOGGLE_TITLES));
         if let Modal::JumpChapter { show_titles, .. } = &state.ui.modal {
             assert!(!show_titles);
         } else {
@@ -223,8 +214,7 @@ mod tests {
             order: 0,
         }];
         let mut state = setup_jump_chapter_state(chapters, 0);
-        let (tx, _rx) = channel();
-        handle_jumping_chapter(&mut state, key_event(KEY_NAV_UP), &tx);
+        handle_jumping_chapter(&mut state, key_event(KEY_NAV_UP));
         if let Modal::JumpChapter { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         } else {
@@ -240,8 +230,7 @@ mod tests {
             order: 0,
         }];
         let mut state = setup_jump_chapter_state(chapters, 0);
-        let (tx, _rx) = channel();
-        handle_jumping_chapter(&mut state, key_event(KEY_NAV_DOWN), &tx);
+        handle_jumping_chapter(&mut state, key_event(KEY_NAV_DOWN));
         if let Modal::JumpChapter { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         } else {

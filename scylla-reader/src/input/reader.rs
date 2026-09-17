@@ -5,41 +5,73 @@ use crate::state::AppState;
 use crate::state::Modal;
 use crossterm::event::KeyEvent;
 use ratatui::prelude::Rect;
-use scylla_core::messenger::AppCommand;
 
-pub fn handle_reader(
-    state: &mut AppState,
-    key: KeyEvent,
-    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
-    size: Rect,
-) -> bool {
+pub fn handle_reader(state: &mut AppState, key: KeyEvent, size: Rect) -> bool {
     use crate::settings::ReaderMode;
 
     match (key.modifiers, key.code) {
         (_, KEY_NEXT_CHAPTER) => {
-            if !state.reader.loading
-                && let Some(book) = state.lib.library.selected_book()
-            {
+            if !state.reader.loading {
                 let next_idx = state.reader.current_chapter_idx.saturating_add(1);
-                if let Some(ch) = book.chapters.get(next_idx) {
+                let chapter = state
+                    .lib
+                    .library
+                    .selected_book()
+                    .and_then(|b| b.chapters.get(next_idx).cloned());
+                if let Some(ch) = chapter {
                     let url = ch.url.clone();
                     state.reader.loading = true;
-                    let _ = cmd_tx.send(AppCommand::FetchChapter(url, next_idx));
+                    let base = crate::storage::client::api_base(state);
+                    if let Err(e) =
+                        crate::storage::client::block_on(crate::storage::client::enqueue_job(
+                            &base,
+                            "FetchChapter",
+                            &url,
+                            Some(next_idx),
+                        ))
+                    {
+                        crate::settings::log(
+                            crate::settings::LogLevel::Error,
+                            "INPUT",
+                            &format!("Failed to enqueue chapter fetch: {}", e),
+                        );
+                        state.reader.loading = false;
+                    }
                 }
             }
             return true;
         }
         (_, KEY_PREV_CHAPTER) => {
-            if !state.reader.loading
-                && let Some(book) = state.lib.library.selected_book()
-            {
+            if !state.reader.loading {
                 let prev_idx = state.reader.current_chapter_idx.saturating_sub(1);
-                if prev_idx != state.reader.current_chapter_idx
-                    && let Some(ch) = book.chapters.get(prev_idx)
-                {
+                let chapter = if prev_idx != state.reader.current_chapter_idx {
+                    state
+                        .lib
+                        .library
+                        .selected_book()
+                        .and_then(|b| b.chapters.get(prev_idx).cloned())
+                } else {
+                    None
+                };
+                if let Some(ch) = chapter {
                     let url = ch.url.clone();
                     state.reader.loading = true;
-                    let _ = cmd_tx.send(AppCommand::FetchChapter(url, prev_idx));
+                    let base = crate::storage::client::api_base(state);
+                    if let Err(e) =
+                        crate::storage::client::block_on(crate::storage::client::enqueue_job(
+                            &base,
+                            "FetchChapter",
+                            &url,
+                            Some(prev_idx),
+                        ))
+                    {
+                        crate::settings::log(
+                            crate::settings::LogLevel::Error,
+                            "INPUT",
+                            &format!("Failed to enqueue chapter fetch: {}", e),
+                        );
+                        state.reader.loading = false;
+                    }
                 }
             }
             return true;
@@ -94,7 +126,10 @@ mod tests {
     use crossterm::event::KeyCode;
 
     fn state_with_book_and_chapters() -> AppState {
-        let mut state = test_state();
+        // MockBackend's url() is "http://mock" (non-resolvable) so the
+        // FetchChapter enqueue fails deterministically regardless of whether a
+        // real server is running on 127.0.0.1:8080.
+        let mut state = test_state_with_backend(Box::new(MockBackend::new("mock")));
         state.lib.library.add_book("Test Book".into(), "url".into());
         state.lib.library.books[0].chapters.extend(vec![
             Chapter {
@@ -119,74 +154,54 @@ mod tests {
     #[test]
     fn test_handle_reader_gt_next_chapter() {
         let mut state = state_with_book_and_chapters();
-        let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KEY_NEXT_CHAPTER), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_NEXT_CHAPTER), rect());
         assert!(result);
-        assert!(state.reader.loading);
-        match rx.try_recv() {
-            Ok(AppCommand::FetchChapter(url, idx)) => {
-                assert_eq!(url, "url-2");
-                assert_eq!(idx, 1);
-            }
-            _ => panic!("Expected FetchChapter"),
-        }
+        // The enqueue fails in the test environment (no server), so the
+        // loading flag must be cleared rather than left spinning.
+        assert!(!state.reader.loading);
     }
 
     #[test]
     fn test_handle_reader_lt_prev_chapter() {
         let mut state = state_with_book_and_chapters();
         state.reader.current_chapter_idx = 1;
-        let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KEY_PREV_CHAPTER), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_PREV_CHAPTER), rect());
         assert!(result);
-        assert!(state.reader.loading);
-        match rx.try_recv() {
-            Ok(AppCommand::FetchChapter(url, idx)) => {
-                assert_eq!(url, "url-1");
-                assert_eq!(idx, 0);
-            }
-            _ => panic!("Expected FetchChapter"),
-        }
+        // Enqueue fails in the test environment → loading cleared.
+        assert!(!state.reader.loading);
     }
 
     #[test]
     fn test_handle_reader_prev_chapter_clamps_at_zero() {
         let mut state = state_with_book_and_chapters();
-        let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KEY_PREV_CHAPTER), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_PREV_CHAPTER), rect());
         assert!(result);
         assert!(!state.reader.loading);
-        assert!(rx.try_recv().is_err());
     }
 
     #[test]
     fn test_handle_reader_next_chapter_clamps_at_last() {
         let mut state = state_with_book_and_chapters();
         state.reader.current_chapter_idx = 2;
-        let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KEY_NEXT_CHAPTER), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_NEXT_CHAPTER), rect());
         assert!(result);
         assert!(!state.reader.loading);
-        assert!(rx.try_recv().is_err());
     }
 
     #[test]
     fn test_handle_reader_loading_guard_prevents_chapter_nav() {
         let mut state = state_with_book_and_chapters();
         state.reader.loading = true;
-        let (tx, rx) = channel();
-        let result = handle_reader(&mut state, key_event(KEY_NEXT_CHAPTER), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_NEXT_CHAPTER), rect());
         assert!(result);
         assert!(state.reader.loading);
-        assert!(rx.try_recv().is_err());
     }
 
     #[test]
     fn test_handle_reader_paged_mode_unhandled_key() {
         let mut state = test_state();
         state.lib.settings.reader_mode = crate::settings::ReaderMode::Paged;
-        let (tx, _rx) = channel();
-        let result = handle_reader(&mut state, key_event(KeyCode::Char('z')), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KeyCode::Char('z')), rect());
         assert!(result);
     }
 
@@ -204,8 +219,7 @@ mod tests {
                 .join("\n"),
             0,
         );
-        let (tx, _rx) = channel();
-        let result = handle_reader(&mut state, key_event(KEY_SCROLL_DOWN), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_SCROLL_DOWN), rect());
         assert!(result);
         assert_eq!(state.reader.visual_scroll, 1);
     }
@@ -225,8 +239,7 @@ mod tests {
             0,
         );
         state.reader.visual_scroll = 10;
-        let (tx, _rx) = channel();
-        let result = handle_reader(&mut state, key_event(KEY_SCROLL_UP), &tx, rect());
+        let result = handle_reader(&mut state, key_event(KEY_SCROLL_UP), rect());
         assert!(result);
         assert_eq!(state.reader.visual_scroll, 9);
     }

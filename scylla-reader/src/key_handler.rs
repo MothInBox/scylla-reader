@@ -4,16 +4,9 @@ use crate::settings::SettingsPage;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::KeyEvent;
 use ratatui::prelude::Rect;
-use scylla_core::messenger::AppCommand;
 use scylla_core::types::BookStatus;
-use std::sync::mpsc;
 
-pub fn handle_key(
-    state: &mut AppState,
-    key: KeyEvent,
-    cmd_tx: &mpsc::Sender<AppCommand>,
-    size: Rect,
-) -> bool {
+pub fn handle_key(state: &mut AppState, key: KeyEvent, size: Rect) -> bool {
     // Capture the selected book before any input handling so we can persist
     // deletes/status changes made on either the page or modal (palette) path.
     let selected_before = state
@@ -27,7 +20,7 @@ pub fn handle_key(
             state.close_modal();
             return true;
         }
-        let handled = input::handle_input(state, key, cmd_tx, size);
+        let handled = input::handle_input(state, key, size);
         sync_after_input(state, selected_before);
         return handled;
     }
@@ -41,22 +34,33 @@ pub fn handle_key(
         KEY_READER => {
             crate::settings::log(crate::settings::LogLevel::Debug, "NAV", "Page: Reader");
             state.ui.page = Page::Reader;
-            if let Some(book) = state.lib.library.selected_book()
-                && state.reader.book_url != book.url
-            {
+            let fetch = state.lib.library.selected_book().and_then(|book| {
+                if state.reader.book_url == book.url {
+                    return None;
+                }
                 let session = book
                     .active_session_id
                     .and_then(|id| book.sessions.iter().find(|s| s.id == id))
-                    .or_else(|| book.sessions.first());
-                if let Some(session) = session {
-                    state.reader.session_id = session.id;
-                    state.reader.session_name = session.name.clone();
-                    let idx = (session.progress.current as usize)
-                        .min(book.chapters.len().saturating_sub(1));
-                    if let Some(ch) = book.chapters.get(idx) {
-                        state.reader.loading = true;
-                        let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), idx));
-                    }
+                    .or_else(|| book.sessions.first())?;
+                let idx =
+                    (session.progress.current as usize).min(book.chapters.len().saturating_sub(1));
+                let ch = book.chapters.get(idx)?;
+                Some((session.id, session.name.clone(), idx, ch.url.clone()))
+            });
+            if let Some((session_id, session_name, idx, url)) = fetch {
+                state.reader.session_id = session_id;
+                state.reader.session_name = session_name;
+                state.reader.loading = true;
+                let base = crate::storage::client::api_base(state);
+                if let Err(e) = crate::storage::client::block_on(
+                    crate::storage::client::enqueue_job(&base, "FetchChapter", &url, Some(idx)),
+                ) {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Error,
+                        "UI",
+                        &format!("Failed to enqueue chapter fetch: {}", e),
+                    );
+                    state.reader.loading = false;
                 }
             }
             return true;
@@ -72,7 +76,7 @@ pub fn handle_key(
             return true;
         }
         KEY_COMMAND_PALETTE => {
-            let actions = crate::ui::palette::build_palette_actions(cmd_tx.clone());
+            let actions = crate::ui::palette::build_palette_actions();
             let filtered = crate::ui::palette::filter_actions(&actions, "");
             state.ui.modal = Modal::CommandPalette {
                 query: String::new(),
@@ -114,7 +118,7 @@ pub fn handle_key(
         _ => {}
     }
 
-    let handled = input::handle_input(state, key, cmd_tx, size);
+    let handled = input::handle_input(state, key, size);
     sync_after_input(state, selected_before);
     handled
 }
@@ -165,8 +169,7 @@ mod tests {
             .library
             .add_book("Test".into(), "http://example.com/book".into());
         state.ui.page = Page::Library;
-        let (tx, _rx) = channel();
-        handle_key(&mut state, key_event(KEY_DELETE), &tx, rect());
+        handle_key(&mut state, key_event(KEY_DELETE), rect());
         assert!(state.lib.library.books.is_empty());
         let calls = calls.lock().unwrap().clone();
         assert!(
@@ -186,8 +189,7 @@ mod tests {
             .library
             .add_book("Test".into(), "http://example.com/book".into());
         state.ui.page = Page::Library;
-        let (tx, _rx) = channel();
-        handle_key(&mut state, key_event(KEY_CYCLE_STATUS), &tx, rect());
+        handle_key(&mut state, key_event(KEY_CYCLE_STATUS), rect());
         assert_eq!(
             state.lib.library.books[0].status,
             scylla_core::types::BookStatus::Paused
@@ -209,8 +211,7 @@ mod tests {
             .library
             .add_book("Test".into(), "http://example.com/book".into());
         state.ui.page = Page::Library;
-        let (tx, _rx) = channel();
-        let actions = crate::ui::palette::build_palette_actions(tx);
+        let actions = crate::ui::palette::build_palette_actions();
         let filtered = crate::ui::palette::filter_actions(&actions, query);
         state.ui.modal = Modal::CommandPalette {
             query: query.to_string(),
@@ -225,8 +226,7 @@ mod tests {
         let mock = MockBackend::new("mock");
         let calls = mock.calls.clone();
         let mut state = palette_state(mock, "Delete");
-        let (tx, _rx) = channel();
-        handle_key(&mut state, key_event(KEY_ENTER), &tx, rect());
+        handle_key(&mut state, key_event(KEY_ENTER), rect());
         assert!(state.lib.library.books.is_empty());
         let calls = calls.lock().unwrap().clone();
         assert!(
@@ -241,8 +241,7 @@ mod tests {
         let mock = MockBackend::new("mock");
         let calls = mock.calls.clone();
         let mut state = palette_state(mock, "Cycle Status");
-        let (tx, _rx) = channel();
-        handle_key(&mut state, key_event(KEY_ENTER), &tx, rect());
+        handle_key(&mut state, key_event(KEY_ENTER), rect());
         assert_eq!(
             state.lib.library.books[0].status,
             scylla_core::types::BookStatus::Paused

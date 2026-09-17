@@ -1,13 +1,8 @@
 use crate::input::keybinds::*;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent};
-use scylla_core::messenger::AppCommand;
 
-pub fn handle_session_picker(
-    state: &mut AppState,
-    key: KeyEvent,
-    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
-) -> bool {
+pub fn handle_session_picker(state: &mut AppState, key: KeyEvent) -> bool {
     let (book_url, cursor, is_editing) = if let Modal::SessionPicker {
         book_url,
         cursor,
@@ -21,7 +16,7 @@ pub fn handle_session_picker(
     };
 
     if is_editing {
-        return handle_session_picker_editing(state, key, cmd_tx);
+        return handle_session_picker_editing(state, key);
     }
 
     match key.code {
@@ -93,8 +88,24 @@ pub fn handle_session_picker(
                     let idx = (session.progress.current as usize).min(book.chapters.len() - 1);
                     state.reader.loading = true;
                     state.ui.page = Page::Reader;
-                    if let Some(ch) = book.chapters.get(idx) {
-                        let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), idx));
+                    let chapter = book.chapters.get(idx).map(|ch| ch.url.clone());
+                    if let Some(url) = chapter {
+                        let base = crate::storage::client::api_base(state);
+                        if let Err(e) =
+                            crate::storage::client::block_on(crate::storage::client::enqueue_job(
+                                &base,
+                                "FetchChapter",
+                                &url,
+                                Some(idx),
+                            ))
+                        {
+                            crate::settings::log(
+                                crate::settings::LogLevel::Error,
+                                "UI",
+                                &format!("Failed to enqueue chapter fetch: {}", e),
+                            );
+                            state.reader.loading = false;
+                        }
                     }
                 }
             }
@@ -224,11 +235,7 @@ pub fn handle_session_picker(
     true
 }
 
-fn handle_session_picker_editing(
-    state: &mut AppState,
-    key: KeyEvent,
-    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
-) -> bool {
+fn handle_session_picker_editing(state: &mut AppState, key: KeyEvent) -> bool {
     let (book_url, editing_id, input) = if let Modal::SessionPicker {
         book_url,
         editing_id,
@@ -331,16 +338,31 @@ fn handle_session_picker_editing(
                         if has_chapters {
                             state.reader.loading = true;
                             state.ui.page = Page::Reader;
-                            if let Some(ch) = state
+                            let chapter_url = state
                                 .lib
                                 .library
                                 .books
                                 .iter()
                                 .find(|b| b.url == book_url)
                                 .and_then(|b| b.chapters.first())
-                                .cloned()
-                            {
-                                let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), 0));
+                                .map(|ch| ch.url.clone());
+                            if let Some(url) = chapter_url {
+                                let base = crate::storage::client::api_base(state);
+                                if let Err(e) = crate::storage::client::block_on(
+                                    crate::storage::client::enqueue_job(
+                                        &base,
+                                        "FetchChapter",
+                                        &url,
+                                        Some(0),
+                                    ),
+                                ) {
+                                    crate::settings::log(
+                                        crate::settings::LogLevel::Error,
+                                        "UI",
+                                        &format!("Failed to enqueue chapter fetch: {}", e),
+                                    );
+                                    state.reader.loading = false;
+                                }
                             }
                         }
                     }
@@ -434,12 +456,11 @@ mod tests {
     #[test]
     fn test_session_picker_up_down_navigation() {
         let mut state = setup_session_picker_state(3, 1);
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_NAV_UP), &tx);
+        handle_session_picker(&mut state, key_event(KEY_NAV_UP));
         if let Modal::SessionPicker { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         }
-        handle_session_picker(&mut state, key_event(KEY_NAV_DOWN), &tx);
+        handle_session_picker(&mut state, key_event(KEY_NAV_DOWN));
         if let Modal::SessionPicker { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 1);
         }
@@ -448,16 +469,14 @@ mod tests {
     #[test]
     fn test_session_picker_esc_closes() {
         let mut state = setup_session_picker_state(2, 0);
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_ESCAPE), &tx);
+        handle_session_picker(&mut state, key_event(KEY_ESCAPE));
         assert_eq!(state.ui.modal, Modal::None);
     }
 
     #[test]
     fn test_session_picker_n_opens_input() {
         let mut state = setup_session_picker_state(1, 0);
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_NEW_SESSION), &tx);
+        handle_session_picker(&mut state, key_event(KEY_NEW_SESSION));
         if let Modal::SessionPicker { input, .. } = &state.ui.modal {
             assert!(input.is_some());
         } else {
@@ -468,8 +487,7 @@ mod tests {
     #[test]
     fn test_session_picker_delete_non_last_session() {
         let mut state = setup_session_picker_state(3, 0);
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION));
         if let Modal::SessionPicker { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
             if let Some(book) = state.lib.library.books.iter().find(|b| b.url == "test_url") {
@@ -485,9 +503,8 @@ mod tests {
     #[test]
     fn test_session_picker_delete_last_session_requires_confirmation() {
         let mut state = setup_session_picker_state(1, 0);
-        let (tx, _rx) = channel();
         // First 'd' press: sets pending_delete_url, doesn't delete
-        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION));
         if let Modal::SessionPicker {
             pending_delete_url, ..
         } = &state.ui.modal
@@ -515,9 +532,8 @@ mod tests {
         {
             *pending_delete_url = Some("test_url".into());
         }
-        let (tx, _rx) = channel();
         // Second 'd' press: confirms deletion
-        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION));
         assert_eq!(state.lib.library.books.len(), 0, "Book should be deleted");
         assert_eq!(state.ui.modal, Modal::None, "Modal should be closed");
     }
@@ -531,9 +547,8 @@ mod tests {
         {
             *pending_delete_url = Some("test_url".into());
         }
-        let (tx, _rx) = channel();
         // Press some other key (e.g., 'x')
-        handle_session_picker(&mut state, key_event(KeyCode::Char('x')), &tx);
+        handle_session_picker(&mut state, key_event(KeyCode::Char('x')));
         if let Modal::SessionPicker {
             pending_delete_url, ..
         } = &state.ui.modal
@@ -558,17 +573,15 @@ mod tests {
         {
             *pending_delete_url = Some("test_url".into());
         }
-        let (tx, _rx) = channel();
         // Esc should close the modal entirely (it already clears pending_delete_url in the Esc handler)
-        handle_session_picker(&mut state, key_event(KEY_ESCAPE), &tx);
+        handle_session_picker(&mut state, key_event(KEY_ESCAPE));
         assert_eq!(state.ui.modal, Modal::None);
     }
 
     #[test]
     fn test_session_picker_enter_selects_session() {
         let mut state = setup_session_picker_state(2, 0);
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
+        handle_session_picker(&mut state, key_event(KEY_ENTER));
         assert_eq!(state.ui.modal, Modal::None);
         assert_eq!(state.reader.session_name, "Session 0");
     }
@@ -587,8 +600,7 @@ mod tests {
             editing_id: None,
             pending_delete_url: None,
         };
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
+        handle_session_picker(&mut state, key_event(KEY_ENTER));
 
         let calls = calls.lock().unwrap().clone();
         assert!(
@@ -655,8 +667,7 @@ mod tests {
             editing_id: None,
             pending_delete_url: None,
         };
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION));
 
         let calls = calls.lock().unwrap().clone();
         assert!(
@@ -709,8 +720,7 @@ mod tests {
             editing_id: Some(7),
             pending_delete_url: None,
         };
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
+        handle_session_picker(&mut state, key_event(KEY_ENTER));
 
         let calls = calls.lock().unwrap().clone();
         assert!(
@@ -772,8 +782,7 @@ mod tests {
             editing_id: None,
             pending_delete_url: None,
         };
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
+        handle_session_picker(&mut state, key_event(KEY_ENTER));
 
         let calls = calls.lock().unwrap().clone();
         assert!(
@@ -816,8 +825,7 @@ mod tests {
             editing_id: None,
             pending_delete_url: Some("test_url".into()),
         };
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION));
 
         assert!(state.lib.library.books.is_empty());
         let calls = calls.lock().unwrap().clone();
@@ -842,8 +850,7 @@ mod tests {
             editing_id: None,
             pending_delete_url: None,
         };
-        let (tx, _rx) = channel();
-        handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
+        handle_session_picker(&mut state, key_event(KEY_ENTER));
 
         let book = state
             .lib

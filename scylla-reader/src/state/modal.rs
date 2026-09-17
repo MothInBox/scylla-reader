@@ -1,5 +1,6 @@
 //! Modal state — add-book text inputs, jump-to-chapter list state, and command palette.
 
+use crate::event_types::ChapterGroup;
 use crate::models::Chapter;
 use crate::state::palette_action::PaletteAction;
 
@@ -10,6 +11,15 @@ pub enum FilterRow {
     Tags,
     Library,
     Ai,
+}
+
+/// Status of an in-flight AI search shown in the chapter-results modal.
+#[derive(Debug, PartialEq, Clone)]
+pub enum SearchStatus {
+    Loading,
+    Ready,
+    Empty,
+    Error(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -61,6 +71,24 @@ pub enum Modal {
         tag_scroll: usize,
         status_cursor: usize,
         lib_cursor: usize,
+        /// Transient AI row text — not a BookFilter facet.
+        ai_query: String,
+    },
+    ChapterResults {
+        query: String,
+        groups: Vec<ChapterGroup>,
+        cursor: usize,
+        scroll_offset: usize,
+        status: SearchStatus,
+    },
+    EmbedChapters {
+        book_url: String,
+        chapters: Vec<Chapter>,
+        selected: Vec<bool>,
+        /// URLs of chapters that already have embeddings — not selectable.
+        embedded_urls: Vec<String>,
+        cursor: usize,
+        scroll_offset: usize,
     },
 }
 
@@ -177,7 +205,7 @@ mod tests {
             category: "test",
             label: "Test Action",
             keys: "Ctrl+T",
-            handler: |_, _| {},
+            handler: |_| {},
         };
         let modal = Modal::CommandPalette {
             query: "test".into(),
@@ -265,7 +293,7 @@ mod tests {
             category: "navigation",
             label: "Go Home",
             keys: "g",
-            handler: |_, _| {},
+            handler: |_| {},
         };
         assert_eq!(action.category, "navigation");
         assert_eq!(action.label, "Go Home");
@@ -300,6 +328,7 @@ mod tests {
             tag_scroll: 1,
             status_cursor: 3,
             lib_cursor: 4,
+            ai_query: "dragon".into(),
         };
         if let Modal::Filter {
             working,
@@ -309,6 +338,7 @@ mod tests {
             tag_scroll,
             status_cursor,
             lib_cursor,
+            ai_query,
         } = &modal
         {
             assert_eq!(working, &expected_working);
@@ -318,6 +348,7 @@ mod tests {
             assert_eq!(*tag_scroll, 1);
             assert_eq!(*status_cursor, 3);
             assert_eq!(*lib_cursor, 4);
+            assert_eq!(ai_query, "dragon");
         } else {
             panic!("Expected Filter variant");
         }
@@ -333,6 +364,7 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 0,
+            ai_query: String::new(),
         };
         let b = Modal::Filter {
             working: crate::library::BookFilter::default(),
@@ -342,6 +374,113 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 0,
+            ai_query: String::new(),
+        };
+        assert_eq!(a, b);
+        assert_ne!(a, Modal::None);
+    }
+
+    #[test]
+    fn test_modal_chapter_results_construction() {
+        let modal = Modal::ChapterResults {
+            query: "dragon".into(),
+            groups: vec![],
+            cursor: 0,
+            scroll_offset: 0,
+            status: SearchStatus::Loading,
+        };
+        if let Modal::ChapterResults {
+            query,
+            groups,
+            cursor,
+            scroll_offset,
+            status,
+        } = &modal
+        {
+            assert_eq!(query, "dragon");
+            assert!(groups.is_empty());
+            assert_eq!(*cursor, 0);
+            assert_eq!(*scroll_offset, 0);
+            assert_eq!(*status, SearchStatus::Loading);
+        } else {
+            panic!("Expected ChapterResults variant");
+        }
+    }
+
+    #[test]
+    fn test_search_status_variants() {
+        assert_eq!(SearchStatus::Loading, SearchStatus::Loading);
+        assert_ne!(SearchStatus::Loading, SearchStatus::Ready);
+        assert_ne!(SearchStatus::Ready, SearchStatus::Empty);
+        assert_eq!(
+            SearchStatus::Error("boom".into()),
+            SearchStatus::Error("boom".into())
+        );
+        assert_ne!(
+            SearchStatus::Error("a".into()),
+            SearchStatus::Error("b".into())
+        );
+    }
+
+    #[test]
+    fn test_modal_embed_chapters_construction_and_field_access() {
+        let expected_chapters = vec![
+            Chapter {
+                title: "Ch1".into(),
+                url: "u1".into(),
+                order: 0,
+            },
+            Chapter {
+                title: "Ch2".into(),
+                url: "u2".into(),
+                order: 1,
+            },
+        ];
+        let modal = Modal::EmbedChapters {
+            book_url: "http://example.com/book".into(),
+            chapters: expected_chapters.clone(),
+            selected: vec![true, false],
+            embedded_urls: vec!["u1".into()],
+            cursor: 1,
+            scroll_offset: 2,
+        };
+        if let Modal::EmbedChapters {
+            book_url,
+            chapters,
+            selected,
+            embedded_urls,
+            cursor,
+            scroll_offset,
+        } = &modal
+        {
+            assert_eq!(book_url, "http://example.com/book");
+            assert_eq!(chapters, &expected_chapters);
+            assert_eq!(selected, &vec![true, false]);
+            assert_eq!(embedded_urls, &vec!["u1".to_string()]);
+            assert_eq!(*cursor, 1);
+            assert_eq!(*scroll_offset, 2);
+        } else {
+            panic!("Expected EmbedChapters variant");
+        }
+    }
+
+    #[test]
+    fn test_modal_embed_chapters_equality() {
+        let a = Modal::EmbedChapters {
+            book_url: "u".into(),
+            chapters: vec![],
+            selected: vec![],
+            embedded_urls: vec![],
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        let b = Modal::EmbedChapters {
+            book_url: "u".into(),
+            chapters: vec![],
+            selected: vec![],
+            embedded_urls: vec![],
+            cursor: 0,
+            scroll_offset: 0,
         };
         assert_eq!(a, b);
         assert_ne!(a, Modal::None);

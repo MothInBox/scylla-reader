@@ -1,13 +1,11 @@
 use crate::state::AppState;
-use scylla_core::messenger::AppCommand;
-use std::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub struct PaletteAction {
     pub category: &'static str,
     pub label: &'static str,
     pub keys: &'static str,
-    pub handler: fn(&mut AppState, &mpsc::Sender<AppCommand>),
+    pub handler: fn(&mut AppState),
 }
 
 impl PartialEq for PaletteAction {

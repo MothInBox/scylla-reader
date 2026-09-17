@@ -1,18 +1,13 @@
 use crate::input::keybinds::*;
-use crate::state::{Modal, Page, UiState};
+use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use scylla_core::messenger::AppCommand;
 
-pub fn handle_installing_plugin(
-    ui: &mut UiState,
-    key: KeyEvent,
-    cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
-) -> bool {
+pub fn handle_installing_plugin(state: &mut AppState, key: KeyEvent) -> bool {
     // Submit on Ctrl+S or Enter when URL is non-empty
     if key.code == KEY_ENTER
         || (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('s'))
     {
-        let url = if let Modal::InstallPlugin { url, .. } = &ui.modal {
+        let url = if let Modal::InstallPlugin { url, .. } = &state.ui.modal {
             url.trim().to_string()
         } else {
             String::new()
@@ -24,11 +19,20 @@ pub fn handle_installing_plugin(
                 "PLUGIN",
                 &format!("Installing plugin from: {}", url),
             );
-            let _ = cmd_tx.send(AppCommand::InstallPlugin(url));
+            let base = crate::storage::client::api_base(state);
+            if let Err(e) = crate::storage::client::block_on(
+                crate::storage::client::install_plugin(&base, &url),
+            ) {
+                crate::settings::log(
+                    crate::settings::LogLevel::Error,
+                    "PLUGIN",
+                    &format!("Failed to install plugin: {}", e),
+                );
+            }
         }
 
-        ui.modal = Modal::None;
-        ui.page = Page::Library;
+        state.ui.modal = Modal::None;
+        state.ui.page = Page::Library;
         return true;
     }
 
@@ -36,7 +40,7 @@ pub fn handle_installing_plugin(
         url,
         cursor,
         scroll_offset: _,
-    } = &mut ui.modal
+    } = &mut state.ui.modal
     {
         match key.code {
             KEY_BACKSPACE => {
@@ -101,36 +105,25 @@ mod tests {
     #[test]
     fn test_handle_installing_plugin_enter_submits() {
         let mut state = setup_install_plugin_state("https://github.com/owner/repo", 0);
-        let (tx, rx) = channel();
-        let result = handle_installing_plugin(&mut state.ui, key_event(KEY_ENTER), &tx);
+        let result = handle_installing_plugin(&mut state, key_event(KEY_ENTER));
         assert!(result);
         assert_eq!(state.ui.modal, Modal::None);
         assert_eq!(state.ui.page, Page::Library);
-
-        let received: Vec<AppCommand> = rx.try_iter().collect();
-        assert_eq!(received.len(), 1);
-        assert!(
-            matches!(&received[0], AppCommand::InstallPlugin(url) if url == "https://github.com/owner/repo")
-        );
     }
 
     #[test]
     fn test_handle_installing_plugin_empty_url_does_not_submit() {
         let mut state = setup_install_plugin_state("", 0);
-        let (tx, rx) = channel();
-        let result = handle_installing_plugin(&mut state.ui, key_event(KEY_ENTER), &tx);
+        let result = handle_installing_plugin(&mut state, key_event(KEY_ENTER));
         assert!(result);
-
-        let received: Vec<AppCommand> = rx.try_iter().collect();
-        assert!(received.is_empty());
+        assert_eq!(state.ui.modal, Modal::None);
     }
 
     #[test]
     fn test_handle_installing_plugin_types_characters() {
         let mut state = setup_install_plugin_state("https://", 8);
-        let (tx, _rx) = channel();
-        handle_installing_plugin(&mut state.ui, key_event(KeyCode::Char('g')), &tx);
-        handle_installing_plugin(&mut state.ui, key_event(KeyCode::Char('h')), &tx);
+        handle_installing_plugin(&mut state, key_event(KeyCode::Char('g')));
+        handle_installing_plugin(&mut state, key_event(KeyCode::Char('h')));
         if let Modal::InstallPlugin { url, cursor, .. } = &state.ui.modal {
             assert_eq!(url, "https://gh");
             assert_eq!(*cursor, 10);
@@ -142,8 +135,7 @@ mod tests {
     #[test]
     fn test_handle_installing_plugin_backspace() {
         let mut state = setup_install_plugin_state("https://g", 9);
-        let (tx, _rx) = channel();
-        handle_installing_plugin(&mut state.ui, key_event(KEY_BACKSPACE), &tx);
+        handle_installing_plugin(&mut state, key_event(KEY_BACKSPACE));
         if let Modal::InstallPlugin { url, cursor, .. } = &state.ui.modal {
             assert_eq!(url, "https://");
             assert_eq!(*cursor, 8);
@@ -155,15 +147,14 @@ mod tests {
     #[test]
     fn test_handle_installing_plugin_left_right_navigation() {
         let mut state = setup_install_plugin_state("abc", 1);
-        let (tx, _rx) = channel();
-        handle_installing_plugin(&mut state.ui, key_event(KeyCode::Left), &tx);
+        handle_installing_plugin(&mut state, key_event(KeyCode::Left));
         if let Modal::InstallPlugin { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         } else {
             panic!("Expected InstallPlugin modal");
         }
 
-        handle_installing_plugin(&mut state.ui, key_event(KeyCode::Right), &tx);
+        handle_installing_plugin(&mut state, key_event(KeyCode::Right));
         if let Modal::InstallPlugin { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 1);
         } else {
@@ -174,15 +165,14 @@ mod tests {
     #[test]
     fn test_handle_installing_plugin_home_end() {
         let mut state = setup_install_plugin_state("abcdef", 3);
-        let (tx, _rx) = channel();
-        handle_installing_plugin(&mut state.ui, key_event(KeyCode::Home), &tx);
+        handle_installing_plugin(&mut state, key_event(KeyCode::Home));
         if let Modal::InstallPlugin { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 0);
         } else {
             panic!("Expected InstallPlugin modal");
         }
 
-        handle_installing_plugin(&mut state.ui, key_event(KeyCode::End), &tx);
+        handle_installing_plugin(&mut state, key_event(KeyCode::End));
         if let Modal::InstallPlugin { cursor, .. } = &state.ui.modal {
             assert_eq!(*cursor, 6);
         } else {
@@ -193,8 +183,7 @@ mod tests {
     #[test]
     fn test_handle_installing_plugin_delete() {
         let mut state = setup_install_plugin_state("abcd", 2);
-        let (tx, _rx) = channel();
-        handle_installing_plugin(&mut state.ui, key_event(KeyCode::Delete), &tx);
+        handle_installing_plugin(&mut state, key_event(KeyCode::Delete));
         if let Modal::InstallPlugin { url, cursor, .. } = &state.ui.modal {
             assert_eq!(url, "abd");
             assert_eq!(*cursor, 2);

@@ -17,6 +17,7 @@ pub const KEY_CYCLE_STATUS: KeyCode = KeyCode::Char(' ');
 pub const KEY_FILTER: KeyCode = KeyCode::Char('f');
 pub const KEY_UPDATE_ALL: KeyCode = KeyCode::Char('u');
 pub const KEY_SESSIONS: KeyCode = KeyCode::Enter;
+pub const KEY_EMBED: KeyCode = KeyCode::Char('e');
 pub const KEY_NAV_UP: KeyCode = KeyCode::Up;
 pub const KEY_NAV_DOWN: KeyCode = KeyCode::Down;
 
@@ -37,6 +38,9 @@ pub const KEY_FILTER_CLEAR: KeyCode = KeyCode::Char('c');
 pub const KEY_ROW_NEXT: KeyCode = KeyCode::Tab;
 pub const KEY_ROW_PREV: KeyCode = KeyCode::BackTab;
 pub const KEY_TOGGLE_ITEM: KeyCode = KeyCode::Char(' ');
+
+// ── Modal: Chapter Results ──
+pub const KEY_REFINE: KeyCode = KeyCode::Char('f');
 
 // ── Modal: Add Book ──
 pub const KEY_SUBMIT_MODIFIER: KeyModifiers = KeyModifiers::CONTROL;

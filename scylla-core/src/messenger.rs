@@ -1,4 +1,4 @@
-use crate::types::{Book, Job, JobId, JobKind, JobOutcome, JobPriority, JobStatus};
+use crate::types::{Book, Job, JobId, JobOutcome, JobStatus};
 
 pub enum AppCommand {
     Scrape(String),
@@ -6,7 +6,6 @@ pub enum AppCommand {
     FetchChapter(String, usize),
     SetRateLimit(u64),
     FetchCover(String),
-    Enqueue(JobKind, String, JobPriority),
     CancelJob(JobId),
     CancelAll,
     RetryJob(JobId),
@@ -14,11 +13,11 @@ pub enum AppCommand {
     FlushCompleted,
     FlushAll,
     SetMaxWorkers(u8),
-    ReorderJob(JobId, usize),
     InstallPlugin(String),
 }
 
 pub struct ChapterContent {
+    pub url: String,
     pub chapter_idx: usize,
     pub title: String,
     pub content: String,
@@ -28,7 +27,8 @@ pub enum AppEvent {
     BookScraped(Book),
     ChapterFetched(ChapterContent),
     ChapterFetchFailed,
-    CoverFetched(String, ratatui_image::protocol::StatefulProtocol),
+    /// (url, raw image bytes) — the TUI decodes the image.
+    CoverFetched(String, Vec<u8>),
     JobEnqueued(Job),
     JobStatusChanged(JobId, JobStatus),
     WorkersChanged(u8),
@@ -121,12 +121,14 @@ mod tests {
     #[test]
     fn test_app_event_chapter_fetched_with_content() {
         let content = ChapterContent {
+            url: "http://example.com/ch3".into(),
             chapter_idx: 3,
             title: "Chapter 3".into(),
             content: "Some content".into(),
         };
         let event = AppEvent::ChapterFetched(content);
         if let AppEvent::ChapterFetched(c) = &event {
+            assert_eq!(c.url, "http://example.com/ch3");
             assert_eq!(c.chapter_idx, 3);
             assert_eq!(c.title, "Chapter 3");
             assert_eq!(c.content, "Some content");
@@ -143,14 +145,10 @@ mod tests {
 
     #[test]
     fn test_app_event_cover_fetched_construction() {
-        let img = image::DynamicImage::new(1, 1, image::ColorType::Rgb8);
-        let source = ratatui_image::protocol::ImageSource::new(img, (10, 10));
-        let halfblocks =
-            ratatui_image::protocol::halfblocks::StatefulHalfblocks::new(source, (10, 10));
-        let protocol = ratatui_image::protocol::StatefulProtocol::Halfblocks(halfblocks);
-        let event = AppEvent::CoverFetched("http://example.com/cover.jpg".into(), protocol);
-        if let AppEvent::CoverFetched(url, _proto) = &event {
+        let event = AppEvent::CoverFetched("http://example.com/cover.jpg".into(), vec![1, 2, 3]);
+        if let AppEvent::CoverFetched(url, bytes) = &event {
             assert_eq!(url, "http://example.com/cover.jpg");
+            assert_eq!(bytes, &vec![1, 2, 3]);
         } else {
             panic!("Expected CoverFetched variant");
         }
@@ -159,29 +157,15 @@ mod tests {
     #[test]
     fn test_chapter_content_field_access() {
         let content = ChapterContent {
+            url: "http://example.com/ch1".into(),
             chapter_idx: 1,
             title: "Chapter Title".into(),
             content: "Chapter Content".into(),
         };
+        assert_eq!(content.url, "http://example.com/ch1");
         assert_eq!(content.chapter_idx, 1);
         assert_eq!(content.title, "Chapter Title");
         assert_eq!(content.content, "Chapter Content");
-    }
-
-    #[test]
-    fn test_app_command_enqueue_construction() {
-        let cmd = AppCommand::Enqueue(
-            JobKind::Scrape("http://example.com".into()),
-            "Example".into(),
-            JobPriority::High,
-        );
-        if let AppCommand::Enqueue(kind, target, priority) = &cmd {
-            assert_eq!(kind.target(), "http://example.com");
-            assert_eq!(target, "Example");
-            assert_eq!(*priority, JobPriority::High);
-        } else {
-            panic!("Expected Enqueue variant");
-        }
     }
 
     #[test]
@@ -208,9 +192,9 @@ mod tests {
     fn test_app_event_job_enqueued_construction() {
         let job = Job::new(
             1,
-            JobKind::Scrape("http://example.com".into()),
+            crate::types::JobKind::Scrape("http://example.com".into()),
             "Example".into(),
-            JobPriority::Normal,
+            crate::types::JobPriority::Normal,
         );
         let event = AppEvent::JobEnqueued(job);
         if let AppEvent::JobEnqueued(j) = &event {

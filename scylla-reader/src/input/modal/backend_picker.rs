@@ -5,14 +5,9 @@ use crate::state::{AppState, Modal};
 use crate::storage::manager::LibraryManager;
 use crate::storage::remote::RemoteApi;
 use crossterm::event::{KeyCode, KeyEvent};
-use scylla_core::messenger::AppCommand;
 use scylla_core::types::*;
 
-pub fn handle_backend_picker(
-    state: &mut AppState,
-    key: KeyEvent,
-    _cmd_tx: &std::sync::mpsc::Sender<AppCommand>,
-) -> bool {
+pub fn handle_backend_picker(state: &mut AppState, key: KeyEvent) -> bool {
     let is_editing = if let Modal::BackendPicker { input, .. } = &state.ui.modal {
         input.is_some()
     } else {
@@ -320,7 +315,7 @@ fn handle_editing(state: &mut AppState, key: KeyEvent) -> bool {
 mod tests {
     use super::*;
     use crate::test_helpers::{
-        MockBackend, channel, key_event, test_state_with_backend, test_state_with_backends,
+        MockBackend, key_event, test_state_with_backend, test_state_with_backends,
     };
     use crossterm::event::KeyCode;
 
@@ -503,8 +498,7 @@ mod tests {
             editing_idx: None,
             pending_delete_idx: None,
         };
-        let (tx, _rx) = channel();
-        handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+        handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION));
         restore_config_dir();
 
         assert_eq!(state.lib.library.filter.library, None);
@@ -525,10 +519,9 @@ mod tests {
             editing_idx: None,
             pending_delete_idx: None,
         };
-        let (tx, _rx) = channel();
         // First press arms the confirmation, second confirms the deletion.
-        handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
-        handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+        handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION));
+        handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION));
         restore_config_dir();
 
         assert_eq!(state.lib.library.filter.library, None);

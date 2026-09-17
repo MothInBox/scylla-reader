@@ -1,11 +1,12 @@
 //! Modal popup renderer — add-book form and jump-to-chapter list.
 
+use crate::event_types::ChapterGroup;
 use crate::library::{BookFilter, filter_tags, known_tags};
 use crate::models::{BookStatus, Session};
-use crate::state::modal::{FilterRow, Modal};
+use crate::state::modal::{FilterRow, Modal, SearchStatus};
 use crate::state::{LibraryState, UiState};
 use crate::ui::palette::draw_palette;
-use crate::ui::widgets::{centered_rect, hint_line};
+use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
@@ -272,6 +273,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
             tag_scroll,
             status_cursor,
             lib_cursor,
+            ai_query,
         } => {
             let popup_area = centered_rect(60, 75, area);
             frame.render_widget(Clear, popup_area);
@@ -294,14 +296,22 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                 (FilterRow::Search, "Search", search_summary(working)),
                 (FilterRow::Tags, "Tags", tags_summary(working)),
                 (FilterRow::Library, "Library", library_summary(working)),
-                (FilterRow::Ai, "AI", "— coming soon —".to_string()),
+                (
+                    FilterRow::Ai,
+                    "AI",
+                    if ai_query.trim().is_empty() {
+                        "—".to_string()
+                    } else {
+                        ai_query.clone()
+                    },
+                ),
             ];
 
             let row_lines: Vec<Line> = rows
                 .iter()
                 .map(|(row, label, summary)| {
                     let focused = *focus == *row;
-                    let marker = if focused { "▸" } else { " " };
+                    let marker = if focused { ">" } else { " " };
                     let label_style = if focused {
                         Style::default()
                             .fg(Color::Blue)
@@ -397,35 +407,166 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                 footer_chunks[0],
             );
 
-            // Focus-aware action keys. On Search, `c` and space type into the
-            // name, so they are only offered on the choice rows.
-            let actions: &[(&str, &str)] = match *focus {
-                FilterRow::Search => &[("Type", "Name"), ("Backspace", "Del")],
-                FilterRow::Status | FilterRow::Tags | FilterRow::Library => {
-                    &[("Space", "Toggle"), ("c", "Clear")]
-                }
-                FilterRow::Ai => &[],
+            // Focus-aware action and nav hints, styled like the other modals'
+            // footers (DarkGray `[Key] Label` lines). On Search and Ai, `c`
+            // and space type into the text, so they are only offered on the
+            // choice rows.
+            let (action_hint, nav_hint): (&str, &str) = match *focus {
+                FilterRow::Search => (
+                    "[Type] Name  [Backspace] Del",
+                    "[Tab] Row  [Shift+Tab] Prev",
+                ),
+                FilterRow::Ai => (
+                    "[Type] Query  [Backspace] Del",
+                    "[Tab] Row  [Shift+Tab] Prev",
+                ),
+                FilterRow::Status | FilterRow::Tags | FilterRow::Library => (
+                    "[Space] Toggle  [c] Clear",
+                    "[↑↓] Move  [Tab] Row  [Shift+Tab] Prev",
+                ),
             };
+            let hint_style = Style::default().fg(Color::DarkGray);
+            frame.render_widget(
+                Paragraph::new(action_hint).style(hint_style),
+                footer_chunks[1],
+            );
+            frame.render_widget(Paragraph::new(nav_hint).style(hint_style), footer_chunks[2]);
+        }
 
-            // Row cycling always applies; ↑↓ moves only on the choice rows.
-            let mut nav: Vec<(&str, &str)> = vec![("Tab", "Row"), ("Shift+Tab", "Prev")];
-            if matches!(
-                *focus,
-                FilterRow::Status | FilterRow::Tags | FilterRow::Library
-            ) {
-                nav.push(("↑↓", "Move"));
+        Modal::ChapterResults {
+            query,
+            groups,
+            cursor,
+            scroll_offset,
+            status,
+        } => {
+            let popup_area = centered_rect(65, 80, area);
+            frame.render_widget(Clear, popup_area);
+
+            let total_hits: usize = groups.iter().map(|g| g.chapters.len()).sum();
+            let title = format!(" AI: \"{}\" ({}) ", query, total_hits);
+            let block = Block::default().title(title).borders(Borders::ALL);
+            let inner = block.inner(popup_area);
+            frame.render_widget(block, popup_area);
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(inner);
+
+            match status {
+                SearchStatus::Loading => {
+                    let para = Paragraph::new("searching…").alignment(Alignment::Center);
+                    frame.render_widget(para, chunks[0]);
+                }
+                SearchStatus::Empty => {
+                    let para = Paragraph::new(
+                        "No matches — try rephrasing or fewer details.\n\nf refine · Esc close",
+                    )
+                    .alignment(Alignment::Center);
+                    frame.render_widget(para, chunks[0]);
+                }
+                SearchStatus::Error(msg) => {
+                    let para =
+                        Paragraph::new(format!("Search failed: {}\n\nf retry · Esc close", msg))
+                            .alignment(Alignment::Center);
+                    frame.render_widget(para, chunks[0]);
+                }
+                SearchStatus::Ready => {
+                    let (items, selected) = build_chapter_rows(groups, *cursor);
+                    let visible_height = chunks[0].height.saturating_sub(2) as usize;
+                    if *cursor < *scroll_offset {
+                        *scroll_offset = *cursor;
+                    } else if *cursor >= *scroll_offset + visible_height {
+                        *scroll_offset = *cursor - visible_height + 1;
+                    }
+                    let mut list_state = ListState::default();
+                    *list_state.offset_mut() = *scroll_offset;
+                    list_state.select(selected);
+                    let list = List::new(items)
+                        .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
+                        .highlight_symbol("> ");
+                    frame.render_stateful_widget(list, chunks[0], &mut list_state);
+                }
             }
 
-            // The AI row is inert, so it has no action keys of its own.
-            if actions.is_empty() {
-                frame.render_widget(Paragraph::new(hint_line("Nav", &nav)), footer_chunks[1]);
-            } else {
-                frame.render_widget(
-                    Paragraph::new(hint_line("Actions", actions)),
-                    footer_chunks[1],
-                );
-                frame.render_widget(Paragraph::new(hint_line("Nav", &nav)), footer_chunks[2]);
+            frame.render_widget(
+                Paragraph::new(" ↑↓ move  Enter open  f refine  Esc close ")
+                    .style(Style::default().fg(Color::DarkGray)),
+                chunks[1],
+            );
+        }
+
+        Modal::EmbedChapters {
+            book_url,
+            chapters,
+            selected,
+            embedded_urls,
+            cursor,
+            scroll_offset,
+        } => {
+            let popup_area = centered_rect(70, 80, area);
+            frame.render_widget(Clear, popup_area);
+
+            let book_title = lib
+                .library
+                .books
+                .iter()
+                .find(|b| b.url == *book_url)
+                .map(|b| b.title.clone())
+                .unwrap_or_default();
+            let selected_count = selected.iter().filter(|&&s| s).count();
+            let title = format!(
+                " Embed Chapters ({} selected) — {} ",
+                selected_count, book_title
+            );
+            let block = Block::default().title(title).borders(Borders::ALL);
+            let inner = block.inner(popup_area);
+            frame.render_widget(block, popup_area);
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(inner);
+
+            // Auto-scroll so the cursor stays visible.
+            let visible_height = chunks[0].height.saturating_sub(2) as usize;
+            if *cursor < *scroll_offset {
+                *scroll_offset = *cursor;
+            } else if *cursor >= *scroll_offset + visible_height {
+                *scroll_offset = *cursor - visible_height + 1;
             }
+
+            let items: Vec<ListItem> = chapters
+                .iter()
+                .zip(selected.iter())
+                .map(|(ch, &sel)| {
+                    if embedded_urls.contains(&ch.url) {
+                        // Already embedded — dimmed, not selectable.
+                        ListItem::new(Line::from(vec![Span::styled(
+                            format!(" [✓] Ch {}: {}", ch.order, ch.title),
+                            Style::default().fg(Color::DarkGray),
+                        )]))
+                    } else {
+                        let marker = if sel { "[x]" } else { "[ ]" };
+                        ListItem::new(format!(" {} Ch {}: {}", marker, ch.order, ch.title))
+                    }
+                })
+                .collect();
+
+            let mut list_state = ListState::default();
+            *list_state.offset_mut() = *scroll_offset;
+            list_state.select(Some(*cursor));
+            let list = List::new(items)
+                .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
+                .highlight_symbol("> ");
+            frame.render_stateful_widget(list, chunks[0], &mut list_state);
+
+            frame.render_widget(
+                Paragraph::new(" ↑↓ move  Space toggle  a all  c clear  Enter embed  Esc close ")
+                    .style(Style::default().fg(Color::DarkGray)),
+                chunks[1],
+            );
         }
     }
 }
@@ -437,6 +578,49 @@ const STATUS_ROWS: [Option<BookStatus>; 5] = [
     Some(BookStatus::Dropped),
     Some(BookStatus::Completed),
 ];
+
+/// Build the list items for the chapter-results modal. Book headers are
+/// non-selectable; the returned `selected` is the visual row of the cursor
+/// chapter (None when there are no chapters).
+fn build_chapter_rows(
+    groups: &[ChapterGroup],
+    cursor: usize,
+) -> (Vec<ListItem<'_>>, Option<usize>) {
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut visual_of_flat: Vec<usize> = Vec::new();
+    for group in groups {
+        let genres = if group.genres.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", group.genres.join(", "))
+        };
+        // Pad the title so the genres and the right-aligned best score line up.
+        let title_pad = 30usize.saturating_sub(group.book_title.chars().count());
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(
+                format!(" {}{}", group.book_title, " ".repeat(title_pad)),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(genres, Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:>8}", format!("{:.2}", group.best_score)),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])));
+        for hit in &group.chapters {
+            visual_of_flat.push(items.len());
+            let score = format!("{:>5.2}", hit.score);
+            items.push(ListItem::new(Line::from(vec![
+                Span::raw(format!("  {}", hit.chapter_title)),
+                Span::styled(format!("  {}", score), Style::default().fg(Color::DarkGray)),
+            ])));
+        }
+    }
+    let selected = visual_of_flat.get(cursor).copied();
+    (items, selected)
+}
 
 fn status_summary(filter: &BookFilter) -> String {
     match &filter.status {
@@ -652,6 +836,7 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 0,
+            ai_query: String::new(),
         };
         draw_modal_with(&mut state);
     }
@@ -672,6 +857,7 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 0,
+            ai_query: String::new(),
         };
         draw_modal_with(&mut state);
     }
@@ -690,6 +876,7 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 0,
+            ai_query: String::new(),
         };
         draw_modal_with(&mut state);
     }
@@ -710,6 +897,7 @@ mod tests {
             tag_scroll: 0,
             status_cursor: 0,
             lib_cursor: 0,
+            ai_query: String::new(),
         };
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -745,16 +933,152 @@ mod tests {
     }
 
     #[test]
-    fn test_draw_modal_filter_ai_footer_shows_apply_cancel() {
+    fn test_draw_modal_filter_ai_footer_shows_typing_keys() {
         let content = draw_filter_modal(FilterRow::Ai);
-        assert!(content.contains("[Tab] Row"), "footer: {}", content);
+        assert!(content.contains("[Type]"), "footer: {}", content);
+        assert!(content.contains("[Backspace]"));
+        assert!(content.contains("[Tab] Row"));
         assert!(!content.contains("[Space] Toggle"));
-        assert!(!content.contains("[Type]"));
+        assert!(!content.contains("[c] Clear"));
     }
 
     #[test]
     fn test_draw_modal_filter_footer_shows_match_count() {
         let content = draw_filter_modal(FilterRow::Search);
         assert!(content.contains("matches"), "footer: {}", content);
+    }
+
+    fn draw_chapter_results(status: SearchStatus) -> String {
+        let mut state = make_state();
+        let groups = match status {
+            SearchStatus::Ready => vec![ChapterGroup {
+                book_url: "u1".into(),
+                book_title: "Book A".into(),
+                genres: vec!["Fantasy".into()],
+                chapters: vec![crate::event_types::ChapterHit {
+                    book_url: "u1".into(),
+                    book_title: "Book A".into(),
+                    chapter_url: "c1".into(),
+                    chapter_idx: 0,
+                    chapter_title: "Ch1".into(),
+                    score: 0.9,
+                    genres: vec![],
+                }],
+                best_score: 0.9,
+            }],
+            _ => vec![],
+        };
+        state.ui.modal = Modal::ChapterResults {
+            query: "dragon".into(),
+            groups,
+            cursor: 0,
+            scroll_offset: 0,
+            status,
+        };
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_modal(f, f.area(), &mut state.ui, &mut state.lib);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        buf.content().iter().map(|c| c.symbol()).collect()
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_loading() {
+        let content = draw_chapter_results(SearchStatus::Loading);
+        assert!(content.contains("searching"), "content: {}", content);
+        assert!(content.contains("AI: \"dragon\""));
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_empty() {
+        let content = draw_chapter_results(SearchStatus::Empty);
+        assert!(content.contains("No matches"), "content: {}", content);
+        assert!(content.contains("f refine"));
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_error() {
+        let content = draw_chapter_results(SearchStatus::Error("boom".into()));
+        assert!(
+            content.contains("Search failed: boom"),
+            "content: {}",
+            content
+        );
+        assert!(content.contains("f retry"));
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_ready() {
+        let content = draw_chapter_results(SearchStatus::Ready);
+        assert!(content.contains("Book A"), "content: {}", content);
+        assert!(content.contains("Fantasy"), "content: {}", content);
+        assert!(content.contains("Ch1"), "content: {}", content);
+        assert!(content.contains("0.90"), "content: {}", content);
+        assert!(content.contains("↑↓ move"), "content: {}", content);
+    }
+
+    fn draw_embed_chapters() -> String {
+        let mut state = make_state();
+        state
+            .lib
+            .library
+            .add_book("Test Book".into(), "http://example.com/book".into());
+        state.lib.library.books[0].chapters = vec![
+            crate::models::Chapter {
+                title: "The Arena".into(),
+                url: "c1".into(),
+                order: 12,
+            },
+            crate::models::Chapter {
+                title: "The Hunt".into(),
+                url: "c2".into(),
+                order: 13,
+            },
+        ];
+        state.ui.modal = Modal::EmbedChapters {
+            book_url: "http://example.com/book".into(),
+            chapters: state.lib.library.books[0].chapters.clone(),
+            selected: vec![true, false],
+            embedded_urls: vec!["c2".into()],
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_modal(f, f.area(), &mut state.ui, &mut state.lib);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        buf.content().iter().map(|c| c.symbol()).collect()
+    }
+
+    #[test]
+    fn test_draw_modal_embed_chapters_renders() {
+        let content = draw_embed_chapters();
+        assert!(
+            content.contains("Embed Chapters (1 selected) — Test Book"),
+            "content: {}",
+            content
+        );
+        assert!(
+            content.contains("[x] Ch 12: The Arena"),
+            "content: {}",
+            content
+        );
+        // Ch 13 (url "c2") is embedded — dimmed with a checkmark, not selectable.
+        assert!(
+            content.contains("[✓] Ch 13: The Hunt"),
+            "content: {}",
+            content
+        );
+        assert!(!content.contains("[ ] Ch 13"), "content: {}", content);
+        assert!(content.contains("Space toggle"), "content: {}", content);
+        assert!(content.contains("Enter embed"), "content: {}", content);
     }
 }

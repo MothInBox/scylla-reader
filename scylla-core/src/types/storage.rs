@@ -1,12 +1,6 @@
 use crate::types::{Book, BookStatus, Session};
 use async_trait::async_trait;
 
-#[derive(Debug, Clone)]
-pub struct ChapterContent {
-    pub title: String,
-    pub content: String,
-}
-
 #[async_trait]
 pub trait StorageBackend: Send + Sync {
     fn name(&self) -> &str;
@@ -31,17 +25,6 @@ pub trait StorageBackend: Send + Sync {
     async fn delete_session(&self, session_id: i64) -> Result<(), String>;
     async fn update_progress(&self, session_id: i64, current: u32) -> Result<(), String>;
     async fn set_active_session(&self, book_url: &str, session_id: i64) -> Result<(), String>;
-    async fn get_chapter_content(
-        &self,
-        book_url: &str,
-        chapter_url: &str,
-    ) -> Result<String, String>;
-    async fn scrape_book(&self, url: &str) -> Result<Book, String>;
-    async fn fetch_chapter(
-        &self,
-        book_url: &str,
-        chapter_url: &str,
-    ) -> Result<ChapterContent, String>;
 
     async fn get_server_settings(&self) -> Result<serde_json::Value, String> {
         Err("not supported".into())

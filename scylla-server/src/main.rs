@@ -1,4 +1,5 @@
 mod db;
+mod embeddings;
 mod routes;
 mod state;
 
@@ -7,6 +8,12 @@ use std::sync::Arc;
 use axum::Router;
 use state::AppState;
 use tokio::sync::Mutex;
+
+/// Work item for the dedicated embedding thread.
+enum EmbedRequest {
+    Chapter { chapter_url: String, text: String },
+    Description { book_url: String, text: String },
+}
 
 #[tokio::main]
 async fn main() {
@@ -27,6 +34,11 @@ async fn main() {
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
     let (event_tx, event_rx) = std::sync::mpsc::channel();
 
+    let jobs: Arc<std::sync::Mutex<Vec<scylla_core::types::JobDto>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (job_events_tx, _) =
+        tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256);
+
     let registry = Arc::new(std::sync::Mutex::new(
         scylla_core::scraper::ScraperRegistry::new(),
     ));
@@ -39,8 +51,6 @@ async fn main() {
             cmd_rx,
             event_tx,
             worker_registry,
-            (8, 12),
-            ratatui_image::picker::ProtocolType::Halfblocks,
             max_workers,
             rate_limit,
         );
@@ -48,19 +58,147 @@ async fn main() {
     });
 
     let event_db = db.clone();
+    let event_jobs = jobs.clone();
+    let event_broadcast = job_events_tx.clone();
+    let event_registry = registry.clone();
+    let (embed_tx, embed_rx) = std::sync::mpsc::channel::<EmbedRequest>();
+    let embed_db = db.clone();
+    let shared_embedder = Arc::new(embeddings::SharedEmbedder::new());
+    let thread_embedder = shared_embedder.clone();
+    std::thread::spawn(move || {
+        let mut chapter_counts: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
+        let mut genre_embeddings: Option<Vec<(String, Vec<f32>)>> = None;
+
+        for req in embed_rx {
+            match req {
+                EmbedRequest::Chapter { chapter_url, text } => {
+                    let hash = content_hash(&text);
+                    // Skip if already embedded with the same content hash.
+                    let already = embed_db
+                        .blocking_lock()
+                        .get_chapter_embedding(&chapter_url)
+                        .ok()
+                        .flatten()
+                        .map(|(_, existing)| existing.as_deref() == Some(&hash))
+                        .unwrap_or(false);
+                    if already {
+                        continue;
+                    }
+                    let Some(embed) = thread_embedder.get() else {
+                        continue;
+                    };
+                    let embedding = match embed(&text) {
+                        Ok(e) => e,
+                        Err(e) => {
+                            eprintln!("Embedding failed for chapter {chapter_url}: {e}");
+                            continue;
+                        }
+                    };
+                    let book_url = embed_db
+                        .blocking_lock()
+                        .find_book_url_for_chapter(&chapter_url)
+                        .ok()
+                        .flatten();
+                    let db = embed_db.blocking_lock();
+                    if let Err(e) = db.upsert_chapter_embedding(
+                        &chapter_url,
+                        book_url.as_deref(),
+                        &embedding,
+                        Some(&hash),
+                    ) {
+                        eprintln!("Failed to store chapter embedding: {e}");
+                        continue;
+                    }
+                    drop(db);
+                    if let Some(book_url) = book_url {
+                        let count = chapter_counts.entry(book_url.clone()).or_insert(0);
+                        *count += 1;
+                        if should_recompute(*count) {
+                            recompute_aggregate(
+                                &embed_db,
+                                &book_url,
+                                &*embed,
+                                &mut genre_embeddings,
+                            );
+                        }
+                    }
+                }
+                EmbedRequest::Description { book_url, text } => {
+                    let Some(embed) = thread_embedder.get() else {
+                        continue;
+                    };
+                    let embedding = match embed(&text) {
+                        Ok(e) => e,
+                        Err(e) => {
+                            eprintln!("Embedding failed for description {book_url}: {e}");
+                            continue;
+                        }
+                    };
+                    let db = embed_db.blocking_lock();
+                    if let Err(e) =
+                        db.upsert_book_embedding(&book_url, Some(&embedding), None, None)
+                    {
+                        eprintln!("Failed to store description embedding: {e}");
+                        continue;
+                    }
+                    drop(db);
+                    recompute_aggregate(&embed_db, &book_url, &*embed, &mut genre_embeddings);
+                }
+            }
+        }
+    });
+
+    // Startup backfill: enqueue descriptions for books that have one but no
+    // description embedding yet.
+    {
+        let db = db.lock().await;
+        match db.books_missing_description_embedding() {
+            Ok(books) => {
+                eprintln!(
+                    "Backfilling {} book description(s) for embedding",
+                    books.len()
+                );
+                for (book_url, desc) in books {
+                    let _ = embed_tx.send(EmbedRequest::Description {
+                        book_url,
+                        text: desc,
+                    });
+                }
+            }
+            Err(e) => eprintln!("Failed to load books for embedding backfill: {e}"),
+        }
+    }
+
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create event runtime");
         for event in event_rx {
-            if let scylla_core::messenger::AppEvent::BookScraped(book) = event {
+            routes::jobs::update_job_snapshot(&event_jobs, &event);
+            routes::jobs::reload_registry_on_plugin_installed(&event_registry, &event);
+            if let scylla_core::messenger::AppEvent::ChapterFetched(chapter) = &event {
+                let _ = embed_tx.send(EmbedRequest::Chapter {
+                    chapter_url: chapter.url.clone(),
+                    text: chapter.content.clone(),
+                });
+            }
+            if let scylla_core::messenger::AppEvent::BookScraped(book) = &event {
                 let db = event_db.clone();
+                let book_for_db = book.clone();
                 let result = rt.block_on(async move {
                     let db = db.lock().await;
-                    db.upsert_book(&book)
+                    db.upsert_book(&book_for_db)
                 });
                 if let Err(e) = result {
                     eprintln!("Failed to persist scraped book: {e}");
                 }
+                if let Some(desc) = &book.description {
+                    let _ = embed_tx.send(EmbedRequest::Description {
+                        book_url: book.url.clone(),
+                        text: desc.clone(),
+                    });
+                }
             }
+            let _ = event_broadcast.send(Arc::new(event));
         }
     });
 
@@ -70,6 +208,9 @@ async fn main() {
         registry,
         max_workers: std::sync::Mutex::new(max_workers),
         rate_limit: std::sync::Mutex::new(rate_limit),
+        jobs,
+        job_events: job_events_tx,
+        embedder: shared_embedder,
     });
 
     let app = build_router(app_state);
@@ -95,6 +236,14 @@ fn build_router(app_state: Arc<AppState>) -> Router {
         .route(
             "/api/books/:url/status",
             axum::routing::patch(routes::books::update_status),
+        )
+        .route(
+            "/api/books/:url/crawl",
+            axum::routing::post(routes::books::crawl_book),
+        )
+        .route(
+            "/api/books/:url/embedding-status",
+            axum::routing::get(routes::books::embedding_status),
         )
         .route(
             "/api/books/:url/sessions",
@@ -123,8 +272,120 @@ fn build_router(app_state: Arc<AppState>) -> Router {
             axum::routing::get(routes::settings::get_settings)
                 .patch(routes::settings::update_settings),
         )
+        .route("/api/jobs", axum::routing::get(routes::jobs::list_jobs))
+        .route(
+            "/api/jobs/stream",
+            axum::routing::get(routes::jobs::stream_jobs),
+        )
+        .route(
+            "/api/jobs/cancel",
+            axum::routing::post(routes::jobs::cancel_job),
+        )
+        .route(
+            "/api/jobs/cancel-all",
+            axum::routing::post(routes::jobs::cancel_all),
+        )
+        .route(
+            "/api/jobs/retry",
+            axum::routing::post(routes::jobs::retry_job),
+        )
+        .route(
+            "/api/jobs/retry-all",
+            axum::routing::post(routes::jobs::retry_all),
+        )
+        .route(
+            "/api/jobs/flush-completed",
+            axum::routing::post(routes::jobs::flush_completed),
+        )
+        .route(
+            "/api/jobs/flush-all",
+            axum::routing::post(routes::jobs::flush_all),
+        )
+        .route(
+            "/api/jobs/workers",
+            axum::routing::post(routes::jobs::set_workers),
+        )
+        .route(
+            "/api/jobs/rate-limit",
+            axum::routing::post(routes::jobs::set_rate_limit),
+        )
+        .route(
+            "/api/jobs/enqueue",
+            axum::routing::post(routes::jobs::enqueue_job),
+        )
+        .route(
+            "/api/plugins/install",
+            axum::routing::post(routes::plugins::install_plugin),
+        )
+        .route("/api/search", axum::routing::post(routes::search::search))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(app_state)
+}
+
+/// Recomputes a book's aggregate embedding + genre classification.
+///
+/// Genre embeddings (first classification embeds ~20 genres) are computed
+/// OUTSIDE the DB lock so HTTP handlers never stall on them.
+fn recompute_aggregate(
+    db: &Arc<tokio::sync::Mutex<db::ServerDb>>,
+    book_url: &str,
+    embed: &dyn Fn(&str) -> anyhow::Result<Vec<f32>>,
+    genre_embeddings: &mut Option<Vec<(String, Vec<f32>)>>,
+) {
+    let (desc, chapters) = {
+        let db = db.blocking_lock();
+        let desc = match db.get_book_embedding(book_url) {
+            Ok(Some((desc, _, _))) => desc,
+            _ => None,
+        };
+        let chapters = match db.load_chapter_embeddings_for_book(book_url) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to load chapter embeddings: {e}");
+                return;
+            }
+        };
+        (desc, chapters)
+    };
+    let agg = embeddings::aggregate(desc.as_deref(), &chapters);
+    if agg.is_empty() {
+        return;
+    }
+    let genres = match genre_embeddings {
+        Some(g) => g.clone(),
+        None => {
+            let mut g = Vec::new();
+            for (name, desc_text) in embeddings::GENRES {
+                match embed(desc_text) {
+                    Ok(e) => g.push((name.to_string(), e)),
+                    Err(e) => eprintln!("Failed to embed genre {name}: {e}"),
+                }
+            }
+            *genre_embeddings = Some(g.clone());
+            g
+        }
+    };
+    let top = embeddings::classify(&agg, &genres, 3);
+    let db = db.blocking_lock();
+    if let Err(e) = db.upsert_book_embedding(book_url, desc.as_deref(), Some(&agg), Some(&top)) {
+        eprintln!("Failed to store aggregate embedding: {e}");
+    }
+}
+
+/// Whether a book's aggregate should be recomputed after embedding `count`
+/// chapters: on the first chapter (so <5-chapter books still get one) and then
+/// every 5th.
+fn should_recompute(count: u32) -> bool {
+    count == 1 || count.is_multiple_of(5)
+}
+
+/// Stable content hash used to skip re-embedding unchanged chapters.
+fn content_hash(text: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 #[cfg(test)]
@@ -144,13 +405,89 @@ mod tests {
         let registry = Arc::new(std::sync::Mutex::new(
             scylla_core::scraper::ScraperRegistry::new(),
         ));
-        let state = Arc::new(AppState {
-            db,
-            cmd_tx,
-            registry,
-            max_workers: std::sync::Mutex::new(4),
-            rate_limit: std::sync::Mutex::new(2),
-        });
+        let state =
+            Arc::new(AppState {
+                db,
+                cmd_tx,
+                registry,
+                max_workers: std::sync::Mutex::new(4),
+                rate_limit: std::sync::Mutex::new(2),
+                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
+                job_events:
+                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
+                embedder: Arc::new(embeddings::SharedEmbedder::new()),
+            });
+        build_router(state)
+    }
+
+    fn test_app_with_cmd_rx() -> (
+        Router,
+        std::sync::mpsc::Receiver<scylla_core::messenger::AppCommand>,
+    ) {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let registry = Arc::new(std::sync::Mutex::new(
+            scylla_core::scraper::ScraperRegistry::new(),
+        ));
+        let state =
+            Arc::new(AppState {
+                db,
+                cmd_tx,
+                registry,
+                max_workers: std::sync::Mutex::new(4),
+                rate_limit: std::sync::Mutex::new(2),
+                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
+                job_events:
+                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
+                embedder: Arc::new(embeddings::SharedEmbedder::new()),
+            });
+        (build_router(state), cmd_rx)
+    }
+
+    fn test_app_with_embed_and_db(
+        embed: embeddings::EmbedFn,
+    ) -> (Router, Arc<Mutex<db::ServerDb>>) {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let (cmd_tx, _cmd_rx) = std::sync::mpsc::channel();
+        let registry = Arc::new(std::sync::Mutex::new(
+            scylla_core::scraper::ScraperRegistry::new(),
+        ));
+        let state =
+            Arc::new(AppState {
+                db: db.clone(),
+                cmd_tx,
+                registry,
+                max_workers: std::sync::Mutex::new(4),
+                rate_limit: std::sync::Mutex::new(2),
+                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
+                job_events:
+                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
+                embedder: Arc::new(embeddings::SharedEmbedder::with_embed(embed)),
+            });
+        (build_router(state), db)
+    }
+
+    fn test_app_with_embedder_in_cooldown() -> Router {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let (cmd_tx, _cmd_rx) = std::sync::mpsc::channel();
+        let registry = Arc::new(std::sync::Mutex::new(
+            scylla_core::scraper::ScraperRegistry::new(),
+        ));
+        let state =
+            Arc::new(AppState {
+                db,
+                cmd_tx,
+                registry,
+                max_workers: std::sync::Mutex::new(4),
+                rate_limit: std::sync::Mutex::new(2),
+                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
+                job_events:
+                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
+                embedder: Arc::new(embeddings::SharedEmbedder::in_cooldown()),
+            });
         build_router(state)
     }
 
@@ -508,5 +845,1007 @@ mod tests {
         let json = body_json(resp).await;
         assert_eq!(json["max_workers"], 8);
         assert_eq!(json["rate_limit"], 5);
+    }
+
+    #[tokio::test]
+    async fn test_update_settings_rejects_invalid_max_workers() {
+        let app = test_app();
+        for body in [r#"{"max_workers":0}"#, r#"{"max_workers":256}"#] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PATCH")
+                        .uri("/api/settings")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        }
+
+        // State unchanged after rejected updates.
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/settings")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = body_json(resp).await;
+        assert_eq!(json["max_workers"], 4);
+    }
+
+    #[tokio::test]
+    async fn test_get_jobs_returns_snapshot() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let (cmd_tx, _cmd_rx) = std::sync::mpsc::channel();
+        let registry = Arc::new(std::sync::Mutex::new(
+            scylla_core::scraper::ScraperRegistry::new(),
+        ));
+        let jobs = Arc::new(std::sync::Mutex::new(vec![scylla_core::types::JobDto {
+            id: 1,
+            kind: "Scrape".into(),
+            status: "Queued".into(),
+            target: "http://example.com".into(),
+            priority: "Normal".into(),
+            chapter_idx: None,
+            created_at_ms: 0,
+            started_at_ms: None,
+            completed_at_ms: None,
+            error: None,
+            outcome: None,
+        }]));
+        let state =
+            Arc::new(AppState {
+                db,
+                cmd_tx,
+                registry,
+                max_workers: std::sync::Mutex::new(4),
+                rate_limit: std::sync::Mutex::new(2),
+                jobs,
+                job_events:
+                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
+                embedder: Arc::new(embeddings::SharedEmbedder::new()),
+            });
+        let app = build_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/jobs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert!(json["server_now_ms"].is_u64());
+        let list = json["jobs"].as_array().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["id"], 1);
+        assert_eq!(list[0]["kind"], "Scrape");
+        assert_eq!(list[0]["status"], "Queued");
+    }
+
+    #[tokio::test]
+    async fn test_cancel_job_sends_command() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/cancel")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"id":7}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::CancelJob(7)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_all_sends_command() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/cancel-all")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(cmd, scylla_core::messenger::AppCommand::CancelAll));
+    }
+
+    #[tokio::test]
+    async fn test_retry_job_sends_command() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/retry")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"id":9}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::RetryJob(9)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_retry_all_sends_command() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/retry-all")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::RetryAllFailed
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_flush_completed_sends_command_and_clears_snapshot() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let registry = Arc::new(std::sync::Mutex::new(
+            scylla_core::scraper::ScraperRegistry::new(),
+        ));
+        let jobs = Arc::new(std::sync::Mutex::new(vec![
+            scylla_core::types::JobDto {
+                id: 1,
+                kind: "Scrape".into(),
+                status: "Completed".into(),
+                target: "http://example.com".into(),
+                priority: "Normal".into(),
+                chapter_idx: None,
+                created_at_ms: 0,
+                started_at_ms: None,
+                completed_at_ms: None,
+                error: None,
+                outcome: None,
+            },
+            scylla_core::types::JobDto {
+                id: 2,
+                kind: "Scrape".into(),
+                status: "Running".into(),
+                target: "http://example.com/2".into(),
+                priority: "Normal".into(),
+                chapter_idx: None,
+                created_at_ms: 0,
+                started_at_ms: None,
+                completed_at_ms: None,
+                error: None,
+                outcome: None,
+            },
+        ]));
+        let state =
+            Arc::new(AppState {
+                db,
+                cmd_tx,
+                registry,
+                max_workers: std::sync::Mutex::new(4),
+                rate_limit: std::sync::Mutex::new(2),
+                jobs,
+                job_events:
+                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
+                embedder: Arc::new(embeddings::SharedEmbedder::new()),
+            });
+        let app = build_router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/flush-completed")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::FlushCompleted
+        ));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/jobs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = body_json(resp).await;
+        let list = json["jobs"].as_array().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["id"], 2);
+    }
+
+    #[tokio::test]
+    async fn test_flush_all_sends_command_and_clears_snapshot() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let registry = Arc::new(std::sync::Mutex::new(
+            scylla_core::scraper::ScraperRegistry::new(),
+        ));
+        let jobs = Arc::new(std::sync::Mutex::new(vec![scylla_core::types::JobDto {
+            id: 1,
+            kind: "Scrape".into(),
+            status: "Completed".into(),
+            target: "http://example.com".into(),
+            priority: "Normal".into(),
+            chapter_idx: None,
+            created_at_ms: 0,
+            started_at_ms: None,
+            completed_at_ms: None,
+            error: None,
+            outcome: None,
+        }]));
+        let state =
+            Arc::new(AppState {
+                db,
+                cmd_tx,
+                registry,
+                max_workers: std::sync::Mutex::new(4),
+                rate_limit: std::sync::Mutex::new(2),
+                jobs,
+                job_events:
+                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
+                embedder: Arc::new(embeddings::SharedEmbedder::new()),
+            });
+        let app = build_router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/flush-all")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(cmd, scylla_core::messenger::AppCommand::FlushAll));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/jobs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = body_json(resp).await;
+        assert_eq!(json["jobs"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_set_workers_sends_command_and_updates_state() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/workers")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"max_workers":6}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::SetMaxWorkers(6)
+        ));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/settings")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = body_json(resp).await;
+        assert_eq!(json["max_workers"], 6);
+    }
+
+    #[tokio::test]
+    async fn test_set_rate_limit_sends_command_and_updates_state() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/rate-limit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"rate_limit":5}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::SetRateLimit(5)
+        ));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/settings")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = body_json(resp).await;
+        assert_eq!(json["rate_limit"], 5);
+    }
+
+    #[tokio::test]
+    async fn test_job_command_bad_body_returns_400() {
+        let (app, _cmd_rx) = test_app_with_cmd_rx();
+        for uri in ["/api/jobs/cancel", "/api/jobs/retry"] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_scrape_sends_command() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/enqueue")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"kind":"Scrape","url":"http://example.com/book"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::Scrape(url) if url == "http://example.com/book"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_fetch_chapter_sends_command() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/enqueue")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"kind":"FetchChapter","url":"http://example.com/ch1","chapter_idx":3}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::FetchChapter(url, 3)
+                if url == "http://example.com/ch1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_fetch_cover_sends_command() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/enqueue")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"kind":"FetchCover","url":"http://example.com/cover.jpg"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::FetchCover(url)
+                if url == "http://example.com/cover.jpg"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_bad_requests_return_400() {
+        let (app, _cmd_rx) = test_app_with_cmd_rx();
+        let cases = [
+            r#"{"kind":"Unknown","url":"http://example.com"}"#,
+            r#"{"kind":"FetchChapter","url":"http://example.com/ch1"}"#,
+            r#"{"kind":"Scrape"}"#,
+            r#"{"kind":"Scrape","url":""}"#,
+        ];
+        for body in cases {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/jobs/enqueue")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "body: {}", body);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_install_plugin_sends_command() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/plugins/install")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"repo_url":"https://github.com/o/r"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::InstallPlugin(url)
+                if url == "https://github.com/o/r"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_install_plugin_bad_body_returns_400() {
+        let (app, _cmd_rx) = test_app_with_cmd_rx();
+        for body in [r#"{}"#, r#"{"repo_url":""}"#] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/plugins/install")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_crawl_book_sends_fetch_chapter_commands() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let registry = Arc::new(std::sync::Mutex::new(
+            scylla_core::scraper::ScraperRegistry::new(),
+        ));
+        let state =
+            Arc::new(AppState {
+                db,
+                cmd_tx,
+                registry,
+                max_workers: std::sync::Mutex::new(4),
+                rate_limit: std::sync::Mutex::new(2),
+                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
+                job_events:
+                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
+                embedder: Arc::new(embeddings::SharedEmbedder::new()),
+            });
+        let app = build_router(state);
+
+        // Seed a book with two chapters.
+        let book = scylla_core::types::Book {
+            title: "Book".into(),
+            url: "http://example.com/book".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![
+                scylla_core::types::Chapter {
+                    url: "http://example.com/ch1".into(),
+                    title: "Ch1".into(),
+                    order: 1,
+                },
+                scylla_core::types::Chapter {
+                    url: "http://example.com/ch2".into(),
+                    title: "Ch2".into(),
+                    order: 2,
+                },
+            ],
+        };
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/books/http%3A%2F%2Fexample.com%2Fbook")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&book).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/books/http%3A%2F%2Fexample.com%2Fbook/crawl")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+        let c1 = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        let c2 = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            c1,
+            scylla_core::messenger::AppCommand::FetchChapter(url, 1)
+                if url == "http://example.com/ch1"
+        ));
+        assert!(matches!(
+            c2,
+            scylla_core::messenger::AppCommand::FetchChapter(url, 2)
+                if url == "http://example.com/ch2"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_crawl_missing_book_returns_404() {
+        let (app, _cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/books/http%3A%2F%2Fexample.com%2Fnope/crawl")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_should_recompute() {
+        assert!(should_recompute(1));
+        assert!(!should_recompute(2));
+        assert!(!should_recompute(4));
+        assert!(should_recompute(5));
+        assert!(!should_recompute(6));
+        assert!(should_recompute(10));
+        assert!(should_recompute(15));
+    }
+
+    #[test]
+    fn test_content_hash_stable_and_distinct() {
+        let h1 = content_hash("same text");
+        let h2 = content_hash("same text");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 16);
+        assert_ne!(h1, content_hash("different text"));
+        assert_ne!(content_hash(""), content_hash(" "));
+    }
+
+    fn stub_embed(vec: Vec<f32>) -> embeddings::EmbedFn {
+        Arc::new(move |_text: &str| Ok(vec.clone()))
+    }
+
+    #[tokio::test]
+    async fn test_search_book_mode_ranks_by_similarity() {
+        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
+        // Seed book A (agg [1,0,0]) and book B (agg [0,1,0]).
+        db.lock()
+            .await
+            .upsert_book_embedding(
+                "book-a",
+                None,
+                Some(&[1.0, 0.0]),
+                Some(&["Fantasy".to_string()]),
+            )
+            .unwrap();
+        db.lock()
+            .await
+            .upsert_book_embedding("book-b", None, Some(&[0.0, 1.0]), None)
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"x","mode":"book","limit":10}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["mode"], "book");
+        let results = json["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["book_url"], "book-a");
+        assert_eq!(results[1]["book_url"], "book-b");
+        assert!(results[0]["score"].as_f64().unwrap() > results[1]["score"].as_f64().unwrap());
+        assert_eq!(results[0]["genres"][0], "Fantasy");
+    }
+
+    #[tokio::test]
+    async fn test_search_chapter_mode_flat_hits() {
+        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
+        // Seed books with chapters so the join enriches the hits.
+        let book_a = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![
+                scylla_core::types::Chapter {
+                    url: "ch-a1".into(),
+                    title: "Chapter A1".into(),
+                    order: 1,
+                },
+                scylla_core::types::Chapter {
+                    url: "ch-a2".into(),
+                    title: "Chapter A2".into(),
+                    order: 2,
+                },
+            ],
+        };
+        let book_b = scylla_core::types::Book {
+            title: "Book B".into(),
+            url: "book-b".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![scylla_core::types::Chapter {
+                url: "ch-b1".into(),
+                title: "Chapter B1".into(),
+                order: 1,
+            }],
+        };
+        db.lock().await.upsert_book(&book_a).unwrap();
+        db.lock().await.upsert_book(&book_b).unwrap();
+        db.lock()
+            .await
+            .upsert_book_embedding(
+                "book-a",
+                None,
+                Some(&[1.0, 0.0]),
+                Some(&["Fantasy".to_string()]),
+            )
+            .unwrap();
+        db.lock()
+            .await
+            .upsert_chapter_embedding("ch-a1", Some("book-a"), &[1.0, 0.0], None)
+            .unwrap();
+        db.lock()
+            .await
+            .upsert_chapter_embedding("ch-a2", Some("book-a"), &[0.9, 0.1], None)
+            .unwrap();
+        db.lock()
+            .await
+            .upsert_chapter_embedding("ch-b1", Some("book-b"), &[0.0, 1.0], None)
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"x","mode":"chapter","limit":10}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["mode"], "chapter");
+        let results = json["results"].as_array().unwrap();
+        assert_eq!(results.len(), 3);
+        // Flat, sorted by score desc.
+        assert_eq!(results[0]["chapter_url"], "ch-a1");
+        assert_eq!(results[0]["book_url"], "book-a");
+        assert_eq!(results[0]["book_title"], "Book A");
+        assert_eq!(results[0]["chapter_title"], "Chapter A1");
+        assert_eq!(results[0]["chapter_idx"], 1);
+        assert_eq!(results[0]["genres"][0], "Fantasy");
+        assert_eq!(results[1]["chapter_url"], "ch-a2");
+        assert_eq!(results[2]["chapter_url"], "ch-b1");
+        assert_eq!(results[2]["book_title"], "Book B");
+    }
+
+    #[tokio::test]
+    async fn test_search_empty_query_returns_400() {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"","mode":"book"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_search_unknown_mode_returns_400() {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"x","mode":"bogus"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_search_limit_clamped() {
+        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
+        db.lock()
+            .await
+            .upsert_book_embedding("book-a", None, Some(&[1.0, 0.0]), None)
+            .unwrap();
+        db.lock()
+            .await
+            .upsert_book_embedding("book-b", None, Some(&[0.0, 1.0]), None)
+            .unwrap();
+
+        // limit 0 clamps to 1; limit 999 clamps to 50 (only 2 books exist).
+        for (limit, expected) in [("0", 1), ("999", 2)] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/search")
+                        .header("content-type", "application/json")
+                        .body(Body::from(format!(
+                            r#"{{"query":"x","mode":"book","limit":{}}}"#,
+                            limit
+                        )))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let json = body_json(resp).await;
+            assert_eq!(json["results"].as_array().unwrap().len(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_returns_503_when_embedder_unavailable() {
+        let app = test_app_with_embedder_in_cooldown();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"x","mode":"book"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_embedding_status_route() {
+        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
+        let book = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![
+                scylla_core::types::Chapter {
+                    url: "ch-a1".into(),
+                    title: "Chapter A1".into(),
+                    order: 1,
+                },
+                scylla_core::types::Chapter {
+                    url: "ch-a2".into(),
+                    title: "Chapter A2".into(),
+                    order: 2,
+                },
+            ],
+        };
+        db.lock().await.upsert_book(&book).unwrap();
+        db.lock()
+            .await
+            .upsert_chapter_embedding("ch-a1", Some("book-a"), &[1.0, 0.0], None)
+            .unwrap();
+        db.lock()
+            .await
+            .upsert_chapter_embedding("ch-a2", Some("book-a"), &[0.9, 0.1], None)
+            .unwrap();
+        db.lock()
+            .await
+            .upsert_book_embedding(
+                "book-a",
+                None,
+                Some(&[1.0, 0.0]),
+                Some(&["Fantasy".to_string()]),
+            )
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/books/book-a/embedding-status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["embedded_chapters"], 2);
+        assert_eq!(json["total_chapters"], 2);
+        assert_eq!(json["aggregate"], true);
+        assert_eq!(json["genres"][0], "Fantasy");
+        let urls = json["embedded_chapter_urls"].as_array().unwrap();
+        assert_eq!(urls.len(), 2);
+        assert_eq!(urls[0], "ch-a1");
+        assert_eq!(urls[1], "ch-a2");
+    }
+
+    #[tokio::test]
+    async fn test_embedding_status_missing_book_returns_404() {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/books/nope/embedding-status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }

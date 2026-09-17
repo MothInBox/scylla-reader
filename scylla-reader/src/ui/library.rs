@@ -44,6 +44,7 @@ pub fn draw(frame: &mut Frame, area: Rect, lib: &mut LibraryState, ui: &UiState)
                     ("i", "Add Book"),
                     ("L", "Backends"),
                     ("j", "Jump"),
+                    ("e", "Embed"),
                     ("d", "Delete"),
                     ("u", "Update"),
                     ("f", "Filter"),
@@ -119,6 +120,7 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, lib: &mut LibraryState) {
 
     let book_data = lib.library.selected_book().map(|b| {
         (
+            b.url.clone(),
             b.title.clone(),
             b.status.clone(),
             b.sessions.clone(),
@@ -129,7 +131,7 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, lib: &mut LibraryState) {
         )
     });
 
-    let Some((title, status, sessions, active_session_id, tags, description, cover_url)) =
+    let Some((book_url, title, status, sessions, active_session_id, tags, description, cover_url)) =
         book_data
     else {
         frame.render_widget(Paragraph::new("No book selected"), inner);
@@ -167,15 +169,35 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, lib: &mut LibraryState) {
 
     let session_count = format!("Sessions:  {}", sessions.len());
 
-    let details = format!(
-        "Title:    {}\nStatus:   {}\nProgress: {}\n{}\nTags:     {}\n\n{}",
+    // Embedding progress for the selected book, when known.
+    let embedding_line = lib
+        .library
+        .embedding_status_cache
+        .get(&book_url)
+        .map(|s| {
+            let mut lines = vec![format!(
+                "Embedded: {}/{}",
+                s.embedded_chapters, s.total_chapters
+            )];
+            if !s.genres.is_empty() {
+                lines.push(format!("Genres:   {}", s.genres.join(", ")));
+            }
+            lines.join("\n")
+        })
+        .unwrap_or_default();
+
+    let mut details = format!(
+        "Title:    {}\nStatus:   {}\nProgress: {}\n{}\nTags:     {}",
         title,
         status,
         progress_str,
         session_count,
         tags.join(", "),
-        description.unwrap_or_default(),
     );
+    if !embedding_line.is_empty() {
+        details.push_str(&format!("\n{}", embedding_line));
+    }
+    details.push_str(&format!("\n\n{}", description.unwrap_or_default()));
     frame.render_widget(
         Paragraph::new(details).wrap(Wrap { trim: false }),
         side_chunks[1],
@@ -249,5 +271,73 @@ mod tests {
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(!content.contains("[1]"));
+    }
+
+    #[test]
+    fn test_library_draw_shows_embedding_status() {
+        let mut state = make_state();
+        state
+            .lib
+            .library
+            .add_book("Test Book".into(), "http://example.com/book".into());
+        state.lib.library.embedding_status_cache.insert(
+            "http://example.com/book".into(),
+            crate::storage::client::EmbeddingStatus {
+                embedded_chapters: 12,
+                total_chapters: 40,
+                aggregate: true,
+                genres: vec!["Fantasy".into(), "LitRPG".into()],
+                embedded_chapter_urls: vec![],
+            },
+        );
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state.lib, &state.ui);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Embedded: 12/40"), "content: {}", content);
+        assert!(
+            content.contains("Genres:   Fantasy, LitRPG"),
+            "content: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_library_draw_embedding_status_without_genres() {
+        let mut state = make_state();
+        state
+            .lib
+            .library
+            .add_book("Test Book".into(), "http://example.com/book".into());
+        state.lib.library.embedding_status_cache.insert(
+            "http://example.com/book".into(),
+            crate::storage::client::EmbeddingStatus {
+                embedded_chapters: 0,
+                total_chapters: 5,
+                aggregate: false,
+                genres: vec![],
+                embedded_chapter_urls: vec![],
+            },
+        );
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state.lib, &state.ui);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Embedded: 0/5"), "content: {}", content);
+        assert!(!content.contains("Genres:"), "content: {}", content);
     }
 }

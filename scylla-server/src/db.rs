@@ -1,7 +1,14 @@
 #![allow(dead_code)]
 
-use rusqlite::{Connection, Result, params};
+use rusqlite::{Connection, OptionalExtension, Result, params};
 use scylla_core::types::{Book, BookStatus, Chapter, Progress, Session};
+
+/// Stored book embedding row: (description, aggregate, genres).
+pub type BookEmbedding = (Option<Vec<f32>>, Option<Vec<f32>>, Option<Vec<String>>);
+
+/// Per-book embedding status:
+/// (embedded_chapters, total_chapters, has_aggregate, genres, embedded_chapter_urls).
+pub type EmbeddingStatus = (usize, usize, bool, Option<Vec<String>>, Vec<String>);
 
 pub struct ServerDb {
     conn: Connection,
@@ -69,6 +76,25 @@ impl ServerDb {
                 ord      INTEGER NOT NULL,
                 PRIMARY KEY (book_url, url)
             );
+
+            CREATE TABLE IF NOT EXISTS chapter_embeddings (
+                source_url   TEXT PRIMARY KEY,
+                book_url     TEXT,
+                embedding    BLOB NOT NULL,
+                embedded_at  INTEGER NOT NULL,
+                content_hash TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS book_embeddings (
+                book_url              TEXT PRIMARY KEY,
+                description_embedding BLOB,
+                aggregate_embedding   BLOB,
+                aggregate_updated_at  INTEGER,
+                genres                TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chapter_embeddings_book_url
+                ON chapter_embeddings(book_url);
         ",
         )?;
 
@@ -136,7 +162,7 @@ impl ServerDb {
         stmt.query_map([book_url], |row| row.get(0))?.collect()
     }
 
-    fn load_chapters(&self, book_url: &str) -> Result<Vec<Chapter>> {
+    pub fn load_chapters(&self, book_url: &str) -> Result<Vec<Chapter>> {
         let mut stmt = self
             .conn
             .prepare("SELECT url, title, ord FROM chapters WHERE book_url = ? ORDER BY ord")?;
@@ -312,6 +338,226 @@ impl ServerDb {
     }
 }
 
+impl ServerDb {
+    pub fn upsert_chapter_embedding(
+        &self,
+        source_url: &str,
+        book_url: Option<&str>,
+        embedding: &[f32],
+        content_hash: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO chapter_embeddings (source_url, book_url, embedding, embedded_at, content_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(source_url) DO UPDATE SET
+               book_url     = excluded.book_url,
+               embedding    = excluded.embedding,
+               embedded_at  = excluded.embedded_at,
+               content_hash = excluded.content_hash",
+            params![
+                source_url,
+                book_url,
+                encode_f32s(embedding),
+                now_unix_ms(),
+                content_hash,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_chapter_embedding(
+        &self,
+        source_url: &str,
+    ) -> Result<Option<(Vec<f32>, Option<String>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT embedding, content_hash FROM chapter_embeddings WHERE source_url = ?",
+        )?;
+        let mut rows = stmt.query_map([source_url], |row| {
+            let blob: Vec<u8> = row.get(0)?;
+            Ok((decode_f32s(&blob), row.get(1)?))
+        })?;
+        rows.next().transpose()
+    }
+
+    pub fn upsert_book_embedding(
+        &self,
+        book_url: &str,
+        description_embedding: Option<&[f32]>,
+        aggregate_embedding: Option<&[f32]>,
+        genres: Option<&[String]>,
+    ) -> Result<()> {
+        let desc_blob = description_embedding.map(encode_f32s);
+        let agg_blob = aggregate_embedding.map(encode_f32s);
+        let genres_json = genres.map(|g| serde_json::to_string(g).unwrap_or_else(|_| "[]".into()));
+        let agg_ts = if aggregate_embedding.is_some() {
+            Some(now_unix_ms())
+        } else {
+            None
+        };
+        self.conn.execute(
+            "INSERT INTO book_embeddings (book_url, description_embedding, aggregate_embedding, aggregate_updated_at, genres)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(book_url) DO UPDATE SET
+               description_embedding = COALESCE(excluded.description_embedding, book_embeddings.description_embedding),
+               aggregate_embedding   = COALESCE(excluded.aggregate_embedding, book_embeddings.aggregate_embedding),
+               aggregate_updated_at  = COALESCE(excluded.aggregate_updated_at, book_embeddings.aggregate_updated_at),
+               genres                = COALESCE(excluded.genres, book_embeddings.genres)",
+            params![book_url, desc_blob, agg_blob, agg_ts, genres_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_book_embedding(&self, book_url: &str) -> Result<Option<BookEmbedding>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT description_embedding, aggregate_embedding, genres
+             FROM book_embeddings WHERE book_url = ?",
+        )?;
+        let mut rows = stmt.query_map([book_url], |row| {
+            let desc: Option<Vec<u8>> = row.get(0)?;
+            let agg: Option<Vec<u8>> = row.get(1)?;
+            let genres: Option<String> = row.get(2)?;
+            let genres = genres.and_then(|g| serde_json::from_str(&g).ok());
+            Ok((
+                desc.map(|b| decode_f32s(&b)),
+                agg.map(|b| decode_f32s(&b)),
+                genres,
+            ))
+        })?;
+        rows.next().transpose()
+    }
+
+    pub fn load_chapter_embeddings_for_book(&self, book_url: &str) -> Result<Vec<Vec<f32>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT embedding FROM chapter_embeddings WHERE book_url = ? ORDER BY rowid",
+        )?;
+        let rows = stmt.query_map([book_url], |row| {
+            let blob: Vec<u8> = row.get(0)?;
+            Ok(decode_f32s(&blob))
+        })?;
+        rows.collect()
+    }
+
+    pub fn find_book_url_for_chapter(&self, chapter_url: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT book_url FROM chapters WHERE url = ? LIMIT 1")?;
+        let mut rows = stmt.query_map([chapter_url], |row| row.get(0))?;
+        rows.next().transpose()
+    }
+
+    /// Books that have a description but no description embedding yet (startup
+    /// backfill candidates). Returns (book_url, description).
+    pub fn books_missing_description_embedding(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT b.url, b.description FROM books b
+             LEFT JOIN book_embeddings be ON be.book_url = b.url
+             WHERE b.description IS NOT NULL AND be.description_embedding IS NULL",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// All chapter embeddings enriched for search as `ChapterHit` tuples
+    /// (book_url, book_title, chapter_url, chapter_title, chapter_idx, genres,
+    /// embedding). Chapters without a book_url map to empty strings / 0.
+    pub fn load_all_chapter_embeddings(&self) -> Result<Vec<crate::embeddings::ChapterHit>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ce.book_url, b.title, ce.source_url, ch.title, ch.ord, be.genres, ce.embedding
+             FROM chapter_embeddings ce
+             LEFT JOIN chapters ch ON ch.book_url = ce.book_url AND ch.url = ce.source_url
+             LEFT JOIN books b ON b.url = ce.book_url
+             LEFT JOIN book_embeddings be ON be.book_url = ce.book_url
+             ORDER BY ce.rowid",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let book_url: Option<String> = row.get(0)?;
+            let book_title: Option<String> = row.get(1)?;
+            let source_url: String = row.get(2)?;
+            let chapter_title: Option<String> = row.get(3)?;
+            let chapter_idx: Option<i64> = row.get(4)?;
+            let genres: Option<String> = row.get(5)?;
+            let blob: Vec<u8> = row.get(6)?;
+            let genres = genres.and_then(|g| serde_json::from_str(&g).ok());
+            Ok((
+                book_url.unwrap_or_default(),
+                book_title.unwrap_or_default(),
+                source_url,
+                chapter_title.unwrap_or_default(),
+                chapter_idx.unwrap_or(0) as u32,
+                genres,
+                decode_f32s(&blob),
+            ))
+        })?;
+        rows.collect()
+    }
+
+    /// All book aggregate embeddings as (book_url, aggregate, genres) — for
+    /// search. Rows without an aggregate embedding are excluded.
+    pub fn load_all_book_embeddings(&self) -> Result<Vec<crate::embeddings::BookAggregate>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT book_url, aggregate_embedding, genres FROM book_embeddings
+             WHERE aggregate_embedding IS NOT NULL ORDER BY rowid",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let book_url: String = row.get(0)?;
+            let agg: Vec<u8> = row.get(1)?;
+            let genres: Option<String> = row.get(2)?;
+            let genres = genres.and_then(|g| serde_json::from_str(&g).ok());
+            Ok((book_url, decode_f32s(&agg), genres))
+        })?;
+        rows.collect()
+    }
+
+    /// Per-book embedding status: (embedded_chapters, total_chapters,
+    /// has_aggregate, genres, embedded_chapter_urls). Returns `None` if the
+    /// book doesn't exist.
+    pub fn embedding_status(&self, book_url: &str) -> Result<Option<EmbeddingStatus>> {
+        let exists: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM books WHERE url = ?)",
+            [book_url],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Ok(None);
+        }
+        let embedded_chapters: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM chapter_embeddings WHERE book_url = ?",
+            [book_url],
+            |row| row.get(0),
+        )?;
+        let total_chapters: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM chapters WHERE book_url = ?",
+            [book_url],
+            |row| row.get(0),
+        )?;
+        let (has_aggregate, genres): (bool, Option<String>) = self
+            .conn
+            .query_row(
+                "SELECT aggregate_embedding IS NOT NULL, genres
+                 FROM book_embeddings WHERE book_url = ?",
+                [book_url],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?
+            .unwrap_or((false, None));
+        let genres = genres.and_then(|g| serde_json::from_str(&g).ok());
+        let embedded_chapter_urls: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT source_url FROM chapter_embeddings WHERE book_url = ? ORDER BY rowid",
+            )?;
+            let rows = stmt.query_map([book_url], |row| row.get(0))?;
+            rows.collect::<Result<_>>()?
+        };
+        Ok(Some((
+            embedded_chapters as usize,
+            total_chapters as usize,
+            has_aggregate,
+            genres,
+            embedded_chapter_urls,
+        )))
+    }
+}
+
 fn status_str(s: &BookStatus) -> &'static str {
     match s {
         BookStatus::Reading => "Reading",
@@ -319,6 +565,31 @@ fn status_str(s: &BookStatus) -> &'static str {
         BookStatus::Dropped => "Dropped",
         BookStatus::Completed => "Completed",
     }
+}
+
+/// Encodes an `f32` vector as raw little-endian bytes (BLOB storage).
+fn encode_f32s(v: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(v.len() * 4);
+    for f in v {
+        out.extend_from_slice(&f.to_le_bytes());
+    }
+    out
+}
+
+/// Decodes a raw little-endian byte BLOB back into an `f32` vector.
+fn decode_f32s(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
+/// Current unix epoch time in milliseconds.
+fn now_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn parse_status(s: &str) -> BookStatus {
@@ -694,5 +965,284 @@ mod tests {
         assert_eq!(books[0].url, "b");
         assert_eq!(books[1].url, "a");
         assert_eq!(books[2].url, "c");
+    }
+
+    #[test]
+    fn test_upsert_and_get_chapter_embedding() {
+        let db = test_db();
+        let emb = vec![0.1f32, 0.2, 0.3];
+        db.upsert_chapter_embedding("ch1", Some("book1"), &emb, Some("hash1"))
+            .unwrap();
+
+        let (got, hash) = db.get_chapter_embedding("ch1").unwrap().unwrap();
+        assert_eq!(got, emb);
+        assert_eq!(hash.as_deref(), Some("hash1"));
+    }
+
+    #[test]
+    fn test_upsert_chapter_embedding_overwrites() {
+        let db = test_db();
+        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], Some("h1"))
+            .unwrap();
+        db.upsert_chapter_embedding("ch1", Some("book2"), &[3.0, 4.0], Some("h2"))
+            .unwrap();
+
+        let (got, hash) = db.get_chapter_embedding("ch1").unwrap().unwrap();
+        assert_eq!(got, vec![3.0, 4.0]);
+        assert_eq!(hash.as_deref(), Some("h2"));
+    }
+
+    #[test]
+    fn test_get_missing_chapter_embedding_returns_none() {
+        let db = test_db();
+        assert!(db.get_chapter_embedding("nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_upsert_and_get_book_embedding() {
+        let db = test_db();
+        let desc = vec![1.0f32, 2.0];
+        let agg = vec![3.0f32, 4.0];
+        let genres = vec!["Fantasy".to_string(), "LitRPG".to_string()];
+        db.upsert_book_embedding("book1", Some(&desc), Some(&agg), Some(&genres))
+            .unwrap();
+
+        let (got_desc, got_agg, got_genres) = db.get_book_embedding("book1").unwrap().unwrap();
+        assert_eq!(got_desc, Some(desc));
+        assert_eq!(got_agg, Some(agg));
+        assert_eq!(got_genres, Some(genres));
+    }
+
+    #[test]
+    fn test_upsert_book_embedding_preserves_aggregate_when_none() {
+        let db = test_db();
+        let desc = vec![1.0f32, 2.0];
+        let agg = vec![3.0f32, 4.0];
+        db.upsert_book_embedding("book1", Some(&desc), Some(&agg), None)
+            .unwrap();
+
+        // Update only the description; aggregate must be preserved.
+        let new_desc = vec![5.0f32, 6.0];
+        db.upsert_book_embedding("book1", Some(&new_desc), None, None)
+            .unwrap();
+
+        let (got_desc, got_agg, _) = db.get_book_embedding("book1").unwrap().unwrap();
+        assert_eq!(got_desc, Some(new_desc));
+        assert_eq!(got_agg, Some(agg));
+    }
+
+    #[test]
+    fn test_get_missing_book_embedding_returns_none() {
+        let db = test_db();
+        assert!(db.get_book_embedding("nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_load_chapter_embeddings_for_book() {
+        let db = test_db();
+        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+            .unwrap();
+        db.upsert_chapter_embedding("ch2", Some("book1"), &[3.0, 4.0], None)
+            .unwrap();
+        db.upsert_chapter_embedding("other", Some("book2"), &[9.0, 9.0], None)
+            .unwrap();
+
+        let embs = db.load_chapter_embeddings_for_book("book1").unwrap();
+        assert_eq!(embs, vec![vec![1.0, 2.0], vec![3.0, 4.0]]);
+    }
+
+    #[test]
+    fn test_find_book_url_for_chapter() {
+        let db = test_db();
+        db.upsert_book(&sample_book("book1")).unwrap();
+
+        assert_eq!(
+            db.find_book_url_for_chapter("ch1").unwrap(),
+            Some("book1".to_string())
+        );
+        assert_eq!(db.find_book_url_for_chapter("missing").unwrap(), None);
+    }
+
+    #[test]
+    fn test_f32_blob_roundtrip() {
+        let v = vec![0.0f32, -1.5, 3.25, f32::MAX, f32::MIN];
+        assert_eq!(decode_f32s(&encode_f32s(&v)), v);
+    }
+
+    #[test]
+    fn test_books_missing_description_embedding() {
+        let db = test_db();
+        db.upsert_book(&sample_book("book1")).unwrap();
+        db.upsert_book(&sample_book("book2")).unwrap();
+
+        // book1 gets a description embedding; book2 stays missing.
+        db.upsert_book_embedding("book1", Some(&[1.0, 2.0]), None, None)
+            .unwrap();
+
+        let missing = db.books_missing_description_embedding().unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].0, "book2");
+        assert_eq!(missing[0].1, "desc");
+    }
+
+    #[test]
+    fn test_books_missing_description_embedding_skips_null_descriptions() {
+        let db = test_db();
+        let mut book = sample_book("book1");
+        book.description = None;
+        db.upsert_book(&book).unwrap();
+
+        assert!(db.books_missing_description_embedding().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_load_all_chapter_embeddings() {
+        let db = test_db();
+        // Seed a book with chapters + genres so the join enriches the rows.
+        db.upsert_book(&sample_book("book1")).unwrap();
+        db.upsert_book_embedding(
+            "book1",
+            None,
+            Some(&[1.0, 1.0]),
+            Some(&["Fantasy".to_string()]),
+        )
+        .unwrap();
+        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+            .unwrap();
+        db.upsert_chapter_embedding("ch2", Some("book1"), &[3.0, 4.0], None)
+            .unwrap();
+        db.upsert_chapter_embedding("orphan", None, &[9.0, 9.0], None)
+            .unwrap();
+
+        let all = db.load_all_chapter_embeddings().unwrap();
+        assert_eq!(all.len(), 3);
+        assert!(all.contains(&(
+            "book1".to_string(),
+            "Book book1".to_string(),
+            "ch1".to_string(),
+            "Chapter 1".to_string(),
+            1u32,
+            Some(vec!["Fantasy".to_string()]),
+            vec![1.0, 2.0],
+        )));
+        assert!(all.contains(&(
+            "book1".to_string(),
+            "Book book1".to_string(),
+            "ch2".to_string(),
+            "Chapter 2".to_string(),
+            2u32,
+            Some(vec!["Fantasy".to_string()]),
+            vec![3.0, 4.0],
+        )));
+        // Orphan chapter: no book/chapter/genre enrichment.
+        assert!(all.contains(&(
+            "".to_string(),
+            "".to_string(),
+            "orphan".to_string(),
+            "".to_string(),
+            0u32,
+            None,
+            vec![9.0, 9.0],
+        )));
+    }
+
+    #[test]
+    fn test_load_chapters_public() {
+        let db = test_db();
+        db.upsert_book(&sample_book("book1")).unwrap();
+        let chapters = db.load_chapters("book1").unwrap();
+        assert_eq!(chapters.len(), 2);
+        assert_eq!(chapters[0].url, "ch1");
+        assert_eq!(chapters[0].order, 1);
+    }
+
+    #[test]
+    fn test_load_all_book_embeddings() {
+        let db = test_db();
+        db.upsert_book_embedding(
+            "book1",
+            Some(&[1.0, 2.0]),
+            Some(&[3.0, 4.0]),
+            Some(&["Fantasy".to_string()]),
+        )
+        .unwrap();
+        db.upsert_book_embedding("book2", Some(&[5.0, 6.0]), Some(&[7.0, 8.0]), None)
+            .unwrap();
+        // book3 has no aggregate -> excluded.
+        db.upsert_book_embedding("book3", Some(&[9.0, 9.0]), None, None)
+            .unwrap();
+
+        let all = db.load_all_book_embeddings().unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.contains(&(
+            "book1".to_string(),
+            vec![3.0, 4.0],
+            Some(vec!["Fantasy".to_string()])
+        )));
+        assert!(all.contains(&("book2".to_string(), vec![7.0, 8.0], None)));
+    }
+
+    #[test]
+    fn test_embedding_status_full() {
+        let db = test_db();
+        db.upsert_book(&sample_book("book1")).unwrap();
+        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+            .unwrap();
+        db.upsert_chapter_embedding("ch2", Some("book1"), &[3.0, 4.0], None)
+            .unwrap();
+        db.upsert_book_embedding(
+            "book1",
+            None,
+            Some(&[3.0, 4.0]),
+            Some(&["Fantasy".to_string(), "LitRPG".to_string()]),
+        )
+        .unwrap();
+
+        let (embedded, total, has_agg, genres, urls) =
+            db.embedding_status("book1").unwrap().unwrap();
+        assert_eq!(embedded, 2);
+        assert_eq!(total, 2);
+        assert!(has_agg);
+        assert_eq!(
+            genres,
+            Some(vec!["Fantasy".to_string(), "LitRPG".to_string()])
+        );
+        assert_eq!(urls, vec!["ch1".to_string(), "ch2".to_string()]);
+    }
+
+    #[test]
+    fn test_embedding_status_no_aggregate() {
+        let db = test_db();
+        db.upsert_book(&sample_book("book1")).unwrap();
+        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+            .unwrap();
+        // No book_embeddings row at all.
+        let (embedded, total, has_agg, genres, urls) =
+            db.embedding_status("book1").unwrap().unwrap();
+        assert_eq!(embedded, 1);
+        assert_eq!(total, 2);
+        assert!(!has_agg);
+        assert_eq!(genres, None);
+        assert_eq!(urls, vec!["ch1".to_string()]);
+    }
+
+    #[test]
+    fn test_embedding_status_no_embedded_chapters() {
+        let db = test_db();
+        db.upsert_book(&sample_book("book1")).unwrap();
+        // No chapter embeddings at all.
+        let (embedded, total, has_agg, genres, urls) =
+            db.embedding_status("book1").unwrap().unwrap();
+        assert_eq!(embedded, 0);
+        assert_eq!(total, 2);
+        assert!(!has_agg);
+        assert_eq!(genres, None);
+        assert!(urls.is_empty());
+    }
+
+    #[test]
+    fn test_embedding_status_missing_book_returns_none() {
+        let db = test_db();
+        assert!(db.embedding_status("nope").unwrap().is_none());
     }
 }

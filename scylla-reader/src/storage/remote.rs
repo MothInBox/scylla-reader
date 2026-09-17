@@ -34,15 +34,6 @@ fn active_session_url(base: &str, book_url: &str) -> String {
     )
 }
 
-fn chapter_content_url(base: &str, book_url: &str, chapter_url: &str) -> String {
-    format!(
-        "{}/api/books/{}/chapters/{}/content",
-        base,
-        encode_segment(book_url),
-        encode_segment(chapter_url)
-    )
-}
-
 fn session_url(base: &str, session_id: i64) -> String {
     format!("{}/api/sessions/{}", base, session_id)
 }
@@ -246,90 +237,6 @@ impl StorageBackend for RemoteApi {
         }
     }
 
-    async fn get_chapter_content(
-        &self,
-        book_url: &str,
-        chapter_url: &str,
-    ) -> Result<String, String> {
-        let resp = self
-            .client
-            .get(chapter_content_url(&self.base_url, book_url, chapter_url))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
-        }
-        let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-        let content = json["content"]
-            .as_str()
-            .ok_or_else(|| "missing content field".to_string())?;
-        Ok(content.to_string())
-    }
-
-    async fn scrape_book(&self, url: &str) -> Result<Book, String> {
-        let resp = self
-            .client
-            .post(format!("{}/api/books", self.base_url))
-            .json(&serde_json::json!({ "url": url }))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        let status = resp.status();
-        if status.as_u16() == 202 {
-            for _ in 0..30 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                let poll = self
-                    .client
-                    .get(book_url(&self.base_url, url))
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let poll_status = poll.status();
-                if poll_status.is_success() {
-                    return poll.json().await.map_err(|e| e.to_string());
-                }
-                if poll_status.as_u16() >= 500 {
-                    return Err(format!("HTTP {}", poll_status));
-                }
-            }
-            return Err(format!(
-                "Timed out waiting for scrape of {url} — check the server job log"
-            ));
-        }
-        if status.is_success() {
-            return resp.json().await.map_err(|e| e.to_string());
-        }
-        Err(format!("HTTP {}", status))
-    }
-
-    async fn fetch_chapter(
-        &self,
-        book_url: &str,
-        chapter_url: &str,
-    ) -> Result<ChapterContent, String> {
-        let resp = self
-            .client
-            .get(chapter_content_url(&self.base_url, book_url, chapter_url))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
-        }
-        let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-        let title = json["title"]
-            .as_str()
-            .ok_or_else(|| "missing title field".to_string())?;
-        let content = json["content"]
-            .as_str()
-            .ok_or_else(|| "missing content field".to_string())?;
-        Ok(ChapterContent {
-            title: title.to_string(),
-            content: content.to_string(),
-        })
-    }
-
     async fn get_server_settings(&self) -> Result<serde_json::Value, String> {
         let resp = self
             .client
@@ -424,18 +331,6 @@ mod tests {
         assert_eq!(
             active_session_url(BASE, "https://example.com/book"),
             "http://127.0.0.1:8099/api/books/https%3A%2F%2Fexample.com%2Fbook/active-session"
-        );
-    }
-
-    #[test]
-    fn test_chapter_content_url() {
-        assert_eq!(
-            chapter_content_url(
-                BASE,
-                "https://example.com/book",
-                "https://example.com/book/ch1"
-            ),
-            "http://127.0.0.1:8099/api/books/https%3A%2F%2Fexample.com%2Fbook/chapters/https%3A%2F%2Fexample.com%2Fbook%2Fch1/content"
         );
     }
 

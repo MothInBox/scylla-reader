@@ -4,14 +4,8 @@ use crate::input::keybinds::*;
 use crate::state::AppState;
 use crate::state::Modal;
 use crossterm::event::{KeyCode, KeyEvent};
-use scylla_core::messenger::AppCommand;
-use std::sync::mpsc;
 
-pub fn handle_palette(
-    state: &mut AppState,
-    key: KeyEvent,
-    cmd_tx: &mpsc::Sender<AppCommand>,
-) -> bool {
+pub fn handle_palette(state: &mut AppState, key: KeyEvent) -> bool {
     if let Modal::CommandPalette {
         query,
         filtered,
@@ -21,7 +15,7 @@ pub fn handle_palette(
         match key.code {
             KEY_ENTER => {
                 if let Some(action) = filtered.get(*selected) {
-                    (action.handler)(state, cmd_tx);
+                    (action.handler)(state);
                 }
                 // Only close palette if the handler didn't set a new modal
                 if matches!(state.ui.modal, Modal::CommandPalette { .. }) {
@@ -42,7 +36,7 @@ pub fn handle_palette(
             KeyCode::Char(c) => {
                 query.push(c);
                 *filtered = crate::ui::palette::filter_actions(
-                    &crate::ui::palette::build_palette_actions(cmd_tx.clone()),
+                    &crate::ui::palette::build_palette_actions(),
                     query,
                 );
                 *selected = 0;
@@ -51,7 +45,7 @@ pub fn handle_palette(
             KEY_BACKSPACE => {
                 query.pop();
                 *filtered = crate::ui::palette::filter_actions(
-                    &crate::ui::palette::build_palette_actions(cmd_tx.clone()),
+                    &crate::ui::palette::build_palette_actions(),
                     query,
                 );
                 *selected = 0;
@@ -72,8 +66,7 @@ mod tests {
     use crossterm::event::KeyCode;
 
     fn setup_palette_state(query: &str, selected: usize) -> AppState {
-        let (tx, _) = channel();
-        let actions = crate::ui::palette::build_palette_actions(tx);
+        let actions = crate::ui::palette::build_palette_actions();
         let filtered = crate::ui::palette::filter_actions(&actions, query);
         let mut state = test_state();
         state.ui.modal = Modal::CommandPalette {
@@ -87,7 +80,6 @@ mod tests {
 
     #[test]
     fn test_handle_palette_enter_executes_handler_and_closes() {
-        let (tx, _rx) = channel();
         let mut state = setup_palette_state("Settings", 0);
         let has_settings = match &state.ui.modal {
             Modal::CommandPalette { filtered, .. } => !filtered.is_empty(),
@@ -97,7 +89,7 @@ mod tests {
             has_settings,
             "Expected at least 'Go to Settings' to match 'Settings'"
         );
-        handle_palette(&mut state, key_event(KEY_ENTER), &tx);
+        handle_palette(&mut state, key_event(KEY_ENTER));
         assert_eq!(state.ui.page, Page::Settings);
         assert_eq!(state.ui.modal, Modal::None);
     }
@@ -105,16 +97,15 @@ mod tests {
     #[test]
     fn test_handle_palette_up_down_navigates() {
         let mut state = setup_palette_state("", 0);
-        let (tx, _rx) = channel();
         // Initially selected = 0, press Down -> selected = 1
-        handle_palette(&mut state, key_event(KEY_NAV_DOWN), &tx);
+        handle_palette(&mut state, key_event(KEY_NAV_DOWN));
         if let Modal::CommandPalette { selected, .. } = &state.ui.modal {
             assert_eq!(*selected, 1);
         } else {
             panic!("Expected CommandPalette");
         }
         // Press Up -> selected = 0
-        handle_palette(&mut state, key_event(KEY_NAV_UP), &tx);
+        handle_palette(&mut state, key_event(KEY_NAV_UP));
         if let Modal::CommandPalette { selected, .. } = &state.ui.modal {
             assert_eq!(*selected, 0);
         } else {
@@ -125,8 +116,7 @@ mod tests {
     #[test]
     fn test_handle_palette_up_stays_at_top() {
         let mut state = setup_palette_state("", 0);
-        let (tx, _rx) = channel();
-        handle_palette(&mut state, key_event(KEY_NAV_UP), &tx);
+        handle_palette(&mut state, key_event(KEY_NAV_UP));
         if let Modal::CommandPalette { selected, .. } = &state.ui.modal {
             assert_eq!(*selected, 0);
         } else {
@@ -137,7 +127,6 @@ mod tests {
     #[test]
     fn test_handle_palette_down_stays_at_bottom() {
         let mut state = setup_palette_state("", 0);
-        let (tx, _rx) = channel();
         // Get the filtered list length
         let action_count = if let Modal::CommandPalette { filtered, .. } = &state.ui.modal {
             filtered.len()
@@ -148,7 +137,7 @@ mod tests {
         if let Modal::CommandPalette { selected, .. } = &mut state.ui.modal {
             *selected = action_count.saturating_sub(1);
         }
-        handle_palette(&mut state, key_event(KEY_NAV_DOWN), &tx);
+        handle_palette(&mut state, key_event(KEY_NAV_DOWN));
         if let Modal::CommandPalette { selected, .. } = &state.ui.modal {
             assert_eq!(*selected, action_count.saturating_sub(1));
         } else {
@@ -159,7 +148,6 @@ mod tests {
     #[test]
     fn test_handle_palette_type_filters() {
         let mut state = setup_palette_state("", 0);
-        let (tx, _rx) = channel();
         // Before typing, all actions are visible
         let initial_count = if let Modal::CommandPalette { filtered, .. } = &state.ui.modal {
             filtered.len()
@@ -168,7 +156,7 @@ mod tests {
         };
         assert!(initial_count > 0);
 
-        handle_palette(&mut state, key_event(KeyCode::Char('S')), &tx);
+        handle_palette(&mut state, key_event(KeyCode::Char('S')));
         if let Modal::CommandPalette {
             query,
             filtered,
@@ -198,7 +186,6 @@ mod tests {
     #[test]
     fn test_handle_palette_backspace_removes_char() {
         let mut state = setup_palette_state("Se", 0);
-        let (tx, _rx) = channel();
         let count_after_two_chars = if let Modal::CommandPalette { filtered, .. } = &state.ui.modal
         {
             filtered.len()
@@ -206,7 +193,7 @@ mod tests {
             0
         };
 
-        handle_palette(&mut state, key_event(KEY_BACKSPACE), &tx);
+        handle_palette(&mut state, key_event(KEY_BACKSPACE));
         if let Modal::CommandPalette {
             query,
             filtered,
@@ -227,8 +214,7 @@ mod tests {
     #[test]
     fn test_handle_palette_unrelated_key_does_nothing_returns_true() {
         let mut state = setup_palette_state("", 0);
-        let (tx, _rx) = channel();
-        let result = handle_palette(&mut state, key_event(KeyCode::F(1)), &tx);
+        let result = handle_palette(&mut state, key_event(KeyCode::F(1)));
         assert!(result);
         // State should remain unchanged
         if let Modal::CommandPalette {
@@ -249,8 +235,7 @@ mod tests {
     fn test_handle_palette_not_command_palette_returns_true() {
         let mut state = test_state();
         state.ui.modal = Modal::None;
-        let (tx, _rx) = channel();
-        let result = handle_palette(&mut state, key_event(KEY_ENTER), &tx);
+        let result = handle_palette(&mut state, key_event(KEY_ENTER));
         assert!(result);
         assert_eq!(state.ui.modal, Modal::None);
     }

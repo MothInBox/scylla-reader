@@ -2,6 +2,7 @@
 //! cover-image caching.
 
 use crate::models::{Book, BookStatus};
+use crate::storage::client::EmbeddingStatus;
 use ratatui_image::protocol::StatefulProtocol;
 use std::collections::HashMap;
 
@@ -80,6 +81,7 @@ pub struct Library {
     pub filter: BookFilter,
     pub search_order: Option<Vec<usize>>,
     pub cover_cache: HashMap<String, StatefulProtocol>,
+    pub embedding_status_cache: HashMap<String, EmbeddingStatus>,
 }
 
 impl Default for Library {
@@ -96,6 +98,7 @@ impl Library {
             filter: BookFilter::default(),
             search_order: None,
             cover_cache: HashMap::new(),
+            embedding_status_cache: HashMap::new(),
         }
     }
 

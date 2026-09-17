@@ -26,6 +26,7 @@ pub struct AppState {
     pub(crate) lib: LibraryState,
     pub(crate) reader: ReaderState,
     pub(crate) jobs: JobsState,
+    pub(crate) cover_picker: ratatui_image::picker::Picker,
 }
 
 impl Default for AppState {
@@ -52,6 +53,7 @@ impl AppState {
             },
             reader: ReaderState::new(),
             jobs: JobsState::new(),
+            cover_picker: ratatui_image::picker::Picker::from_fontsize((8, 12)),
         };
         state.jobs.max_workers = state.lib.settings.max_workers;
         state
@@ -74,6 +76,7 @@ impl AppState {
             },
             reader: ReaderState::new(),
             jobs: JobsState::new(),
+            cover_picker: ratatui_image::picker::Picker::from_fontsize((8, 12)),
         }
     }
 
