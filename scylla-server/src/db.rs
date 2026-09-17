@@ -256,8 +256,16 @@ impl ServerDb {
     }
 
     pub fn delete_book(&self, book_url: &str) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM books WHERE url = ?", [book_url])?;
+        let tx = self.conn.unchecked_transaction()?;
+        // The embeddings tables have no FK to books, so they must be cleaned up
+        // explicitly (chapters/tags/sessions cascade via ON DELETE CASCADE).
+        tx.execute(
+            "DELETE FROM chapter_embeddings WHERE book_url = ?",
+            [book_url],
+        )?;
+        tx.execute("DELETE FROM book_embeddings WHERE book_url = ?", [book_url])?;
+        tx.execute("DELETE FROM books WHERE url = ?", [book_url])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -821,6 +829,55 @@ mod tests {
         let books = db.load_books().unwrap();
         assert_eq!(books[0].tags.len(), 1);
         assert_eq!(books[0].chapters.len(), 2);
+    }
+
+    #[test]
+    fn test_delete_book_removes_embeddings() {
+        let db = test_db();
+        db.upsert_book(&sample_book("book1")).unwrap();
+        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+            .unwrap();
+        db.upsert_chapter_embedding("ch2", Some("book1"), &[3.0, 4.0], None)
+            .unwrap();
+        db.upsert_book_embedding(
+            "book1",
+            Some(&[1.0, 2.0]),
+            Some(&[3.0, 4.0]),
+            Some(&["Fantasy".to_string()]),
+        )
+        .unwrap();
+
+        db.delete_book("book1").unwrap();
+
+        assert!(db.get_chapter_embedding("ch1").unwrap().is_none());
+        assert!(db.get_chapter_embedding("ch2").unwrap().is_none());
+        assert!(db.get_book_embedding("book1").unwrap().is_none());
+        assert!(db.load_all_chapter_embeddings().unwrap().is_empty());
+        assert!(db.load_all_book_embeddings().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_delete_book_leaves_other_books_embeddings_untouched() {
+        let db = test_db();
+        db.upsert_book(&sample_book("book1")).unwrap();
+        db.upsert_book(&sample_book("book2")).unwrap();
+        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+            .unwrap();
+        db.upsert_chapter_embedding("ch2", Some("book2"), &[3.0, 4.0], None)
+            .unwrap();
+        db.upsert_book_embedding("book1", None, Some(&[1.0, 2.0]), None)
+            .unwrap();
+        db.upsert_book_embedding("book2", None, Some(&[3.0, 4.0]), None)
+            .unwrap();
+
+        db.delete_book("book1").unwrap();
+
+        // book1's embeddings are gone.
+        assert!(db.get_chapter_embedding("ch1").unwrap().is_none());
+        assert!(db.get_book_embedding("book1").unwrap().is_none());
+        // book2's embeddings are untouched.
+        assert!(db.get_chapter_embedding("ch2").unwrap().is_some());
+        assert!(db.get_book_embedding("book2").unwrap().is_some());
     }
 
     #[test]

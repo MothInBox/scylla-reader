@@ -202,12 +202,17 @@ pub async fn enqueue_job(
 /// Maintains the job snapshot from the event stream.
 ///
 /// Called by the event consumer thread for every `AppEvent` before it is
-/// forwarded to the broadcast channel.
-pub fn update_job_snapshot(jobs: &Arc<std::sync::Mutex<Vec<JobDto>>>, event: &AppEvent) {
+/// forwarded to the broadcast channel. Returns an optional `JobStatusChanged`
+/// event to emit (e.g. when an EmbedBatch job's chapters all finish).
+pub fn update_job_snapshot(
+    jobs: &Arc<std::sync::Mutex<Vec<JobDto>>>,
+    event: &AppEvent,
+) -> Option<AppEvent> {
     let mut jobs = jobs.lock().unwrap();
     match event {
         AppEvent::JobEnqueued(job) => {
             jobs.push(JobDto::from(job));
+            None
         }
         AppEvent::JobStatusChanged(id, status) => {
             if let Some(job) = jobs.iter_mut().find(|j| j.id == *id) {
@@ -225,19 +230,61 @@ pub fn update_job_snapshot(jobs: &Arc<std::sync::Mutex<Vec<JobDto>>>, event: &Ap
                     JobStatus::Queued | JobStatus::Cancelled => {}
                 }
             }
+            None
         }
         AppEvent::JobOutcome(id, outcome) => {
             if let Some(job) = jobs.iter_mut().find(|j| j.id == *id) {
                 job.outcome = Some(JobOutcomeDto::from(outcome));
             }
+            None
         }
         AppEvent::JobDetailChanged(id, detail) => {
             if let Some(job) = jobs.iter_mut().find(|j| j.id == *id) {
                 job.detail = Some(detail.clone());
             }
+            None
         }
-        _ => {}
+        AppEvent::ChapterEmbedded(id, url) => {
+            if let Some(job) = jobs.iter_mut().find(|j| j.id == *id)
+                && let Some(detail) = job.detail.as_mut()
+                && let Some(ch) = detail.iter_mut().find(|c| c.url == *url)
+            {
+                ch.status = "Embedded".into();
+            }
+            maybe_complete(&mut jobs, *id)
+        }
+        AppEvent::ChapterEmbeddedFailed(id, url) => {
+            if let Some(job) = jobs.iter_mut().find(|j| j.id == *id)
+                && let Some(detail) = job.detail.as_mut()
+                && let Some(ch) = detail.iter_mut().find(|c| c.url == *url)
+            {
+                ch.status = "Failed".into();
+            }
+            maybe_complete(&mut jobs, *id)
+        }
+        _ => None,
     }
+}
+
+/// Whether every chapter in the detail is Embedded or Failed (i.e. no chapter
+/// is still Pending or Fetched).
+pub fn all_chapters_finished(detail: &[scylla_core::types::ChapterDetail]) -> bool {
+    detail
+        .iter()
+        .all(|c| c.status == "Embedded" || c.status == "Failed")
+}
+
+/// If the job's detail is non-empty and every chapter is finished, mark the job
+/// Completed and return the `JobStatusChanged` event to emit.
+fn maybe_complete(jobs: &mut [JobDto], id: u64) -> Option<AppEvent> {
+    let job = jobs.iter_mut().find(|j| j.id == id)?;
+    let detail = job.detail.as_ref()?;
+    if detail.is_empty() || !all_chapters_finished(detail) {
+        return None;
+    }
+    job.status = "Completed".into();
+    job.completed_at_ms = Some(job_now_ms());
+    Some(AppEvent::JobStatusChanged(id, JobStatus::Completed))
 }
 
 /// Serializes an `AppEvent` into the SSE envelope JSON. The jobs snapshot is
@@ -301,14 +348,25 @@ pub fn event_to_envelope(
                 "content": c.content,
             },
         }),
-        AppEvent::ChapterToEmbed(c) => json!({
+        AppEvent::ChapterToEmbed(id, c) => json!({
             "type": "ChapterToEmbed",
+            "id": id,
             "chapter": {
                 "url": c.url,
                 "chapter_idx": c.chapter_idx,
                 "title": c.title,
                 "content": c.content,
             },
+        }),
+        AppEvent::ChapterEmbedded(id, url) => json!({
+            "type": "ChapterEmbedded",
+            "id": id,
+            "url": url,
+        }),
+        AppEvent::ChapterEmbeddedFailed(id, url) => json!({
+            "type": "ChapterEmbeddedFailed",
+            "id": id,
+            "url": url,
         }),
         AppEvent::ChapterFetchFailed => json!({ "type": "ChapterFetchFailed" }),
         AppEvent::CoverFetched(url, bytes) => json!({
@@ -494,12 +552,24 @@ mod tests {
             title: "Ch1".into(),
             content: "text".into(),
         };
-        let envelope = event_to_envelope(&AppEvent::ChapterToEmbed(content), &empty_jobs());
+        let envelope = event_to_envelope(&AppEvent::ChapterToEmbed(7, content), &empty_jobs());
         assert_eq!(envelope["type"], "ChapterToEmbed");
+        assert_eq!(envelope["id"], 7);
         assert_eq!(envelope["chapter"]["url"], "http://example.com/ch1");
         assert_eq!(envelope["chapter"]["chapter_idx"], 0);
         assert_eq!(envelope["chapter"]["title"], "Ch1");
         assert_eq!(envelope["chapter"]["content"], "text");
+    }
+
+    #[test]
+    fn test_envelope_chapter_embedded() {
+        let envelope = event_to_envelope(
+            &AppEvent::ChapterEmbedded(7, "http://example.com/ch1".into()),
+            &empty_jobs(),
+        );
+        assert_eq!(envelope["type"], "ChapterEmbedded");
+        assert_eq!(envelope["id"], 7);
+        assert_eq!(envelope["url"], "http://example.com/ch1");
     }
 
     #[test]
@@ -634,5 +704,152 @@ mod tests {
         let detail = job.detail.as_ref().unwrap();
         assert_eq!(detail.len(), 1);
         assert_eq!(detail[0].status, "Done");
+    }
+
+    #[test]
+    fn test_update_job_snapshot_chapter_embedded_flips_status() {
+        let jobs: Arc<std::sync::Mutex<Vec<JobDto>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        update_job_snapshot(&jobs, &AppEvent::JobEnqueued(sample_job(5)));
+        let detail = vec![
+            scylla_core::types::ChapterDetail {
+                title: "Ch1".into(),
+                url: "http://example.com/ch1".into(),
+                status: "Fetched".into(),
+            },
+            scylla_core::types::ChapterDetail {
+                title: "Ch2".into(),
+                url: "http://example.com/ch2".into(),
+                status: "Fetched".into(),
+            },
+        ];
+        update_job_snapshot(&jobs, &AppEvent::JobDetailChanged(5, detail));
+
+        // The embedding thread reports chapter 1 embedded.
+        update_job_snapshot(
+            &jobs,
+            &AppEvent::ChapterEmbedded(5, "http://example.com/ch1".into()),
+        );
+
+        let snapshot = jobs.lock().unwrap();
+        let job = &snapshot[0];
+        let detail = job.detail.as_ref().unwrap();
+        assert_eq!(detail[0].status, "Embedded");
+        assert_eq!(detail[1].status, "Fetched");
+    }
+
+    #[test]
+    fn test_all_chapters_finished() {
+        let detail = |statuses: &[&str]| {
+            statuses
+                .iter()
+                .map(|s| scylla_core::types::ChapterDetail {
+                    title: "Ch".into(),
+                    url: "u".into(),
+                    status: s.to_string(),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(all_chapters_finished(&detail(&["Embedded", "Embedded"])));
+        assert!(all_chapters_finished(&detail(&["Embedded", "Failed"])));
+        assert!(all_chapters_finished(&detail(&["Failed", "Failed"])));
+        assert!(!all_chapters_finished(&detail(&["Embedded", "Fetched"])));
+        assert!(!all_chapters_finished(&detail(&["Pending", "Embedded"])));
+        assert!(all_chapters_finished(&[]));
+    }
+
+    #[test]
+    fn test_embed_batch_completes_when_all_chapters_finished() {
+        let jobs: Arc<std::sync::Mutex<Vec<JobDto>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        update_job_snapshot(&jobs, &AppEvent::JobEnqueued(sample_job(6)));
+        update_job_snapshot(&jobs, &AppEvent::JobStatusChanged(6, JobStatus::Running));
+        let detail = vec![
+            scylla_core::types::ChapterDetail {
+                title: "Ch1".into(),
+                url: "http://example.com/ch1".into(),
+                status: "Fetched".into(),
+            },
+            scylla_core::types::ChapterDetail {
+                title: "Ch2".into(),
+                url: "http://example.com/ch2".into(),
+                status: "Fetched".into(),
+            },
+        ];
+        update_job_snapshot(&jobs, &AppEvent::JobDetailChanged(6, detail));
+
+        // One chapter embedded, one still fetched → job stays Running.
+        let emit = update_job_snapshot(
+            &jobs,
+            &AppEvent::ChapterEmbedded(6, "http://example.com/ch1".into()),
+        );
+        assert!(emit.is_none());
+        {
+            let snapshot = jobs.lock().unwrap();
+            assert_eq!(snapshot[0].status, "Running");
+        }
+
+        // Second chapter embedded → all finished → job Completed + event emitted.
+        let emit = update_job_snapshot(
+            &jobs,
+            &AppEvent::ChapterEmbedded(6, "http://example.com/ch2".into()),
+        );
+        assert!(matches!(
+            emit,
+            Some(AppEvent::JobStatusChanged(6, JobStatus::Completed))
+        ));
+        let snapshot = jobs.lock().unwrap();
+        assert_eq!(snapshot[0].status, "Completed");
+        assert!(snapshot[0].completed_at_ms.is_some());
+    }
+
+    #[test]
+    fn test_embed_batch_completes_with_failed_chapter() {
+        let jobs: Arc<std::sync::Mutex<Vec<JobDto>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        update_job_snapshot(&jobs, &AppEvent::JobEnqueued(sample_job(7)));
+        let detail = vec![
+            scylla_core::types::ChapterDetail {
+                title: "Ch1".into(),
+                url: "http://example.com/ch1".into(),
+                status: "Fetched".into(),
+            },
+            scylla_core::types::ChapterDetail {
+                title: "Ch2".into(),
+                url: "http://example.com/ch2".into(),
+                status: "Fetched".into(),
+            },
+        ];
+        update_job_snapshot(&jobs, &AppEvent::JobDetailChanged(7, detail));
+
+        // Chapter 1 embedded, chapter 2 failed to embed → all finished.
+        update_job_snapshot(
+            &jobs,
+            &AppEvent::ChapterEmbedded(7, "http://example.com/ch1".into()),
+        );
+        let emit = update_job_snapshot(
+            &jobs,
+            &AppEvent::ChapterEmbeddedFailed(7, "http://example.com/ch2".into()),
+        );
+        assert!(matches!(
+            emit,
+            Some(AppEvent::JobStatusChanged(7, JobStatus::Completed))
+        ));
+        let snapshot = jobs.lock().unwrap();
+        assert_eq!(snapshot[0].status, "Completed");
+        let detail = snapshot[0].detail.as_ref().unwrap();
+        assert_eq!(detail[0].status, "Embedded");
+        assert_eq!(detail[1].status, "Failed");
+    }
+
+    #[test]
+    fn test_envelope_chapter_embedded_failed() {
+        let envelope = event_to_envelope(
+            &AppEvent::ChapterEmbeddedFailed(7, "http://example.com/ch1".into()),
+            &empty_jobs(),
+        );
+        assert_eq!(envelope["type"], "ChapterEmbeddedFailed");
+        assert_eq!(envelope["id"], 7);
+        assert_eq!(envelope["url"], "http://example.com/ch1");
     }
 }

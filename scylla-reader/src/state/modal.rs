@@ -80,6 +80,9 @@ pub enum Modal {
         cursor: usize,
         scroll_offset: usize,
         status: SearchStatus,
+        /// The expanded group index (None = all collapsed, cursor is a group
+        /// index; Some(gi) = group gi expanded, cursor is a chapter index).
+        expanded: Option<usize>,
     },
     EmbedChapters {
         book_url: String,
@@ -388,6 +391,7 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
             status: SearchStatus::Loading,
+            expanded: None,
         };
         if let Modal::ChapterResults {
             query,
@@ -395,6 +399,7 @@ mod tests {
             cursor,
             scroll_offset,
             status,
+            expanded,
         } = &modal
         {
             assert_eq!(query, "dragon");
@@ -402,6 +407,7 @@ mod tests {
             assert_eq!(*cursor, 0);
             assert_eq!(*scroll_offset, 0);
             assert_eq!(*status, SearchStatus::Loading);
+            assert_eq!(*expanded, None);
         } else {
             panic!("Expected ChapterResults variant");
         }

@@ -1,6 +1,6 @@
 //! Modal popup renderer — add-book form and jump-to-chapter list.
 
-use crate::event_types::ChapterGroup;
+use crate::event_types::{ChapterGroup, ChapterHit};
 use crate::library::{BookFilter, filter_tags, known_tags};
 use crate::models::{BookStatus, Session};
 use crate::state::modal::{FilterRow, Modal, SearchStatus};
@@ -444,6 +444,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
             cursor,
             scroll_offset,
             status,
+            expanded,
         } => {
             let popup_area = centered_rect(65, 80, area);
             frame.render_widget(Clear, popup_area);
@@ -482,7 +483,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                     frame.render_widget(para, inner);
                 }
                 SearchStatus::Ready => {
-                    let (items, selected) = build_chapter_rows(groups, *cursor);
+                    let (items, selected) = build_chapter_rows(groups, *expanded, *cursor);
                     let visible_height = inner.height.saturating_sub(2) as usize;
                     if *cursor < *scroll_offset {
                         *scroll_offset = *cursor;
@@ -500,7 +501,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
             }
 
             frame.render_widget(
-                Paragraph::new(" ↑↓ move  Enter open  f refine  Esc close ")
+                Paragraph::new(" ↑↓ move  Tab expand/collapse  Enter open  f refine  Esc close ")
                     .style(Style::default().fg(Color::DarkGray)),
                 footer_area,
             );
@@ -592,47 +593,66 @@ const STATUS_ROWS: [Option<BookStatus>; 5] = [
     Some(BookStatus::Completed),
 ];
 
-/// Build the list items for the chapter-results modal. Book headers are
-/// non-selectable; the returned `selected` is the visual row of the cursor
-/// chapter (None when there are no chapters).
+/// Build the list items for the chapter-results modal. Collapsed: only the
+/// book headers (the cursor is a group index). Expanded: the expanded book's
+/// header + its chapters (the cursor is a chapter index within that group).
+/// The returned `selected` is the visual row of the cursor.
 fn build_chapter_rows(
     groups: &[ChapterGroup],
+    expanded: Option<usize>,
     cursor: usize,
 ) -> (Vec<ListItem<'_>>, Option<usize>) {
     let mut items: Vec<ListItem> = Vec::new();
-    let mut visual_of_flat: Vec<usize> = Vec::new();
-    for group in groups {
-        let genres = if group.genres.is_empty() {
-            String::new()
-        } else {
-            format!(" [{}]", group.genres.join(", "))
-        };
-        // Pad the title so the genres and the right-aligned best score line up.
-        let title_pad = 30usize.saturating_sub(group.book_title.chars().count());
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(
-                format!(" {}{}", group.book_title, " ".repeat(title_pad)),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(genres, Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{:>8}", format!("{:.2}", group.best_score)),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ])));
-        for hit in &group.chapters {
-            visual_of_flat.push(items.len());
-            let score = format!("{:>5.2}", hit.score);
-            items.push(ListItem::new(Line::from(vec![
-                Span::raw(format!("  {}", hit.chapter_title)),
-                Span::styled(format!("  {}", score), Style::default().fg(Color::DarkGray)),
-            ])));
+    let mut selected: Option<usize> = None;
+    for (gi, group) in groups.iter().enumerate() {
+        let is_expanded = expanded == Some(gi);
+        let header_visual = items.len();
+        items.push(header_item(group));
+        if is_expanded {
+            for (ci, hit) in group.chapters.iter().enumerate() {
+                let visual = items.len();
+                items.push(chapter_item(hit));
+                if ci == cursor {
+                    selected = Some(visual);
+                }
+            }
+        } else if expanded.is_none() && gi == cursor {
+            selected = Some(header_visual);
         }
     }
-    let selected = visual_of_flat.get(cursor).copied();
     (items, selected)
+}
+
+fn header_item(group: &ChapterGroup) -> ListItem<'_> {
+    let genres = if group.genres.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", group.genres.join(", "))
+    };
+    // Pad the title so the genres and the right-aligned best score line up,
+    // leaving room for the `> ` highlight prefix.
+    let title_pad = 26usize.saturating_sub(group.book_title.chars().count());
+    ListItem::new(Line::from(vec![
+        Span::styled(
+            format!(" {}{}", group.book_title, " ".repeat(title_pad)),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(genres, Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:>8}", format!("{:.2}", group.best_score)),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]))
+}
+
+fn chapter_item(hit: &ChapterHit) -> ListItem<'_> {
+    let score = format!("{:>5.2}", hit.score);
+    ListItem::new(Line::from(vec![
+        Span::raw(format!("  {}", hit.chapter_title)),
+        Span::styled(format!("  {}", score), Style::default().fg(Color::DarkGray)),
+    ]))
 }
 
 fn status_summary(filter: &BookFilter) -> String {
@@ -987,6 +1007,7 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
             status,
+            expanded: None,
         };
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -1025,13 +1046,55 @@ mod tests {
     }
 
     #[test]
-    fn test_draw_modal_chapter_results_ready() {
+    fn test_draw_modal_chapter_results_ready_collapsed() {
         let content = draw_chapter_results(SearchStatus::Ready);
         assert!(content.contains("Book A"), "content: {}", content);
         assert!(content.contains("Fantasy"), "content: {}", content);
+        assert!(content.contains("0.90"), "content: {}", content);
+        // Collapsed: only the book headers are shown, no chapters.
+        assert!(!content.contains("Ch1"), "content: {}", content);
+        assert!(content.contains("↑↓ move"), "content: {}", content);
+        assert!(content.contains("Tab expand"), "content: {}", content);
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_ready_expanded() {
+        let mut state = make_state();
+        state.ui.modal = Modal::ChapterResults {
+            query: "dragon".into(),
+            groups: vec![ChapterGroup {
+                book_url: "u1".into(),
+                book_title: "Book A".into(),
+                genres: vec!["Fantasy".into()],
+                chapters: vec![crate::event_types::ChapterHit {
+                    book_url: "u1".into(),
+                    book_title: "Book A".into(),
+                    chapter_url: "c1".into(),
+                    chapter_idx: 0,
+                    chapter_title: "Ch1".into(),
+                    score: 0.9,
+                    genres: vec![],
+                }],
+                best_score: 0.9,
+            }],
+            cursor: 0,
+            scroll_offset: 0,
+            status: SearchStatus::Ready,
+            expanded: Some(0),
+        };
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_modal(f, f.area(), &mut state.ui, &mut state.lib);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        // Expanded: the book header AND its chapters are shown.
+        assert!(content.contains("Book A"), "content: {}", content);
         assert!(content.contains("Ch1"), "content: {}", content);
         assert!(content.contains("0.90"), "content: {}", content);
-        assert!(content.contains("↑↓ move"), "content: {}", content);
     }
 
     fn draw_embed_chapters() -> String {

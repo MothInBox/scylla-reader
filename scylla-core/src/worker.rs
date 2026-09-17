@@ -172,14 +172,16 @@ impl JobManager {
                             let reg = registry.lock().unwrap();
                             match runtime_ref.block_on(reg.scrape_chapter(&ch.url)) {
                                 Ok((title, content)) => {
-                                    let _ =
-                                        event_tx.send(AppEvent::ChapterToEmbed(ChapterContent {
+                                    let _ = event_tx.send(AppEvent::ChapterToEmbed(
+                                        job.id,
+                                        ChapterContent {
                                             url: ch.url.clone(),
                                             chapter_idx: ch.idx,
                                             title: title.clone(),
                                             content: content.clone(),
-                                        }));
-                                    detail[i].status = "Done".into();
+                                        },
+                                    ));
+                                    detail[i].status = "Fetched".into();
                                     any_ok = true;
                                 }
                                 Err(e) => {
@@ -207,7 +209,15 @@ impl JobManager {
                 }
                 match result {
                     Ok(_) => {
-                        let _ = event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Completed));
+                        // EmbedBatch jobs stay Running after the fetches — the
+                        // server marks them Completed once every chapter is
+                        // embedded (or failed to embed).
+                        let status = if matches!(job.kind, JobKind::EmbedBatch(_)) {
+                            JobStatus::Running
+                        } else {
+                            JobStatus::Completed
+                        };
+                        let _ = event_tx.send(AppEvent::JobStatusChanged(id, status));
                     }
                     Err(e) => {
                         crate::log::log("DEBUG", "WORKER", &format!("Job {} failed: {}", id, e));

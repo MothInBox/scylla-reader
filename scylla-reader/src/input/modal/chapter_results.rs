@@ -1,51 +1,119 @@
-//! Chapter-results modal input — navigate grouped AI search hits and jump to a
-//! chapter. Book headers are non-selectable; the cursor moves across the
-//! flattened chapter rows.
+//! Chapter-results modal input — navigate ranked books (collapsed) and their
+//! chapters (expanded). Tab/Enter expand/collapse the focused book; when
+//! expanded, Enter jumps to the focused chapter.
 
-use crate::event_types::{ChapterGroup, ChapterHit};
+use crate::event_types::ChapterHit;
 use crate::input::keybinds::*;
 use crate::state::modal::FilterRow;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::KeyEvent;
 
 pub fn handle_chapter_results(state: &mut AppState, key: KeyEvent) -> bool {
-    let (query, groups, cursor) = if let Modal::ChapterResults {
+    let (query, groups, cursor, expanded) = if let Modal::ChapterResults {
         query,
         groups,
         cursor,
+        expanded,
         ..
     } = &state.ui.modal
     {
-        (query.clone(), groups.clone(), *cursor)
+        (query.clone(), groups.clone(), *cursor, *expanded)
     } else {
         return true;
     };
 
     match key.code {
-        KEY_NAV_UP => {
-            if cursor > 0
-                && let Modal::ChapterResults { cursor: c, .. } = &mut state.ui.modal
+        KEY_ROW_NEXT => {
+            // Tab: expand the focused group, or collapse back to books.
+            if let Modal::ChapterResults {
+                expanded: e,
+                cursor: c,
+                ..
+            } = &mut state.ui.modal
             {
-                *c = cursor - 1;
-            }
-            true
-        }
-        KEY_NAV_DOWN => {
-            let flat = flat_chapters(&groups);
-            if cursor + 1 < flat.len()
-                && let Modal::ChapterResults { cursor: c, .. } = &mut state.ui.modal
-            {
-                *c = cursor + 1;
+                match *e {
+                    None => {
+                        if groups.get(*c).is_some() {
+                            *e = Some(*c);
+                            *c = 0;
+                        }
+                    }
+                    Some(gi) => {
+                        *e = None;
+                        *c = gi;
+                    }
+                }
             }
             true
         }
         KEY_ENTER => {
-            let flat = flat_chapters(&groups);
-            if let Some((group_idx, chapter_idx)) = flat.get(cursor) {
-                let hit = &groups[*group_idx].chapters[*chapter_idx];
-                jump_to_chapter(state, hit);
+            match expanded {
+                None => {
+                    // Collapsed: expand the focused group, cursor → first chapter.
+                    if groups.get(cursor).is_some()
+                        && let Modal::ChapterResults {
+                            expanded: e,
+                            cursor: c,
+                            ..
+                        } = &mut state.ui.modal
+                    {
+                        *e = Some(cursor);
+                        *c = 0;
+                    }
+                }
+                Some(gi) => {
+                    // Expanded: jump to the focused chapter.
+                    let hit = groups[gi].chapters.get(cursor).cloned();
+                    if let Some(hit) = hit {
+                        jump_to_chapter(state, &hit);
+                    }
+                    state.ui.modal = Modal::None;
+                }
             }
-            state.ui.modal = Modal::None;
+            true
+        }
+        KEY_NAV_UP => {
+            if let Modal::ChapterResults {
+                cursor: c,
+                expanded: e,
+                ..
+            } = &mut state.ui.modal
+            {
+                match *e {
+                    None => {
+                        if *c > 0 {
+                            *c -= 1;
+                        }
+                    }
+                    Some(_) => {
+                        if *c > 0 {
+                            *c -= 1;
+                        }
+                    }
+                }
+            }
+            true
+        }
+        KEY_NAV_DOWN => {
+            if let Modal::ChapterResults {
+                cursor: c,
+                expanded: e,
+                ..
+            } = &mut state.ui.modal
+            {
+                match *e {
+                    None => {
+                        if *c + 1 < groups.len() {
+                            *c += 1;
+                        }
+                    }
+                    Some(gi) => {
+                        if *c + 1 < groups[gi].chapters.len() {
+                            *c += 1;
+                        }
+                    }
+                }
+            }
             true
         }
         KEY_ESCAPE => {
@@ -73,18 +141,6 @@ pub fn handle_chapter_results(state: &mut AppState, key: KeyEvent) -> bool {
         }
         _ => true,
     }
-}
-
-/// Flatten the grouped chapters into `(group_idx, chapter_idx)` pairs — the
-/// selectable rows (book headers are skipped).
-fn flat_chapters(groups: &[ChapterGroup]) -> Vec<(usize, usize)> {
-    let mut flat = Vec::new();
-    for (gi, group) in groups.iter().enumerate() {
-        for ci in 0..group.chapters.len() {
-            flat.push((gi, ci));
-        }
-    }
-    flat
 }
 
 /// Jump to the selected chapter: reuse the active/first session when the book
@@ -158,7 +214,7 @@ fn jump_to_chapter(state: &mut AppState, hit: &ChapterHit) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event_types::ChapterHit;
+    use crate::event_types::{ChapterGroup, ChapterHit};
     use crate::state::modal::SearchStatus;
     use crate::test_helpers::*;
     use crossterm::event::KeyCode;
@@ -198,54 +254,157 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
             status: SearchStatus::Ready,
+            expanded: None,
         };
         state
     }
 
+    fn modal_state(state: &AppState) -> (usize, Option<usize>) {
+        if let Modal::ChapterResults {
+            cursor, expanded, ..
+        } = &state.ui.modal
+        {
+            (*cursor, *expanded)
+        } else {
+            panic!("Expected ChapterResults modal");
+        }
+    }
+
+    /// Map the current cursor to the focused `(group_idx, chapter_idx)` at the
+    /// current level. Collapsed: the cursor is a group index (chapter = None).
+    /// Expanded: the cursor is a chapter index within the expanded group.
+    fn focused_selection(
+        groups: &[ChapterGroup],
+        expanded: Option<usize>,
+        cursor: usize,
+    ) -> Option<(usize, Option<usize>)> {
+        match expanded {
+            None => groups.get(cursor).map(|_| (cursor, None)),
+            Some(gi) => groups
+                .get(gi)
+                .and_then(|g| g.chapters.get(cursor).map(|_| (gi, Some(cursor)))),
+        }
+    }
+
     #[test]
-    fn test_flat_chapters_skips_headers() {
+    fn test_focused_selection_collapsed() {
         let groups = if let Modal::ChapterResults { groups, .. } = &results_state().ui.modal {
             groups.clone()
         } else {
             panic!("expected ChapterResults");
         };
-        let flat = flat_chapters(&groups);
-        assert_eq!(flat, vec![(0, 0), (0, 1), (1, 0)]);
+        assert_eq!(focused_selection(&groups, None, 0), Some((0, None)));
+        assert_eq!(focused_selection(&groups, None, 1), Some((1, None)));
+        assert_eq!(focused_selection(&groups, None, 5), None);
     }
 
     #[test]
-    fn test_nav_down_moves_across_flattened_rows() {
+    fn test_focused_selection_expanded() {
+        let groups = if let Modal::ChapterResults { groups, .. } = &results_state().ui.modal {
+            groups.clone()
+        } else {
+            panic!("expected ChapterResults");
+        };
+        assert_eq!(focused_selection(&groups, Some(0), 1), Some((0, Some(1))));
+        assert_eq!(focused_selection(&groups, Some(0), 5), None);
+    }
+
+    #[test]
+    fn test_tab_expands_focused_group() {
+        let mut state = results_state();
+        handle_chapter_results(&mut state, key_event(KEY_ROW_NEXT));
+        assert_eq!(modal_state(&state), (0, Some(0)));
+    }
+
+    #[test]
+    fn test_tab_collapses_back_to_groups() {
+        let mut state = results_state();
+        if let Modal::ChapterResults {
+            cursor, expanded, ..
+        } = &mut state.ui.modal
+        {
+            *cursor = 1;
+            *expanded = Some(1);
+        }
+        handle_chapter_results(&mut state, key_event(KEY_ROW_NEXT));
+        // Collapse → cursor returns to the group index.
+        assert_eq!(modal_state(&state), (1, None));
+    }
+
+    #[test]
+    fn test_nav_down_collapsed_moves_across_groups() {
         let mut state = results_state();
         handle_chapter_results(&mut state, key_event(KEY_NAV_DOWN));
-        if let Modal::ChapterResults { cursor, .. } = &state.ui.modal {
-            assert_eq!(*cursor, 1);
-        }
+        assert_eq!(modal_state(&state), (1, None));
+        // Clamps at the last group.
         handle_chapter_results(&mut state, key_event(KEY_NAV_DOWN));
-        if let Modal::ChapterResults { cursor, .. } = &state.ui.modal {
-            assert_eq!(*cursor, 2);
-        }
-        // Clamps at the last chapter.
-        handle_chapter_results(&mut state, key_event(KEY_NAV_DOWN));
-        if let Modal::ChapterResults { cursor, .. } = &state.ui.modal {
-            assert_eq!(*cursor, 2);
-        }
+        assert_eq!(modal_state(&state), (1, None));
     }
 
     #[test]
-    fn test_nav_up_moves_and_clamps() {
+    fn test_nav_up_collapsed_clamps() {
         let mut state = results_state();
         if let Modal::ChapterResults { cursor, .. } = &mut state.ui.modal {
-            *cursor = 2;
+            *cursor = 1;
         }
         handle_chapter_results(&mut state, key_event(KEY_NAV_UP));
-        if let Modal::ChapterResults { cursor, .. } = &state.ui.modal {
-            assert_eq!(*cursor, 1);
+        assert_eq!(modal_state(&state), (0, None));
+        handle_chapter_results(&mut state, key_event(KEY_NAV_UP));
+        assert_eq!(modal_state(&state), (0, None));
+    }
+
+    #[test]
+    fn test_nav_down_expanded_moves_across_chapters() {
+        let mut state = results_state();
+        if let Modal::ChapterResults {
+            cursor, expanded, ..
+        } = &mut state.ui.modal
+        {
+            *expanded = Some(0);
+        }
+        handle_chapter_results(&mut state, key_event(KEY_NAV_DOWN));
+        assert_eq!(modal_state(&state), (1, Some(0)));
+        // Clamps at the last chapter of the expanded group.
+        handle_chapter_results(&mut state, key_event(KEY_NAV_DOWN));
+        assert_eq!(modal_state(&state), (1, Some(0)));
+    }
+
+    #[test]
+    fn test_nav_up_expanded_clamps() {
+        let mut state = results_state();
+        if let Modal::ChapterResults {
+            cursor, expanded, ..
+        } = &mut state.ui.modal
+        {
+            *cursor = 1;
+            *expanded = Some(0);
         }
         handle_chapter_results(&mut state, key_event(KEY_NAV_UP));
+        assert_eq!(modal_state(&state), (0, Some(0)));
         handle_chapter_results(&mut state, key_event(KEY_NAV_UP));
-        if let Modal::ChapterResults { cursor, .. } = &state.ui.modal {
-            assert_eq!(*cursor, 0);
+        assert_eq!(modal_state(&state), (0, Some(0)));
+    }
+
+    #[test]
+    fn test_enter_expands_when_collapsed() {
+        let mut state = results_state();
+        handle_chapter_results(&mut state, key_event(KEY_ENTER));
+        assert_eq!(modal_state(&state), (0, Some(0)));
+        assert!(matches!(state.ui.modal, Modal::ChapterResults { .. }));
+    }
+
+    #[test]
+    fn test_enter_jumps_when_expanded() {
+        let mut state = results_state();
+        if let Modal::ChapterResults {
+            cursor, expanded, ..
+        } = &mut state.ui.modal
+        {
+            *expanded = Some(0);
         }
+        handle_chapter_results(&mut state, key_event(KEY_ENTER));
+        assert_eq!(state.ui.modal, Modal::None);
+        assert_eq!(state.ui.page, Page::Reader);
     }
 
     #[test]
@@ -306,6 +465,7 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
             status: SearchStatus::Ready,
+            expanded: Some(0),
         };
         handle_chapter_results(&mut state, key_event(KEY_ENTER));
         assert_eq!(state.ui.modal, Modal::None);
@@ -340,6 +500,7 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
             status: SearchStatus::Ready,
+            expanded: Some(0),
         };
         handle_chapter_results(&mut state, key_event(KEY_ENTER));
         assert_eq!(state.ui.modal, Modal::None);
@@ -350,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn test_enter_with_no_selection_closes() {
+    fn test_enter_with_no_groups_stays_open() {
         let mut state = test_state();
         state.ui.modal = Modal::ChapterResults {
             query: "dragon".into(),
@@ -358,9 +519,10 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
             status: SearchStatus::Empty,
+            expanded: None,
         };
         handle_chapter_results(&mut state, key_event(KEY_ENTER));
-        assert_eq!(state.ui.modal, Modal::None);
+        assert!(matches!(state.ui.modal, Modal::ChapterResults { .. }));
     }
 
     #[test]

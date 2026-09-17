@@ -97,6 +97,22 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     "ChapterToEmbed event ignored",
                 );
             }
+            ServerEvent::ChapterEmbedded { id, url } => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Chapter embedded for job {}: {}", id, url),
+                );
+                state.jobs.update_from_embedded(id, &url);
+            }
+            ServerEvent::ChapterEmbeddedFailed { id, url } => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Chapter embedding failed for job {}: {}", id, url),
+                );
+                state.jobs.update_from_embedded_failed(id, &url);
+            }
             ServerEvent::WorkersChanged { max_workers } => {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
@@ -306,6 +322,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                             cursor,
                             scroll_offset,
                             status: s,
+                            expanded,
                             ..
                         } = &mut state.ui.modal
                         {
@@ -313,6 +330,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                             *cursor = 0;
                             *scroll_offset = 0;
                             *s = status;
+                            *expanded = None;
                         }
                     }
                     Err(e) => {
@@ -848,12 +866,71 @@ mod tests {
         send(
             &mut state,
             ServerEvent::ChapterToEmbed {
+                id: 1,
                 chapter: serde_json::json!({ "url": "u1", "idx": 0, "title": "Ch1" }),
             },
         );
         // No state change — the event is a no-op.
         assert_eq!(state.jobs.jobs[0].detail, None);
         assert_eq!(state.ui.page, Page::Library);
+    }
+
+    #[test]
+    fn test_chapter_embedded_updates_job_detail() {
+        let mut state = test_state();
+        let mut job = sample_job(1, "Running");
+        job.detail = Some(vec![
+            scylla_core::types::ChapterDetail {
+                title: "Ch1".into(),
+                url: "u1".into(),
+                status: "Fetched".into(),
+            },
+            scylla_core::types::ChapterDetail {
+                title: "Ch2".into(),
+                url: "u2".into(),
+                status: "Pending".into(),
+            },
+        ]);
+        state.jobs.jobs.push(job);
+        send(
+            &mut state,
+            ServerEvent::ChapterEmbedded {
+                id: 1,
+                url: "u1".into(),
+            },
+        );
+        let detail = state.jobs.jobs[0].detail.as_ref().unwrap();
+        assert_eq!(detail[0].status, "Embedded");
+        assert_eq!(detail[1].status, "Pending");
+    }
+
+    #[test]
+    fn test_chapter_embedded_failed_updates_job_detail() {
+        let mut state = test_state();
+        let mut job = sample_job(1, "Running");
+        job.detail = Some(vec![
+            scylla_core::types::ChapterDetail {
+                title: "Ch1".into(),
+                url: "u1".into(),
+                status: "Fetched".into(),
+            },
+            scylla_core::types::ChapterDetail {
+                title: "Ch2".into(),
+                url: "u2".into(),
+                status: "Pending".into(),
+            },
+        ]);
+        state.jobs.jobs.push(job);
+        send(
+            &mut state,
+            ServerEvent::ChapterEmbeddedFailed {
+                id: 1,
+                url: "u1".into(),
+            },
+        );
+        let detail = state.jobs.jobs[0].detail.as_ref().unwrap();
+        assert_eq!(detail[0].status, "Failed");
+        assert_eq!(detail[1].status, "Pending");
     }
 
     #[test]
@@ -960,6 +1037,7 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
             status: SearchStatus::Loading,
+            expanded: None,
         };
         state
     }

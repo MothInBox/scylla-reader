@@ -12,8 +12,17 @@ use tokio::sync::Mutex;
 /// Work item for the dedicated embedding thread.
 #[derive(Clone)]
 enum EmbedRequest {
-    Chapter { chapter_url: String, text: String },
-    Description { book_url: String, text: String },
+    Chapter {
+        chapter_url: String,
+        text: String,
+        /// The originating EmbedBatch job, if any (used to report back the
+        /// "Embedded" status).
+        job_id: Option<scylla_core::types::JobId>,
+    },
+    Description {
+        book_url: String,
+        text: String,
+    },
 }
 
 /// Max requests collected into one batched forward pass.
@@ -42,6 +51,7 @@ async fn main() {
 
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
     let (event_tx, event_rx) = std::sync::mpsc::channel();
+    let embed_event_tx = event_tx.clone();
 
     let jobs: Arc<std::sync::Mutex<Vec<scylla_core::types::JobDto>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -76,6 +86,7 @@ async fn main() {
     let embed_db = db.clone();
     let shared_embedder = Arc::new(embeddings::SharedEmbedder::new());
     let thread_embedder = shared_embedder.clone();
+    let thread_event_tx = embed_event_tx.clone();
     std::thread::spawn(move || {
         let mut chapter_counts: std::collections::HashMap<String, u32> =
             std::collections::HashMap::new();
@@ -99,6 +110,7 @@ async fn main() {
                 &batch,
                 &embed_db,
                 &thread_embedder,
+                &thread_event_tx,
                 &mut chapter_counts,
                 &mut genre_embeddings,
             );
@@ -129,7 +141,7 @@ async fn main() {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create event runtime");
         for event in event_rx {
-            routes::jobs::update_job_snapshot(&event_jobs, &event);
+            let emit = routes::jobs::update_job_snapshot(&event_jobs, &event);
             routes::jobs::reload_registry_on_plugin_installed(&event_registry, &event);
             if let scylla_core::messenger::AppEvent::ChapterFetched(chapter) = &event {
                 // Automatic embedding is gated on the autoembed setting.
@@ -137,14 +149,16 @@ async fn main() {
                     let _ = embed_tx.send(EmbedRequest::Chapter {
                         chapter_url: chapter.url.clone(),
                         text: chapter.content.clone(),
+                        job_id: None,
                     });
                 }
             }
-            if let scylla_core::messenger::AppEvent::ChapterToEmbed(chapter) = &event {
+            if let scylla_core::messenger::AppEvent::ChapterToEmbed(job_id, chapter) = &event {
                 // EmbedBatch jobs must embed regardless of the autoembed setting.
                 let _ = embed_tx.send(EmbedRequest::Chapter {
                     chapter_url: chapter.url.clone(),
                     text: chapter.content.clone(),
+                    job_id: Some(*job_id),
                 });
             }
             if let scylla_core::messenger::AppEvent::BookScraped(book) = &event {
@@ -167,6 +181,9 @@ async fn main() {
                 }
             }
             let _ = event_broadcast.send(Arc::new(event));
+            if let Some(emit) = emit {
+                let _ = event_broadcast.send(Arc::new(emit));
+            }
         }
     });
 
@@ -378,6 +395,7 @@ fn process_embed_batch(
     batch: &[EmbedRequest],
     embed_db: &Arc<tokio::sync::Mutex<db::ServerDb>>,
     thread_embedder: &embeddings::SharedEmbedder,
+    event_tx: &std::sync::mpsc::Sender<scylla_core::messenger::AppEvent>,
     chapter_counts: &mut std::collections::HashMap<String, u32>,
     genre_embeddings: &mut Option<Vec<(String, Vec<f32>)>>,
 ) {
@@ -385,7 +403,9 @@ fn process_embed_batch(
     let mut pending: Vec<(EmbedRequest, String)> = Vec::new();
     for req in batch {
         match req {
-            EmbedRequest::Chapter { chapter_url, text } => {
+            EmbedRequest::Chapter {
+                chapter_url, text, ..
+            } => {
                 let hash = content_hash(text);
                 if should_skip_embedding(embed_db, chapter_url, &hash) {
                     eprintln!("EMBED: chapter {chapter_url} already embedded, skipping");
@@ -420,12 +440,30 @@ fn process_embed_batch(
         Ok(e) => e,
         Err(e) => {
             eprintln!("EMBED: batch embedding failed ({} texts): {e}", texts.len());
+            // Report the failure back for every pending chapter with a job id.
+            for (req, _) in &pending {
+                if let EmbedRequest::Chapter {
+                    chapter_url,
+                    job_id: Some(job_id),
+                    ..
+                } = req
+                {
+                    let _ = event_tx.send(scylla_core::messenger::AppEvent::ChapterEmbeddedFailed(
+                        *job_id,
+                        chapter_url.clone(),
+                    ));
+                }
+            }
             return;
         }
     };
     for ((req, hash), embedding) in pending.iter().zip(embeddings.iter()) {
         match req {
-            EmbedRequest::Chapter { chapter_url, .. } => {
+            EmbedRequest::Chapter {
+                chapter_url,
+                job_id,
+                ..
+            } => {
                 eprintln!("EMBED: embedding chapter {chapter_url}");
                 let book_url = embed_db
                     .blocking_lock()
@@ -446,6 +484,13 @@ fn process_embed_batch(
                     Some(hash),
                 ) {
                     eprintln!("EMBED: failed to store chapter embedding: {e}");
+                    if let Some(job_id) = job_id {
+                        let _ =
+                            event_tx.send(scylla_core::messenger::AppEvent::ChapterEmbeddedFailed(
+                                *job_id,
+                                chapter_url.clone(),
+                            ));
+                    }
                     continue;
                 }
                 drop(db);
@@ -453,6 +498,12 @@ fn process_embed_batch(
                     "EMBED: stored embedding for chapter {chapter_url} (book: {:?})",
                     book_url
                 );
+                if let Some(job_id) = job_id {
+                    let _ = event_tx.send(scylla_core::messenger::AppEvent::ChapterEmbedded(
+                        *job_id,
+                        chapter_url.clone(),
+                    ));
+                }
                 if let Some(book_url) = book_url {
                     let count = chapter_counts.entry(book_url.clone()).or_insert(0);
                     *count += 1;
@@ -2090,14 +2141,17 @@ mod tests {
         db.blocking_lock().upsert_book(&book).unwrap();
 
         let embedder = embeddings::SharedEmbedder::with_embed(stub_embed(vec![1.0, 0.0]));
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
         let batch = vec![
             EmbedRequest::Chapter {
                 chapter_url: "https://example.com/ch1".into(),
                 text: "content one".into(),
+                job_id: Some(1),
             },
             EmbedRequest::Chapter {
                 chapter_url: "https://example.com/ch2".into(),
                 text: "content two".into(),
+                job_id: None,
             },
         ];
         let mut chapter_counts = std::collections::HashMap::new();
@@ -2106,6 +2160,7 @@ mod tests {
             &batch,
             &db,
             &embedder,
+            &event_tx,
             &mut chapter_counts,
             &mut genre_embeddings,
         );
@@ -2120,5 +2175,15 @@ mod tests {
         assert_eq!(urls.len(), 2);
         assert!(urls.contains(&"https://example.com/ch1".to_string()));
         assert!(urls.contains(&"https://example.com/ch2".to_string()));
+
+        // The chapter with a job_id reports back a ChapterEmbedded event.
+        let event = event_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            event,
+            scylla_core::messenger::AppEvent::ChapterEmbedded(1, url)
+                if url == "https://example.com/ch1"
+        ));
     }
 }

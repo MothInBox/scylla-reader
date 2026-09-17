@@ -112,6 +112,28 @@ impl JobsState {
         }
     }
 
+    /// Apply a `ChapterEmbedded` event: mark the matching chapter in the job's
+    /// detail as "Embedded".
+    pub fn update_from_embedded(&mut self, id: u64, url: &str) {
+        if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id)
+            && let Some(detail) = job.detail.as_mut()
+            && let Some(ch) = detail.iter_mut().find(|c| c.url == url)
+        {
+            ch.status = "Embedded".to_string();
+        }
+    }
+
+    /// Apply a `ChapterEmbeddedFailed` event: mark the matching chapter in the
+    /// job's detail as "Failed".
+    pub fn update_from_embedded_failed(&mut self, id: u64, url: &str) {
+        if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id)
+            && let Some(detail) = job.detail.as_mut()
+            && let Some(ch) = detail.iter_mut().find(|c| c.url == url)
+        {
+            ch.status = "Failed".to_string();
+        }
+    }
+
     pub fn remove_completed(&mut self) {
         let before = self.jobs.len();
         self.jobs
@@ -253,6 +275,64 @@ mod tests {
         jobs.jobs.push(sample_job(1, "Running"));
         jobs.update_from_detail(99, vec![]);
         assert!(jobs.jobs[0].detail.is_none());
+    }
+
+    #[test]
+    fn test_update_from_embedded_marks_chapter() {
+        let mut jobs = JobsState::new();
+        let mut job = sample_job(1, "Running");
+        job.detail = Some(vec![
+            ChapterDetail {
+                title: "Ch1".into(),
+                url: "u1".into(),
+                status: "Fetched".into(),
+            },
+            ChapterDetail {
+                title: "Ch2".into(),
+                url: "u2".into(),
+                status: "Pending".into(),
+            },
+        ]);
+        jobs.jobs.push(job);
+        jobs.update_from_embedded(1, "u1");
+        assert_eq!(jobs.jobs[0].detail.as_ref().unwrap()[0].status, "Embedded");
+        assert_eq!(jobs.jobs[0].detail.as_ref().unwrap()[1].status, "Pending");
+    }
+
+    #[test]
+    fn test_update_from_embedded_unknown_url_is_noop() {
+        let mut jobs = JobsState::new();
+        let mut job = sample_job(1, "Running");
+        job.detail = Some(vec![ChapterDetail {
+            title: "Ch1".into(),
+            url: "u1".into(),
+            status: "Fetched".into(),
+        }]);
+        jobs.jobs.push(job);
+        jobs.update_from_embedded(1, "nope");
+        assert_eq!(jobs.jobs[0].detail.as_ref().unwrap()[0].status, "Fetched");
+    }
+
+    #[test]
+    fn test_update_from_embedded_failed_marks_chapter() {
+        let mut jobs = JobsState::new();
+        let mut job = sample_job(1, "Running");
+        job.detail = Some(vec![
+            ChapterDetail {
+                title: "Ch1".into(),
+                url: "u1".into(),
+                status: "Fetched".into(),
+            },
+            ChapterDetail {
+                title: "Ch2".into(),
+                url: "u2".into(),
+                status: "Pending".into(),
+            },
+        ]);
+        jobs.jobs.push(job);
+        jobs.update_from_embedded_failed(1, "u1");
+        assert_eq!(jobs.jobs[0].detail.as_ref().unwrap()[0].status, "Failed");
+        assert_eq!(jobs.jobs[0].detail.as_ref().unwrap()[1].status, "Pending");
     }
 
     #[test]

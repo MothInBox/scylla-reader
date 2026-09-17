@@ -2,7 +2,7 @@ use crate::state::{JobsState, UiState};
 use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
-use scylla_core::types::{JobDto, JobOutcomeDto, job_now_ms};
+use scylla_core::types::{ChapterDetail, JobDto, JobOutcomeDto, job_now_ms};
 
 pub fn draw(frame: &mut Frame, area: Rect, jobs: &mut JobsState, ui: &UiState) {
     let hint_height: u16 = if ui.show_hints { 4 } else { 1 };
@@ -139,10 +139,12 @@ fn status_color(status: &str) -> Color {
     }
 }
 
-/// Icon for a per-chapter detail status ("Pending" | "Done" | "Failed").
+/// Icon for a per-chapter detail status
+/// ("Pending" | "Fetched" | "Embedded" | "Failed").
 fn detail_icon(status: &str) -> &'static str {
     match status {
-        "Done" => "✓",
+        "Embedded" => "✓",
+        "Fetched" => "◐",
         "Failed" => "✗",
         _ => "○", // Pending / unknown
     }
@@ -150,10 +152,43 @@ fn detail_icon(status: &str) -> &'static str {
 
 fn detail_color(status: &str) -> Color {
     match status {
-        "Done" => Color::Cyan,
+        "Embedded" => Color::Green,
+        "Fetched" => Color::Yellow,
         "Failed" => Color::Red,
         _ => Color::DarkGray,
     }
+}
+
+/// Estimated seconds remaining for a job with a per-chapter detail.
+/// processed = chapters with status "Embedded" (the embedding pace);
+/// avg per-chapter time = elapsed / processed; eta = avg * remaining.
+/// None when there's no started time, nothing embedded yet, or nothing remaining.
+fn estimate_eta(detail: &[ChapterDetail], started_at_ms: Option<u64>, now_ms: u64) -> Option<u64> {
+    let processed = detail.iter().filter(|d| d.status == "Embedded").count();
+    let remaining = detail.len().saturating_sub(processed);
+    let started = started_at_ms?;
+    if processed == 0 || remaining == 0 {
+        return None;
+    }
+    let elapsed_ms = now_ms.saturating_sub(started);
+    let avg_ms = elapsed_ms / processed as u64;
+    let eta_ms = avg_ms * remaining as u64;
+    Some(eta_ms / 1000)
+}
+
+/// Progress counts for a job's per-chapter detail: `(fetched, embedded, total)`
+/// where fetched = "Fetched" + "Embedded" + "Failed" and embedded = "Embedded".
+/// None when the detail is empty.
+fn detail_progress(detail: &[ChapterDetail]) -> Option<(usize, usize, usize)> {
+    if detail.is_empty() {
+        return None;
+    }
+    let fetched = detail
+        .iter()
+        .filter(|d| d.status == "Fetched" || d.status == "Embedded" || d.status == "Failed")
+        .count();
+    let embedded = detail.iter().filter(|d| d.status == "Embedded").count();
+    Some((fetched, embedded, detail.len()))
 }
 
 fn render_job_row<'a>(
@@ -179,10 +214,25 @@ fn render_job_row<'a>(
     } else {
         String::new()
     };
+    let eta = if job.status == "Running" {
+        job.detail
+            .as_deref()
+            .and_then(|d| estimate_eta(d, job.started_at_ms, now_ms))
+            .map(|s| format!(" ETA ~{}s", s))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let progress = job
+        .detail
+        .as_deref()
+        .and_then(detail_progress)
+        .map(|(fetched, embedded, total)| format!(" ({}/{}/{})", fetched, embedded, total))
+        .unwrap_or_default();
 
     let main = format!(
-        "{} {}  {}  {} {}",
-        icon, job.kind, job.target, job.status, elapsed,
+        "{} {}  {}  {} {}{}{}",
+        icon, job.kind, job.target, job.status, elapsed, progress, eta,
     );
 
     let style = Style::default().fg(color);
@@ -204,6 +254,17 @@ fn render_job_row<'a>(
         }
 
         if let Some(detail) = &job.detail {
+            if let Some(eta) = estimate_eta(detail, job.started_at_ms, now_ms) {
+                let (fetched, embedded, total) =
+                    detail_progress(detail).unwrap_or((0, 0, detail.len()));
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "  ETA: ~{}s ({} fetched, {} embedded / {})",
+                        eta, fetched, embedded, total
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
             lines.push(Line::from(Span::styled(
                 "  Chapters:".to_string(),
                 Style::default().fg(Color::DarkGray),
@@ -368,10 +429,12 @@ mod tests {
 
     #[test]
     fn test_detail_icon_and_color() {
-        assert_eq!(detail_icon("Done"), "✓");
+        assert_eq!(detail_icon("Embedded"), "✓");
+        assert_eq!(detail_icon("Fetched"), "◐");
         assert_eq!(detail_icon("Failed"), "✗");
         assert_eq!(detail_icon("Pending"), "○");
-        assert_eq!(detail_color("Done"), Color::Cyan);
+        assert_eq!(detail_color("Embedded"), Color::Green);
+        assert_eq!(detail_color("Fetched"), Color::Yellow);
         assert_eq!(detail_color("Failed"), Color::Red);
         assert_eq!(detail_color("Pending"), Color::DarkGray);
     }
@@ -385,7 +448,7 @@ mod tests {
             scylla_core::types::ChapterDetail {
                 title: "1.1 Crappy Monday".into(),
                 url: "u1".into(),
-                status: "Done".into(),
+                status: "Embedded".into(),
             },
             scylla_core::types::ChapterDetail {
                 title: "2.1 New Semester".into(),
@@ -418,5 +481,170 @@ mod tests {
         assert!(content.contains("2.1 New Semester"), "content: {}", content);
         assert!(content.contains("2.3 Bad Day"), "content: {}", content);
         assert!(content.contains("Chapters:"), "content: {}", content);
+    }
+
+    fn detail(statuses: &[&str]) -> Vec<ChapterDetail> {
+        statuses
+            .iter()
+            .enumerate()
+            .map(|(i, s)| ChapterDetail {
+                title: format!("Ch{}", i),
+                url: format!("u{}", i),
+                status: s.to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_estimate_eta_no_started_time() {
+        let d = detail(&["Embedded", "Pending"]);
+        assert_eq!(estimate_eta(&d, None, 100_000), None);
+    }
+
+    #[test]
+    fn test_estimate_eta_nothing_processed() {
+        let d = detail(&["Pending", "Pending"]);
+        assert_eq!(estimate_eta(&d, Some(0), 100_000), None);
+    }
+
+    #[test]
+    fn test_estimate_eta_all_done() {
+        let d = detail(&["Embedded", "Embedded"]);
+        assert_eq!(estimate_eta(&d, Some(0), 100_000), None);
+    }
+
+    #[test]
+    fn test_estimate_eta_partial_progress() {
+        // 2 of 10 done in 4s → avg 2s per chapter → eta 8 * 2 = 16s.
+        let mut d = detail(&["Pending"; 10]);
+        d[0].status = "Embedded".into();
+        d[1].status = "Embedded".into();
+        assert_eq!(estimate_eta(&d, Some(96_000), 100_000), Some(16));
+    }
+
+    #[test]
+    fn test_estimate_eta_failed_not_counted_as_processed() {
+        // Only "Embedded" counts as processed for the ETA: 1 embedded of 4,
+        // elapsed 4s → avg 4s → eta 3 * 4 = 12s.
+        let mut d = detail(&["Pending"; 4]);
+        d[0].status = "Embedded".into();
+        d[1].status = "Failed".into();
+        assert_eq!(estimate_eta(&d, Some(96_000), 100_000), Some(12));
+    }
+
+    #[test]
+    fn test_jobs_draw_shows_eta_for_running_job_with_detail() {
+        let mut state = make_state();
+        let mut job = sample_job(1, "Running");
+        job.kind = "EmbedBatch".into();
+        job.started_at_ms = Some(job_now_ms().saturating_sub(4000));
+        job.detail = Some(detail(&["Embedded", "Embedded", "Pending", "Pending"]));
+        state.jobs.jobs.push(job);
+        state.jobs.detail_expanded = Some(0);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state.jobs, &state.ui);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("ETA ~"), "content: {}", content);
+        assert!(
+            content.contains("(2 fetched, 2 embedded / 4)"),
+            "content: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_jobs_draw_no_eta_without_detail() {
+        let mut state = make_state();
+        let mut job = sample_job(1, "Running");
+        job.started_at_ms = Some(job_now_ms().saturating_sub(4000));
+        state.jobs.jobs.push(job);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state.jobs, &state.ui);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(!content.contains("ETA"), "content: {}", content);
+    }
+
+    #[test]
+    fn test_detail_progress_empty_is_none() {
+        assert_eq!(detail_progress(&[]), None);
+    }
+
+    #[test]
+    fn test_detail_progress_partial() {
+        let mut d = detail(&["Pending"; 10]);
+        d[0].status = "Embedded".into();
+        d[1].status = "Embedded".into();
+        assert_eq!(detail_progress(&d), Some((2, 2, 10)));
+    }
+
+    #[test]
+    fn test_detail_progress_failed_counts_as_fetched() {
+        let mut d = detail(&["Pending"; 4]);
+        d[0].status = "Embedded".into();
+        d[1].status = "Failed".into();
+        // 2 fetched (Embedded + Failed), 1 embedded, 4 total.
+        assert_eq!(detail_progress(&d), Some((2, 1, 4)));
+    }
+
+    #[test]
+    fn test_jobs_draw_main_row_shows_progress() {
+        let mut state = make_state();
+        let mut job = sample_job(1, "Running");
+        job.kind = "EmbedBatch".into();
+        job.started_at_ms = Some(job_now_ms().saturating_sub(4000));
+        let mut d = detail(&["Pending"; 10]);
+        d[0].status = "Embedded".into();
+        d[1].status = "Embedded".into();
+        job.detail = Some(d);
+        state.jobs.jobs.push(job);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state.jobs, &state.ui);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("(2/2/10)"), "content: {}", content);
+        assert!(content.contains("ETA ~"), "content: {}", content);
+    }
+
+    #[test]
+    fn test_jobs_draw_main_row_shows_zero_progress_without_eta() {
+        let mut state = make_state();
+        let mut job = sample_job(1, "Running");
+        job.kind = "EmbedBatch".into();
+        job.started_at_ms = Some(job_now_ms().saturating_sub(4000));
+        job.detail = Some(detail(&["Pending"; 10]));
+        state.jobs.jobs.push(job);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state.jobs, &state.ui);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        // Progress shows even with nothing processed (no ETA yet).
+        assert!(content.contains("(0/0/10)"), "content: {}", content);
+        assert!(!content.contains("ETA"), "content: {}", content);
     }
 }

@@ -28,8 +28,12 @@ pub enum AppEvent {
     BookScraped(Book),
     ChapterFetched(ChapterContent),
     /// A chapter that must be embedded regardless of the autoembed setting
-    /// (e.g. from an EmbedBatch job).
-    ChapterToEmbed(ChapterContent),
+    /// (e.g. from an EmbedBatch job). Carries the originating job id.
+    ChapterToEmbed(JobId, ChapterContent),
+    /// A chapter embedding was stored (job id, chapter url).
+    ChapterEmbedded(JobId, String),
+    /// A chapter embedding failed (job id, chapter url).
+    ChapterEmbeddedFailed(JobId, String),
     ChapterFetchFailed,
     /// (url, raw image bytes) — the TUI decodes the image.
     CoverFetched(String, Vec<u8>),
@@ -281,12 +285,35 @@ mod tests {
             title: "Ch1".into(),
             content: "text".into(),
         };
-        let event = AppEvent::ChapterToEmbed(content);
-        if let AppEvent::ChapterToEmbed(c) = &event {
+        let event = AppEvent::ChapterToEmbed(7, content);
+        if let AppEvent::ChapterToEmbed(id, c) = &event {
+            assert_eq!(*id, 7);
             assert_eq!(c.url, "http://example.com/ch1");
             assert_eq!(c.chapter_idx, 0);
         } else {
             panic!("Expected ChapterToEmbed variant");
+        }
+    }
+
+    #[test]
+    fn test_app_event_chapter_embedded_construction() {
+        let event = AppEvent::ChapterEmbedded(7, "http://example.com/ch1".into());
+        if let AppEvent::ChapterEmbedded(id, url) = &event {
+            assert_eq!(*id, 7);
+            assert_eq!(url, "http://example.com/ch1");
+        } else {
+            panic!("Expected ChapterEmbedded variant");
+        }
+    }
+
+    #[test]
+    fn test_app_event_chapter_embedded_failed_construction() {
+        let event = AppEvent::ChapterEmbeddedFailed(7, "http://example.com/ch1".into());
+        if let AppEvent::ChapterEmbeddedFailed(id, url) = &event {
+            assert_eq!(*id, 7);
+            assert_eq!(url, "http://example.com/ch1");
+        } else {
+            panic!("Expected ChapterEmbeddedFailed variant");
         }
     }
 }

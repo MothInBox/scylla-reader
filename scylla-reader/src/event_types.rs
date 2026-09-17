@@ -115,7 +115,18 @@ pub enum ServerEvent {
     },
     /// Server-internal: a chapter queued for embedding. The TUI ignores it.
     ChapterToEmbed {
+        id: u64,
         chapter: serde_json::Value,
+    },
+    /// The embedding thread reports a chapter's embedding was stored.
+    ChapterEmbedded {
+        id: u64,
+        url: String,
+    },
+    /// The embedding thread reports a chapter whose embedding FAILED.
+    ChapterEmbeddedFailed {
+        id: u64,
+        url: String,
     },
 }
 
@@ -178,7 +189,16 @@ impl<'de> Deserialize<'de> for ServerEvent {
                 detail: Vec<ChapterDetail>,
             },
             ChapterToEmbed {
+                id: u64,
                 chapter: serde_json::Value,
+            },
+            ChapterEmbedded {
+                id: u64,
+                url: String,
+            },
+            ChapterEmbeddedFailed {
+                id: u64,
+                url: String,
             },
         }
 
@@ -234,7 +254,11 @@ impl<'de> Deserialize<'de> for ServerEvent {
             },
             Wire::ConnectionState { connected } => ServerEvent::ConnectionState { connected },
             Wire::JobDetailChanged { id, detail } => ServerEvent::JobDetailChanged { id, detail },
-            Wire::ChapterToEmbed { chapter } => ServerEvent::ChapterToEmbed { chapter },
+            Wire::ChapterToEmbed { id, chapter } => ServerEvent::ChapterToEmbed { id, chapter },
+            Wire::ChapterEmbedded { id, url } => ServerEvent::ChapterEmbedded { id, url },
+            Wire::ChapterEmbeddedFailed { id, url } => {
+                ServerEvent::ChapterEmbeddedFailed { id, url }
+            }
         })
     }
 }
@@ -526,8 +550,36 @@ mod tests {
 
     #[test]
     fn test_chapter_to_embed_deserializes() {
-        let event =
-            parse(r#"{"type":"ChapterToEmbed","chapter":{"url":"u1","idx":0,"title":"Ch1"}}"#);
-        assert!(matches!(event, ServerEvent::ChapterToEmbed { .. }));
+        let event = parse(
+            r#"{"type":"ChapterToEmbed","id":7,"chapter":{"url":"u1","idx":0,"title":"Ch1"}}"#,
+        );
+        match event {
+            ServerEvent::ChapterToEmbed { id, .. } => assert_eq!(id, 7),
+            _ => panic!("expected ChapterToEmbed"),
+        }
+    }
+
+    #[test]
+    fn test_chapter_embedded_deserializes() {
+        let event = parse(r#"{"type":"ChapterEmbedded","id":7,"url":"u1"}"#);
+        match event {
+            ServerEvent::ChapterEmbedded { id, url } => {
+                assert_eq!(id, 7);
+                assert_eq!(url, "u1");
+            }
+            _ => panic!("expected ChapterEmbedded"),
+        }
+    }
+
+    #[test]
+    fn test_chapter_embedded_failed_deserializes() {
+        let event = parse(r#"{"type":"ChapterEmbeddedFailed","id":7,"url":"u1"}"#);
+        match event {
+            ServerEvent::ChapterEmbeddedFailed { id, url } => {
+                assert_eq!(id, 7);
+                assert_eq!(url, "u1");
+            }
+            _ => panic!("expected ChapterEmbeddedFailed"),
+        }
     }
 }

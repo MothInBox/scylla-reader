@@ -103,6 +103,7 @@ fn run_ai_search(state: &mut AppState) {
         cursor: 0,
         scroll_offset: 0,
         status: SearchStatus::Loading,
+        expanded: None,
     };
 }
 
