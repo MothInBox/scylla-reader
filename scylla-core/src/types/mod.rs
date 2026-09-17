@@ -10,8 +10,8 @@ pub use book::{Book, BookStatus, Chapter};
 pub use config::LibraryConfig;
 pub use filter::{BackendKind, LibraryFilter};
 pub use job::{
-    Job, JobDto, JobFilter, JobId, JobKind, JobOutcome, JobOutcomeDto, JobPriority, JobStatus,
-    job_now_ms,
+    ChapterDetail, ChapterRef, Job, JobDto, JobFilter, JobId, JobKind, JobOutcome, JobOutcomeDto,
+    JobPriority, JobStatus, job_now_ms,
 };
 pub use progress::Progress;
 pub use session::Session;

@@ -6,7 +6,7 @@
 //! the TUI (SSE client thread / search thread) and never appear on the wire.
 
 use base64::Engine;
-use scylla_core::types::{Book, JobDto, JobOutcomeDto};
+use scylla_core::types::{Book, ChapterDetail, JobDto, JobOutcomeDto};
 use serde::Deserialize;
 use std::sync::{Mutex, OnceLock, mpsc};
 
@@ -108,6 +108,15 @@ pub enum ServerEvent {
         query: String,
         result: Result<Vec<ChapterHit>, String>,
     },
+    /// Per-chapter detail for an `EmbedBatch` job.
+    JobDetailChanged {
+        id: u64,
+        detail: Vec<ChapterDetail>,
+    },
+    /// Server-internal: a chapter queued for embedding. The TUI ignores it.
+    ChapterToEmbed {
+        chapter: serde_json::Value,
+    },
 }
 
 impl<'de> Deserialize<'de> for ServerEvent {
@@ -164,6 +173,13 @@ impl<'de> Deserialize<'de> for ServerEvent {
             ConnectionState {
                 connected: bool,
             },
+            JobDetailChanged {
+                id: u64,
+                detail: Vec<ChapterDetail>,
+            },
+            ChapterToEmbed {
+                chapter: serde_json::Value,
+            },
         }
 
         #[derive(Deserialize)]
@@ -217,6 +233,8 @@ impl<'de> Deserialize<'de> for ServerEvent {
                 server_now_ms,
             },
             Wire::ConnectionState { connected } => ServerEvent::ConnectionState { connected },
+            Wire::JobDetailChanged { id, detail } => ServerEvent::JobDetailChanged { id, detail },
+            Wire::ChapterToEmbed { chapter } => ServerEvent::ChapterToEmbed { chapter },
         })
     }
 }
@@ -487,5 +505,29 @@ mod tests {
             }
             _ => panic!("expected AiSearchResults"),
         }
+    }
+
+    #[test]
+    fn test_job_detail_changed_deserializes() {
+        let event = parse(
+            r#"{"type":"JobDetailChanged","id":7,"detail":[{"title":"1.1 Crappy Monday","url":"u1","status":"Done"},{"title":"2.1 New Semester","url":"u2","status":"Pending"}]}"#,
+        );
+        match event {
+            ServerEvent::JobDetailChanged { id, detail } => {
+                assert_eq!(id, 7);
+                assert_eq!(detail.len(), 2);
+                assert_eq!(detail[0].title, "1.1 Crappy Monday");
+                assert_eq!(detail[0].status, "Done");
+                assert_eq!(detail[1].status, "Pending");
+            }
+            _ => panic!("expected JobDetailChanged"),
+        }
+    }
+
+    #[test]
+    fn test_chapter_to_embed_deserializes() {
+        let event =
+            parse(r#"{"type":"ChapterToEmbed","chapter":{"url":"u1","idx":0,"title":"Ch1"}}"#);
+        assert!(matches!(event, ServerEvent::ChapterToEmbed { .. }));
     }
 }

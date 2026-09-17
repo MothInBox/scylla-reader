@@ -1,4 +1,4 @@
-use scylla_core::types::{JobDto, JobFilter, JobOutcomeDto};
+use scylla_core::types::{ChapterDetail, JobDto, JobFilter, JobOutcomeDto};
 
 #[derive(Debug)]
 pub struct JobsState {
@@ -104,6 +104,14 @@ impl JobsState {
         }
     }
 
+    /// Apply a `JobDetailChanged` event: set the per-chapter detail on the
+    /// matching `EmbedBatch` job.
+    pub fn update_from_detail(&mut self, id: u64, detail: Vec<ChapterDetail>) {
+        if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id) {
+            job.detail = Some(detail);
+        }
+    }
+
     pub fn remove_completed(&mut self) {
         let before = self.jobs.len();
         self.jobs
@@ -150,6 +158,7 @@ mod tests {
             completed_at_ms: None,
             error: None,
             outcome: None,
+            detail: None,
         }
     }
 
@@ -216,6 +225,34 @@ mod tests {
         };
         jobs.set_outcome(1, outcome.clone());
         assert_eq!(jobs.jobs[0].outcome, Some(outcome));
+    }
+
+    #[test]
+    fn test_update_from_detail_sets_job_detail() {
+        let mut jobs = JobsState::new();
+        jobs.jobs.push(sample_job(1, "Running"));
+        let detail = vec![
+            ChapterDetail {
+                title: "1.1 Crappy Monday".into(),
+                url: "u1".into(),
+                status: "Done".into(),
+            },
+            ChapterDetail {
+                title: "2.1 New Semester".into(),
+                url: "u2".into(),
+                status: "Pending".into(),
+            },
+        ];
+        jobs.update_from_detail(1, detail.clone());
+        assert_eq!(jobs.jobs[0].detail, Some(detail));
+    }
+
+    #[test]
+    fn test_update_from_detail_unknown_id_is_noop() {
+        let mut jobs = JobsState::new();
+        jobs.jobs.push(sample_job(1, "Running"));
+        jobs.update_from_detail(99, vec![]);
+        assert!(jobs.jobs[0].detail.is_none());
     }
 
     #[test]

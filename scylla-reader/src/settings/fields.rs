@@ -5,6 +5,7 @@ pub enum SettingsField {
     RateLimit,
     DebugLog,
     ReaderMode,
+    AutoEmbed,
     Plugins,
     Server,
 }
@@ -15,6 +16,7 @@ impl SettingsField {
             SettingsField::RateLimit => "Rate Limit (seconds between requests)",
             SettingsField::DebugLog => "Debug Logging",
             SettingsField::ReaderMode => "Reader Mode",
+            SettingsField::AutoEmbed => "Auto-Embed New Chapters",
             SettingsField::Plugins => "Plugin Configs",
             SettingsField::Server => "Server Connection",
         }
@@ -25,6 +27,7 @@ impl SettingsField {
             SettingsField::RateLimit,
             SettingsField::DebugLog,
             SettingsField::ReaderMode,
+            SettingsField::AutoEmbed,
             SettingsField::Plugins,
             SettingsField::Server,
         ]
@@ -36,9 +39,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_all_returns_five_variants() {
+    fn test_all_returns_six_variants() {
         let all = SettingsField::all();
-        assert_eq!(all.len(), 5);
+        assert_eq!(all.len(), 6);
     }
 
     #[test]

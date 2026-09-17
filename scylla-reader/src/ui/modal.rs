@@ -278,17 +278,22 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
             let popup_area = centered_rect(60, 75, area);
             frame.render_widget(Clear, popup_area);
 
+            // The bordered box holds only the facet rows + choice list; the
+            // footer hint lines render BELOW the box, matching the other modals.
+            let body_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(3)])
+                .split(popup_area);
+            let box_area = body_chunks[0];
+            let footer_area = body_chunks[1];
+
             let block = Block::default().title(" Filter ").borders(Borders::ALL);
-            let inner = block.inner(popup_area);
-            frame.render_widget(block, popup_area);
+            let inner = block.inner(box_area);
+            frame.render_widget(block, box_area);
 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(5),
-                    Constraint::Min(0),
-                    Constraint::Length(3),
-                ])
+                .constraints([Constraint::Length(5), Constraint::Min(0)])
                 .split(inner);
 
             let rows = [
@@ -398,7 +403,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                     Constraint::Length(1),
                     Constraint::Length(1),
                 ])
-                .split(chunks[2]);
+                .split(footer_area);
 
             // Match count + apply/cancel, always visible.
             frame.render_widget(
@@ -443,38 +448,42 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
             let popup_area = centered_rect(65, 80, area);
             frame.render_widget(Clear, popup_area);
 
+            // The bordered box holds only the results; the footer hint line
+            // renders BELOW the box, matching the other modals.
+            let body_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(popup_area);
+            let box_area = body_chunks[0];
+            let footer_area = body_chunks[1];
+
             let total_hits: usize = groups.iter().map(|g| g.chapters.len()).sum();
             let title = format!(" AI: \"{}\" ({}) ", query, total_hits);
             let block = Block::default().title(title).borders(Borders::ALL);
-            let inner = block.inner(popup_area);
-            frame.render_widget(block, popup_area);
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(1)])
-                .split(inner);
+            let inner = block.inner(box_area);
+            frame.render_widget(block, box_area);
 
             match status {
                 SearchStatus::Loading => {
                     let para = Paragraph::new("searching…").alignment(Alignment::Center);
-                    frame.render_widget(para, chunks[0]);
+                    frame.render_widget(para, inner);
                 }
                 SearchStatus::Empty => {
                     let para = Paragraph::new(
                         "No matches — try rephrasing or fewer details.\n\nf refine · Esc close",
                     )
                     .alignment(Alignment::Center);
-                    frame.render_widget(para, chunks[0]);
+                    frame.render_widget(para, inner);
                 }
                 SearchStatus::Error(msg) => {
                     let para =
                         Paragraph::new(format!("Search failed: {}\n\nf retry · Esc close", msg))
                             .alignment(Alignment::Center);
-                    frame.render_widget(para, chunks[0]);
+                    frame.render_widget(para, inner);
                 }
                 SearchStatus::Ready => {
                     let (items, selected) = build_chapter_rows(groups, *cursor);
-                    let visible_height = chunks[0].height.saturating_sub(2) as usize;
+                    let visible_height = inner.height.saturating_sub(2) as usize;
                     if *cursor < *scroll_offset {
                         *scroll_offset = *cursor;
                     } else if *cursor >= *scroll_offset + visible_height {
@@ -486,14 +495,14 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                     let list = List::new(items)
                         .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
                         .highlight_symbol("> ");
-                    frame.render_stateful_widget(list, chunks[0], &mut list_state);
+                    frame.render_stateful_widget(list, inner, &mut list_state);
                 }
             }
 
             frame.render_widget(
                 Paragraph::new(" ↑↓ move  Enter open  f refine  Esc close ")
                     .style(Style::default().fg(Color::DarkGray)),
-                chunks[1],
+                footer_area,
             );
         }
 
@@ -508,6 +517,15 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
             let popup_area = centered_rect(70, 80, area);
             frame.render_widget(Clear, popup_area);
 
+            // The bordered box holds only the checkbox list; the footer hint
+            // line renders BELOW the box, matching the other modals.
+            let body_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(popup_area);
+            let box_area = body_chunks[0];
+            let footer_area = body_chunks[1];
+
             let book_title = lib
                 .library
                 .books
@@ -521,16 +539,11 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                 selected_count, book_title
             );
             let block = Block::default().title(title).borders(Borders::ALL);
-            let inner = block.inner(popup_area);
-            frame.render_widget(block, popup_area);
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(1)])
-                .split(inner);
+            let inner = block.inner(box_area);
+            frame.render_widget(block, box_area);
 
             // Auto-scroll so the cursor stays visible.
-            let visible_height = chunks[0].height.saturating_sub(2) as usize;
+            let visible_height = inner.height.saturating_sub(2) as usize;
             if *cursor < *scroll_offset {
                 *scroll_offset = *cursor;
             } else if *cursor >= *scroll_offset + visible_height {
@@ -560,12 +573,12 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
             let list = List::new(items)
                 .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
                 .highlight_symbol("> ");
-            frame.render_stateful_widget(list, chunks[0], &mut list_state);
+            frame.render_stateful_widget(list, inner, &mut list_state);
 
             frame.render_widget(
                 Paragraph::new(" ↑↓ move  Space toggle  a all  c clear  Enter embed  Esc close ")
                     .style(Style::default().fg(Color::DarkGray)),
-                chunks[1],
+                footer_area,
             );
         }
     }
@@ -1066,18 +1079,21 @@ mod tests {
             "content: {}",
             content
         );
+        // Rows show the chapter number and title.
         assert!(
             content.contains("[x] Ch 12: The Arena"),
             "content: {}",
             content
         );
-        // Ch 13 (url "c2") is embedded — dimmed with a checkmark, not selectable.
+        // "The Hunt" (url "c2") is embedded — dimmed with a checkmark, not selectable.
         assert!(
             content.contains("[✓] Ch 13: The Hunt"),
             "content: {}",
             content
         );
-        assert!(!content.contains("[ ] Ch 13"), "content: {}", content);
+        assert!(!content.contains("[ ] The Hunt"), "content: {}", content);
+        assert!(content.contains("Ch 12"), "content: {}", content);
+        assert!(content.contains("Ch 13"), "content: {}", content);
         assert!(content.contains("Space toggle"), "content: {}", content);
         assert!(content.contains("Enter embed"), "content: {}", content);
     }

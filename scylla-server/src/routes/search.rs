@@ -49,12 +49,14 @@ pub async fn search(
             Json(json!({ "error": "embedding model not loaded (offline first run)" })),
         ));
     };
-    let query_vec = embed(query).map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "failed to embed query" })),
-        )
-    })?;
+    let query_vec = embed(&[query])
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "failed to embed query" })),
+            )
+        })?
+        .remove(0);
 
     // Load the embeddings under the lock, then drop it before ranking so a
     // large library doesn't block other HTTP handlers during scoring.

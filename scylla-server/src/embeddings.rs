@@ -43,8 +43,9 @@ pub struct Embedder {
     device: Device,
 }
 
-/// A callable that embeds text into a vector (the real model or a test stub).
-pub type EmbedFn = Arc<dyn Fn(&str) -> anyhow::Result<Vec<f32>> + Send + Sync>;
+/// A callable that embeds a batch of texts into vectors (the real model or a
+/// test stub).
+pub type EmbedFn = Arc<dyn Fn(&[&str]) -> anyhow::Result<Vec<Vec<f32>>> + Send + Sync>;
 
 /// A book aggregate row: (book_url, aggregate_embedding, genres).
 pub type BookAggregate = (String, Vec<f32>, Option<Vec<String>>);
@@ -112,6 +113,11 @@ impl SharedEmbedder {
             if let Some(last) = state.last_failure
                 && last.elapsed() < std::time::Duration::from_secs(60)
             {
+                eprintln!(
+                    "EMBED: model load failed recently; skipping retry for 60s \
+                     (last failure {}s ago)",
+                    last.elapsed().as_secs()
+                );
                 return None;
             }
         }
@@ -124,7 +130,7 @@ impl SharedEmbedder {
         match Embedder::load(cache_dir) {
             Ok(e) => {
                 let e = Arc::new(e);
-                let f: EmbedFn = Arc::new(move |text: &str| e.embed(text));
+                let f: EmbedFn = Arc::new(move |texts: &[&str]| e.batch_embed(texts));
                 let mut state = self.inner.lock().unwrap();
                 state.embed = Some(f.clone());
                 Some(f)
@@ -196,6 +202,10 @@ impl Embedder {
     }
 
     /// Embeds `text` into a 384-dim L2-normalized vector.
+    ///
+    /// Single-text convenience wrapper around [`Self::batch_embed`]; the
+    /// embedding pipeline uses the batched path.
+    #[allow(dead_code)]
     pub fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let encoding = self
             .tokenizer
@@ -209,19 +219,72 @@ impl Embedder {
         let out = self
             .model
             .forward(&token_ids, &token_type_ids, Some(&attention_mask))?;
+        let pooled = self.pool(&out, &attention_mask)?;
 
-        // Masked mean pooling.
+        Ok(pooled.get(0)?.to_vec1()?)
+    }
+
+    /// Embeds a batch of texts in a single forward pass. Each text is truncated
+    /// to 512 tokens; shorter sequences are padded to the batch's max length
+    /// with the pad token id 0 (masked out of the pooling). Returns one
+    /// 384-dim L2-normalized vector per input.
+    pub fn batch_embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let encodings: Vec<_> = texts
+            .iter()
+            .map(|t| {
+                self.tokenizer
+                    .encode(*t, true)
+                    .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))
+            })
+            .collect::<Result<_>>()?;
+        let max_len = encodings
+            .iter()
+            .map(|e| e.get_ids().len())
+            .max()
+            .unwrap_or(0);
+        let batch = texts.len();
+        let mut input_ids = vec![0u32; batch * max_len];
+        let mut attention_mask = vec![0u32; batch * max_len];
+        let token_type_ids = vec![0u32; batch * max_len];
+        for (i, enc) in encodings.iter().enumerate() {
+            let ids = enc.get_ids();
+            let mask = enc.get_attention_mask();
+            for (j, (&id, &m)) in ids.iter().zip(mask.iter()).enumerate() {
+                input_ids[i * max_len + j] = id;
+                attention_mask[i * max_len + j] = m;
+            }
+        }
+        let input_ids =
+            Tensor::new(input_ids.as_slice(), &self.device)?.reshape((batch, max_len))?;
+        let attention_mask =
+            Tensor::new(attention_mask.as_slice(), &self.device)?.reshape((batch, max_len))?;
+        let token_type_ids =
+            Tensor::new(token_type_ids.as_slice(), &self.device)?.reshape((batch, max_len))?;
+
+        let out = self
+            .model
+            .forward(&input_ids, &token_type_ids, Some(&attention_mask))?;
+        let pooled = self.pool(&out, &attention_mask)?;
+
+        let mut result = Vec::with_capacity(batch);
+        for i in 0..batch {
+            result.push(pooled.get(i)?.to_vec1()?);
+        }
+        Ok(result)
+    }
+
+    /// Masked mean pooling + L2 normalization over the last hidden state.
+    fn pool(&self, out: &Tensor, attention_mask: &Tensor) -> Result<Tensor> {
         let mask_f = attention_mask.to_dtype(DType::F32)?.unsqueeze(2)?;
         let pooled = out
             .broadcast_mul(&mask_f)?
             .sum(1)?
             .broadcast_div(&mask_f.sum(1)?)?;
-
-        // L2 normalize.
         let norm = pooled.sqr()?.sum_keepdim(1)?.sqrt()?;
-        let pooled = pooled.broadcast_div(&norm)?;
-
-        Ok(pooled.get(0)?.to_vec1()?)
+        Ok(pooled.broadcast_div(&norm)?)
     }
 }
 

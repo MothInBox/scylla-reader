@@ -1,4 +1,4 @@
-use crate::types::{Book, Job, JobId, JobOutcome, JobStatus};
+use crate::types::{Book, ChapterDetail, ChapterRef, Job, JobId, JobOutcome, JobStatus};
 
 pub enum AppCommand {
     Scrape(String),
@@ -6,6 +6,7 @@ pub enum AppCommand {
     FetchChapter(String, usize),
     SetRateLimit(u64),
     FetchCover(String),
+    EmbedBatch(Vec<ChapterRef>),
     CancelJob(JobId),
     CancelAll,
     RetryJob(JobId),
@@ -26,11 +27,15 @@ pub struct ChapterContent {
 pub enum AppEvent {
     BookScraped(Book),
     ChapterFetched(ChapterContent),
+    /// A chapter that must be embedded regardless of the autoembed setting
+    /// (e.g. from an EmbedBatch job).
+    ChapterToEmbed(ChapterContent),
     ChapterFetchFailed,
     /// (url, raw image bytes) — the TUI decodes the image.
     CoverFetched(String, Vec<u8>),
     JobEnqueued(Job),
     JobStatusChanged(JobId, JobStatus),
+    JobDetailChanged(JobId, Vec<ChapterDetail>),
     WorkersChanged(u8),
     JobOutcome(JobId, JobOutcome),
     PluginInstalled(String, String),
@@ -232,6 +237,56 @@ mod tests {
             assert_eq!(msg, "Network error");
         } else {
             panic!("Expected PluginInstallFailed variant");
+        }
+    }
+
+    #[test]
+    fn test_app_command_embed_batch_construction() {
+        let chapters = vec![ChapterRef {
+            url: "http://example.com/ch1".into(),
+            idx: 0,
+            title: "Ch1".into(),
+        }];
+        let cmd = AppCommand::EmbedBatch(chapters);
+        if let AppCommand::EmbedBatch(chs) = &cmd {
+            assert_eq!(chs.len(), 1);
+            assert_eq!(chs[0].url, "http://example.com/ch1");
+            assert_eq!(chs[0].idx, 0);
+        } else {
+            panic!("Expected EmbedBatch variant");
+        }
+    }
+
+    #[test]
+    fn test_app_event_job_detail_changed_construction() {
+        let detail = vec![ChapterDetail {
+            title: "Ch1".into(),
+            url: "http://example.com/ch1".into(),
+            status: "Done".into(),
+        }];
+        let event = AppEvent::JobDetailChanged(7, detail);
+        if let AppEvent::JobDetailChanged(id, d) = &event {
+            assert_eq!(*id, 7);
+            assert_eq!(d[0].status, "Done");
+        } else {
+            panic!("Expected JobDetailChanged variant");
+        }
+    }
+
+    #[test]
+    fn test_app_event_chapter_to_embed_construction() {
+        let content = ChapterContent {
+            url: "http://example.com/ch1".into(),
+            chapter_idx: 0,
+            title: "Ch1".into(),
+            content: "text".into(),
+        };
+        let event = AppEvent::ChapterToEmbed(content);
+        if let AppEvent::ChapterToEmbed(c) = &event {
+            assert_eq!(c.url, "http://example.com/ch1");
+            assert_eq!(c.chapter_idx, 0);
+        } else {
+            panic!("Expected ChapterToEmbed variant");
         }
     }
 }

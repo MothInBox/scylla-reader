@@ -61,6 +61,37 @@ pub async fn enqueue_job(
     post_json(&format!("{}/api/jobs/enqueue", base), &body).await
 }
 
+/// POST /api/jobs/enqueue — kind "EmbedBatch" with a chapters array
+/// `(url, idx, title)`. The server runs ONE job that scrapes and embeds each
+/// chapter, emitting `JobDetailChanged` events with per-chapter status.
+pub async fn enqueue_embed_batch(
+    base: &str,
+    chapters: &[(String, usize, String)],
+) -> Result<(), String> {
+    let chapters_json: Vec<serde_json::Value> = chapters
+        .iter()
+        .map(|(url, idx, title)| serde_json::json!({ "url": url, "idx": idx, "title": title }))
+        .collect();
+    let body = serde_json::json!({ "kind": "EmbedBatch", "chapters": chapters_json });
+    post_json(&format!("{}/api/jobs/enqueue", base), &body).await
+}
+
+/// PATCH /api/settings — set the server's autoembed flag.
+pub async fn update_autoembed(base: &str, autoembed: bool) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .patch(format!("{}/api/settings", base))
+        .json(&serde_json::json!({ "autoembed": autoembed }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
+}
+
 /// POST /api/books — scrape trigger.
 pub async fn post_book(base: &str, url: &str) -> Result<(), String> {
     post_json(

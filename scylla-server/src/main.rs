@@ -10,10 +10,19 @@ use state::AppState;
 use tokio::sync::Mutex;
 
 /// Work item for the dedicated embedding thread.
+#[derive(Clone)]
 enum EmbedRequest {
     Chapter { chapter_url: String, text: String },
     Description { book_url: String, text: String },
 }
+
+/// Max requests collected into one batched forward pass.
+const EMBED_BATCH_SIZE: usize = 8;
+/// How long to wait for more requests before flushing a partial batch.
+const EMBED_BATCH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Embedding function used by the background embedder.
+type EmbedFn = dyn Fn(&[&str]) -> anyhow::Result<Vec<Vec<f32>>>;
 
 #[tokio::main]
 async fn main() {
@@ -61,6 +70,8 @@ async fn main() {
     let event_jobs = jobs.clone();
     let event_broadcast = job_events_tx.clone();
     let event_registry = registry.clone();
+    let autoembed = Arc::new(std::sync::Mutex::new(false));
+    let event_autoembed = autoembed.clone();
     let (embed_tx, embed_rx) = std::sync::mpsc::channel::<EmbedRequest>();
     let embed_db = db.clone();
     let shared_embedder = Arc::new(embeddings::SharedEmbedder::new());
@@ -70,82 +81,27 @@ async fn main() {
             std::collections::HashMap::new();
         let mut genre_embeddings: Option<Vec<(String, Vec<f32>)>> = None;
 
-        for req in embed_rx {
-            match req {
-                EmbedRequest::Chapter { chapter_url, text } => {
-                    let hash = content_hash(&text);
-                    // Skip if already embedded with the same content hash.
-                    let already = embed_db
-                        .blocking_lock()
-                        .get_chapter_embedding(&chapter_url)
-                        .ok()
-                        .flatten()
-                        .map(|(_, existing)| existing.as_deref() == Some(&hash))
-                        .unwrap_or(false);
-                    if already {
-                        continue;
-                    }
-                    let Some(embed) = thread_embedder.get() else {
-                        continue;
-                    };
-                    let embedding = match embed(&text) {
-                        Ok(e) => e,
-                        Err(e) => {
-                            eprintln!("Embedding failed for chapter {chapter_url}: {e}");
-                            continue;
-                        }
-                    };
-                    let book_url = embed_db
-                        .blocking_lock()
-                        .find_book_url_for_chapter(&chapter_url)
-                        .ok()
-                        .flatten();
-                    let db = embed_db.blocking_lock();
-                    if let Err(e) = db.upsert_chapter_embedding(
-                        &chapter_url,
-                        book_url.as_deref(),
-                        &embedding,
-                        Some(&hash),
-                    ) {
-                        eprintln!("Failed to store chapter embedding: {e}");
-                        continue;
-                    }
-                    drop(db);
-                    if let Some(book_url) = book_url {
-                        let count = chapter_counts.entry(book_url.clone()).or_insert(0);
-                        *count += 1;
-                        if should_recompute(*count) {
-                            recompute_aggregate(
-                                &embed_db,
-                                &book_url,
-                                &*embed,
-                                &mut genre_embeddings,
-                            );
-                        }
-                    }
-                }
-                EmbedRequest::Description { book_url, text } => {
-                    let Some(embed) = thread_embedder.get() else {
-                        continue;
-                    };
-                    let embedding = match embed(&text) {
-                        Ok(e) => e,
-                        Err(e) => {
-                            eprintln!("Embedding failed for description {book_url}: {e}");
-                            continue;
-                        }
-                    };
-                    let db = embed_db.blocking_lock();
-                    if let Err(e) =
-                        db.upsert_book_embedding(&book_url, Some(&embedding), None, None)
-                    {
-                        eprintln!("Failed to store description embedding: {e}");
-                        continue;
-                    }
-                    drop(db);
-                    recompute_aggregate(&embed_db, &book_url, &*embed, &mut genre_embeddings);
+        loop {
+            // Collect a batch of requests (block on the first, then drain more
+            // with a short timeout up to EMBED_BATCH_SIZE).
+            let mut batch = Vec::new();
+            match embed_rx.recv() {
+                Ok(req) => batch.push(req),
+                Err(_) => break, // channel closed
+            }
+            while batch.len() < EMBED_BATCH_SIZE {
+                match embed_rx.recv_timeout(EMBED_BATCH_TIMEOUT) {
+                    Ok(req) => batch.push(req),
+                    Err(_) => break,
                 }
             }
+            process_embed_batch(
+                &batch,
+                &embed_db,
+                &thread_embedder,
+                &mut chapter_counts,
+                &mut genre_embeddings,
+            );
         }
     });
 
@@ -176,6 +132,16 @@ async fn main() {
             routes::jobs::update_job_snapshot(&event_jobs, &event);
             routes::jobs::reload_registry_on_plugin_installed(&event_registry, &event);
             if let scylla_core::messenger::AppEvent::ChapterFetched(chapter) = &event {
+                // Automatic embedding is gated on the autoembed setting.
+                if *event_autoembed.lock().unwrap() {
+                    let _ = embed_tx.send(EmbedRequest::Chapter {
+                        chapter_url: chapter.url.clone(),
+                        text: chapter.content.clone(),
+                    });
+                }
+            }
+            if let scylla_core::messenger::AppEvent::ChapterToEmbed(chapter) = &event {
+                // EmbedBatch jobs must embed regardless of the autoembed setting.
                 let _ = embed_tx.send(EmbedRequest::Chapter {
                     chapter_url: chapter.url.clone(),
                     text: chapter.content.clone(),
@@ -191,7 +157,9 @@ async fn main() {
                 if let Err(e) = result {
                     eprintln!("Failed to persist scraped book: {e}");
                 }
-                if let Some(desc) = &book.description {
+                if *event_autoembed.lock().unwrap()
+                    && let Some(desc) = &book.description
+                {
                     let _ = embed_tx.send(EmbedRequest::Description {
                         book_url: book.url.clone(),
                         text: desc.clone(),
@@ -211,6 +179,7 @@ async fn main() {
         jobs,
         job_events: job_events_tx,
         embedder: shared_embedder,
+        autoembed,
     });
 
     let app = build_router(app_state);
@@ -329,7 +298,7 @@ fn build_router(app_state: Arc<AppState>) -> Router {
 fn recompute_aggregate(
     db: &Arc<tokio::sync::Mutex<db::ServerDb>>,
     book_url: &str,
-    embed: &dyn Fn(&str) -> anyhow::Result<Vec<f32>>,
+    embed: &EmbedFn,
     genre_embeddings: &mut Option<Vec<(String, Vec<f32>)>>,
 ) {
     let (desc, chapters) = {
@@ -356,8 +325,8 @@ fn recompute_aggregate(
         None => {
             let mut g = Vec::new();
             for (name, desc_text) in embeddings::GENRES {
-                match embed(desc_text) {
-                    Ok(e) => g.push((name.to_string(), e)),
+                match embed(&[desc_text]) {
+                    Ok(v) => g.push((name.to_string(), v[0].clone())),
                     Err(e) => eprintln!("Failed to embed genre {name}: {e}"),
                 }
             }
@@ -388,6 +357,125 @@ fn content_hash(text: &str) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// Whether a chapter should be skipped because it's already embedded with the
+/// same content hash.
+fn should_skip_embedding(
+    db: &Arc<tokio::sync::Mutex<db::ServerDb>>,
+    chapter_url: &str,
+    hash: &str,
+) -> bool {
+    db.blocking_lock()
+        .get_chapter_embedding(chapter_url)
+        .ok()
+        .flatten()
+        .map(|(_, existing)| existing.as_deref() == Some(hash))
+        .unwrap_or(false)
+}
+
+/// Embeds a collected batch of requests in one forward pass, then stores each
+/// result (per-request book_url lookup + upsert).
+fn process_embed_batch(
+    batch: &[EmbedRequest],
+    embed_db: &Arc<tokio::sync::Mutex<db::ServerDb>>,
+    thread_embedder: &embeddings::SharedEmbedder,
+    chapter_counts: &mut std::collections::HashMap<String, u32>,
+    genre_embeddings: &mut Option<Vec<(String, Vec<f32>)>>,
+) {
+    // Per-request skip checks (chapters already embedded with the same hash).
+    let mut pending: Vec<(EmbedRequest, String)> = Vec::new();
+    for req in batch {
+        match req {
+            EmbedRequest::Chapter { chapter_url, text } => {
+                let hash = content_hash(text);
+                if should_skip_embedding(embed_db, chapter_url, &hash) {
+                    eprintln!("EMBED: chapter {chapter_url} already embedded, skipping");
+                    continue;
+                }
+                pending.push((req.clone(), hash));
+            }
+            EmbedRequest::Description { .. } => {
+                pending.push((req.clone(), String::new()));
+            }
+        }
+    }
+    if pending.is_empty() {
+        return;
+    }
+    let Some(embed) = thread_embedder.get() else {
+        eprintln!(
+            "EMBED: embedder unavailable (model load failed or in cooldown) — \
+             skipping batch of {}",
+            pending.len()
+        );
+        return;
+    };
+    let texts: Vec<&str> = pending
+        .iter()
+        .map(|(req, _)| match req {
+            EmbedRequest::Chapter { text, .. } => text.as_str(),
+            EmbedRequest::Description { text, .. } => text.as_str(),
+        })
+        .collect();
+    let embeddings = match embed(&texts) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("EMBED: batch embedding failed ({} texts): {e}", texts.len());
+            return;
+        }
+    };
+    for ((req, hash), embedding) in pending.iter().zip(embeddings.iter()) {
+        match req {
+            EmbedRequest::Chapter { chapter_url, .. } => {
+                eprintln!("EMBED: embedding chapter {chapter_url}");
+                let book_url = embed_db
+                    .blocking_lock()
+                    .find_book_url_for_chapter(chapter_url)
+                    .ok()
+                    .flatten();
+                if book_url.is_none() {
+                    eprintln!(
+                        "EMBED: no book found for chapter {chapter_url} — \
+                         storing without book association (embedding-status will not count it)"
+                    );
+                }
+                let db = embed_db.blocking_lock();
+                if let Err(e) = db.upsert_chapter_embedding(
+                    chapter_url,
+                    book_url.as_deref(),
+                    embedding,
+                    Some(hash),
+                ) {
+                    eprintln!("EMBED: failed to store chapter embedding: {e}");
+                    continue;
+                }
+                drop(db);
+                eprintln!(
+                    "EMBED: stored embedding for chapter {chapter_url} (book: {:?})",
+                    book_url
+                );
+                if let Some(book_url) = book_url {
+                    let count = chapter_counts.entry(book_url.clone()).or_insert(0);
+                    *count += 1;
+                    if should_recompute(*count) {
+                        recompute_aggregate(embed_db, &book_url, &*embed, genre_embeddings);
+                    }
+                }
+            }
+            EmbedRequest::Description { book_url, .. } => {
+                eprintln!("EMBED: embedding description for {book_url}");
+                let db = embed_db.blocking_lock();
+                if let Err(e) = db.upsert_book_embedding(book_url, Some(embedding), None, None) {
+                    eprintln!("EMBED: failed to store description embedding: {e}");
+                    continue;
+                }
+                drop(db);
+                eprintln!("EMBED: stored description embedding for {book_url}");
+                recompute_aggregate(embed_db, book_url, &*embed, genre_embeddings);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,6 +504,7 @@ mod tests {
                 job_events:
                     tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
                 embedder: Arc::new(embeddings::SharedEmbedder::new()),
+                autoembed: Arc::new(std::sync::Mutex::new(false)),
             });
         build_router(state)
     }
@@ -441,6 +530,7 @@ mod tests {
                 job_events:
                     tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
                 embedder: Arc::new(embeddings::SharedEmbedder::new()),
+                autoembed: Arc::new(std::sync::Mutex::new(false)),
             });
         (build_router(state), cmd_rx)
     }
@@ -465,6 +555,7 @@ mod tests {
                 job_events:
                     tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
                 embedder: Arc::new(embeddings::SharedEmbedder::with_embed(embed)),
+                autoembed: Arc::new(std::sync::Mutex::new(false)),
             });
         (build_router(state), db)
     }
@@ -487,6 +578,7 @@ mod tests {
                 job_events:
                     tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
                 embedder: Arc::new(embeddings::SharedEmbedder::in_cooldown()),
+                autoembed: Arc::new(std::sync::Mutex::new(false)),
             });
         build_router(state)
     }
@@ -814,6 +906,7 @@ mod tests {
         let json = body_json(resp).await;
         assert_eq!(json["max_workers"], 4);
         assert_eq!(json["rate_limit"], 2);
+        assert_eq!(json["autoembed"], false);
     }
 
     #[tokio::test]
@@ -826,7 +919,9 @@ mod tests {
                     .method("PATCH")
                     .uri("/api/settings")
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"max_workers":8,"rate_limit":5}"#))
+                    .body(Body::from(
+                        r#"{"max_workers":8,"rate_limit":5,"autoembed":true}"#,
+                    ))
                     .unwrap(),
             )
             .await
@@ -845,6 +940,7 @@ mod tests {
         let json = body_json(resp).await;
         assert_eq!(json["max_workers"], 8);
         assert_eq!(json["rate_limit"], 5);
+        assert_eq!(json["autoembed"], true);
     }
 
     #[tokio::test]
@@ -900,6 +996,7 @@ mod tests {
             completed_at_ms: None,
             error: None,
             outcome: None,
+            detail: None,
         }]));
         let state =
             Arc::new(AppState {
@@ -912,6 +1009,7 @@ mod tests {
                 job_events:
                     tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
                 embedder: Arc::new(embeddings::SharedEmbedder::new()),
+                autoembed: Arc::new(std::sync::Mutex::new(false)),
             });
         let app = build_router(state);
 
@@ -1046,6 +1144,7 @@ mod tests {
                 completed_at_ms: None,
                 error: None,
                 outcome: None,
+                detail: None,
             },
             scylla_core::types::JobDto {
                 id: 2,
@@ -1059,6 +1158,7 @@ mod tests {
                 completed_at_ms: None,
                 error: None,
                 outcome: None,
+                detail: None,
             },
         ]));
         let state =
@@ -1072,6 +1172,7 @@ mod tests {
                 job_events:
                     tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
                 embedder: Arc::new(embeddings::SharedEmbedder::new()),
+                autoembed: Arc::new(std::sync::Mutex::new(false)),
             });
         let app = build_router(state);
 
@@ -1130,6 +1231,7 @@ mod tests {
             completed_at_ms: None,
             error: None,
             outcome: None,
+            detail: None,
         }]));
         let state =
             Arc::new(AppState {
@@ -1142,6 +1244,7 @@ mod tests {
                 job_events:
                     tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
                 embedder: Arc::new(embeddings::SharedEmbedder::new()),
+                autoembed: Arc::new(std::sync::Mutex::new(false)),
             });
         let app = build_router(state);
 
@@ -1357,6 +1460,9 @@ mod tests {
             r#"{"kind":"FetchChapter","url":"http://example.com/ch1"}"#,
             r#"{"kind":"Scrape"}"#,
             r#"{"kind":"Scrape","url":""}"#,
+            r#"{"kind":"EmbedBatch"}"#,
+            r#"{"kind":"EmbedBatch","chapters":[]}"#,
+            r#"{"kind":"EmbedBatch","chapters":[{"idx":0,"title":"Ch1"}]}"#,
         ];
         for body in cases {
             let resp = app
@@ -1372,6 +1478,38 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "body: {}", body);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_embed_batch_sends_command() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/enqueue")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"kind":"EmbedBatch","chapters":[{"url":"http://example.com/ch1","idx":0,"title":"Ch 1"},{"url":"http://example.com/ch2","idx":1,"title":"Ch 2"}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        match cmd {
+            scylla_core::messenger::AppCommand::EmbedBatch(chapters) => {
+                assert_eq!(chapters.len(), 2);
+                assert_eq!(chapters[0].url, "http://example.com/ch1");
+                assert_eq!(chapters[0].idx, 0);
+                assert_eq!(chapters[0].title, "Ch 1");
+                assert_eq!(chapters[1].url, "http://example.com/ch2");
+            }
+            _ => panic!("expected EmbedBatch command"),
         }
     }
 
@@ -1439,6 +1577,7 @@ mod tests {
                 job_events:
                     tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
                 embedder: Arc::new(embeddings::SharedEmbedder::new()),
+                autoembed: Arc::new(std::sync::Mutex::new(false)),
             });
         let app = build_router(state);
 
@@ -1547,7 +1686,7 @@ mod tests {
     }
 
     fn stub_embed(vec: Vec<f32>) -> embeddings::EmbedFn {
-        Arc::new(move |_text: &str| Ok(vec.clone()))
+        Arc::new(move |texts: &[&str]| Ok(vec![vec.clone(); texts.len()]))
     }
 
     #[tokio::test]
@@ -1847,5 +1986,139 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Reproduces the embedding thread's Chapter handling: skip check → embed →
+    /// find book → upsert. Verifies the embedding-status reflects the stored row.
+    #[tokio::test]
+    async fn test_embed_chapter_flow_stores_embedding() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let book = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![scylla_core::types::Chapter {
+                url: "https://example.com/ch1".into(),
+                title: "Chapter 1".into(),
+                order: 1,
+            }],
+        };
+        db.lock().await.upsert_book(&book).unwrap();
+
+        let chapter_url = "https://example.com/ch1".to_string();
+        let text = "chapter content".to_string();
+        let hash = content_hash(&text);
+
+        // Skip check: not embedded yet.
+        let existing = db.lock().await.get_chapter_embedding(&chapter_url).unwrap();
+        assert!(existing.is_none());
+
+        // Embed (stub) + find book + upsert — mirroring the embedding thread.
+        let embedding = vec![1.0, 0.0];
+        let book_url = db
+            .lock()
+            .await
+            .find_book_url_for_chapter(&chapter_url)
+            .unwrap();
+        assert_eq!(book_url.as_deref(), Some("book-a"));
+        db.lock()
+            .await
+            .upsert_chapter_embedding(&chapter_url, book_url.as_deref(), &embedding, Some(&hash))
+            .unwrap();
+
+        // Embedding-status must now report 1 embedded chapter.
+        let (embedded, total, _, _, urls) =
+            db.lock().await.embedding_status("book-a").unwrap().unwrap();
+        assert_eq!(embedded, 1);
+        assert_eq!(total, 1);
+        assert_eq!(urls, vec![chapter_url]);
+    }
+
+    #[test]
+    fn test_should_skip_embedding() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let chapter_url = "https://example.com/ch1";
+        let hash = content_hash("content");
+
+        // Not embedded yet → don't skip.
+        assert!(!should_skip_embedding(&db, chapter_url, &hash));
+
+        // Store an embedding with the same hash → skip.
+        db.blocking_lock()
+            .upsert_chapter_embedding(chapter_url, None, &[1.0, 0.0], Some(&hash))
+            .unwrap();
+        assert!(should_skip_embedding(&db, chapter_url, &hash));
+
+        // Different content hash → don't skip (content changed).
+        let other_hash = content_hash("different content");
+        assert!(!should_skip_embedding(&db, chapter_url, &other_hash));
+    }
+
+    #[test]
+    fn test_process_embed_batch_stores_chapters() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let book = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![
+                scylla_core::types::Chapter {
+                    url: "https://example.com/ch1".into(),
+                    title: "Ch1".into(),
+                    order: 1,
+                },
+                scylla_core::types::Chapter {
+                    url: "https://example.com/ch2".into(),
+                    title: "Ch2".into(),
+                    order: 2,
+                },
+            ],
+        };
+        db.blocking_lock().upsert_book(&book).unwrap();
+
+        let embedder = embeddings::SharedEmbedder::with_embed(stub_embed(vec![1.0, 0.0]));
+        let batch = vec![
+            EmbedRequest::Chapter {
+                chapter_url: "https://example.com/ch1".into(),
+                text: "content one".into(),
+            },
+            EmbedRequest::Chapter {
+                chapter_url: "https://example.com/ch2".into(),
+                text: "content two".into(),
+            },
+        ];
+        let mut chapter_counts = std::collections::HashMap::new();
+        let mut genre_embeddings = None;
+        process_embed_batch(
+            &batch,
+            &db,
+            &embedder,
+            &mut chapter_counts,
+            &mut genre_embeddings,
+        );
+
+        let (embedded, total, _, _, urls) = db
+            .blocking_lock()
+            .embedding_status("book-a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(embedded, 2);
+        assert_eq!(total, 2);
+        assert_eq!(urls.len(), 2);
+        assert!(urls.contains(&"https://example.com/ch1".to_string()));
+        assert!(urls.contains(&"https://example.com/ch2".to_string()));
     }
 }

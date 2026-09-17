@@ -1,6 +1,6 @@
 use crate::messenger::{AppCommand, AppEvent, ChapterContent};
 use crate::scraper::ScraperRegistry;
-use crate::types::{Job, JobId, JobKind, JobOutcome, JobPriority, JobStatus};
+use crate::types::{ChapterDetail, Job, JobId, JobKind, JobOutcome, JobPriority, JobStatus};
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -124,8 +124,9 @@ impl JobManager {
                         }
                     }
                     JobKind::FetchChapter(url, idx) => {
+                        let cleaned = clean_url(url);
                         let reg = registry.lock().unwrap();
-                        match runtime_ref.block_on(reg.scrape_chapter(url)) {
+                        match runtime_ref.block_on(reg.scrape_chapter(&cleaned)) {
                             Ok((title, content)) => {
                                 let _ = event_tx.send(AppEvent::ChapterFetched(ChapterContent {
                                     url: url.clone(),
@@ -156,6 +157,45 @@ impl JobManager {
                         },
                         Err(e) => (Err(format!("Cover fetch: {}", e)), None),
                     },
+                    JobKind::EmbedBatch(chapters) => {
+                        let mut detail: Vec<ChapterDetail> = chapters
+                            .iter()
+                            .map(|c| ChapterDetail {
+                                title: c.title.clone(),
+                                url: c.url.clone(),
+                                status: "Pending".into(),
+                            })
+                            .collect();
+                        let mut any_ok = false;
+                        let mut last_err = String::new();
+                        for (i, ch) in chapters.iter().enumerate() {
+                            let reg = registry.lock().unwrap();
+                            match runtime_ref.block_on(reg.scrape_chapter(&ch.url)) {
+                                Ok((title, content)) => {
+                                    let _ =
+                                        event_tx.send(AppEvent::ChapterToEmbed(ChapterContent {
+                                            url: ch.url.clone(),
+                                            chapter_idx: ch.idx,
+                                            title: title.clone(),
+                                            content: content.clone(),
+                                        }));
+                                    detail[i].status = "Done".into();
+                                    any_ok = true;
+                                }
+                                Err(e) => {
+                                    detail[i].status = "Failed".into();
+                                    last_err = e.to_string();
+                                }
+                            }
+                            let _ =
+                                event_tx.send(AppEvent::JobDetailChanged(job.id, detail.clone()));
+                        }
+                        if any_ok {
+                            (Ok(()), None)
+                        } else {
+                            (Err(last_err), None)
+                        }
+                    }
                 };
 
                 if outcome.is_some() {
@@ -286,13 +326,12 @@ impl JobManager {
                 let _ = self.event_tx.send(AppEvent::JobEnqueued(job));
             }
             AppCommand::FetchChapter(url, idx) => {
-                let cleaned = clean_url(&url);
                 let id = self.next_job_id;
                 self.next_job_id += 1;
-                let target = format!("{} ch{}", cleaned, idx);
+                let target = format!("{} ch{}", url, idx);
                 let job = Job::new(
                     id,
-                    JobKind::FetchChapter(cleaned, idx),
+                    JobKind::FetchChapter(url, idx),
                     target,
                     JobPriority::High,
                 );
@@ -304,6 +343,29 @@ impl JobManager {
                 self.next_job_id += 1;
                 let target = url.clone();
                 let job = Job::new(id, JobKind::FetchCover(url), target, JobPriority::High);
+                self.job_queue.push(job.clone());
+                let _ = self.event_tx.send(AppEvent::JobEnqueued(job));
+            }
+            AppCommand::EmbedBatch(chapters) => {
+                let id = self.next_job_id;
+                self.next_job_id += 1;
+                let target = format!("Embed {} chapters", chapters.len());
+                let mut job =
+                    Job::new(id, JobKind::EmbedBatch(chapters), target, JobPriority::High);
+                job.detail = Some(
+                    job.kind
+                        .chapters()
+                        .map(|chs| {
+                            chs.iter()
+                                .map(|c| ChapterDetail {
+                                    title: c.title.clone(),
+                                    url: c.url.clone(),
+                                    status: "Pending".into(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                );
                 self.job_queue.push(job.clone());
                 let _ = self.event_tx.send(AppEvent::JobEnqueued(job));
             }
@@ -416,6 +478,7 @@ fn clean_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::ChapterRef;
 
     #[test]
     fn test_clean_url_no_brackets() {
@@ -542,5 +605,34 @@ mod tests {
                 .count()
                 == 2
         );
+    }
+
+    #[test]
+    fn test_embed_batch_enqueue_sets_detail() {
+        let (mut manager, event_rx) = test_manager();
+        let chapters = vec![
+            ChapterRef {
+                url: "http://example.com/ch1".into(),
+                idx: 0,
+                title: "Ch1".into(),
+            },
+            ChapterRef {
+                url: "http://example.com/ch2".into(),
+                idx: 1,
+                title: "Ch2".into(),
+            },
+        ];
+        manager.handle_command(AppCommand::EmbedBatch(chapters));
+
+        let event = event_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(event, AppEvent::JobEnqueued(_)));
+        assert_eq!(manager.job_queue.len(), 1);
+        let job = &manager.job_queue[0];
+        assert!(matches!(job.kind, JobKind::EmbedBatch(_)));
+        let detail = job.detail.as_ref().unwrap();
+        assert_eq!(detail.len(), 2);
+        assert_eq!(detail[0].status, "Pending");
+        assert_eq!(detail[0].title, "Ch1");
+        assert_eq!(detail[1].url, "http://example.com/ch2");
     }
 }

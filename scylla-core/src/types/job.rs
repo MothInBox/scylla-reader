@@ -5,11 +5,29 @@ use serde::{Deserialize, Serialize};
 
 pub type JobId = u64;
 
+/// A chapter reference for an `EmbedBatch` job.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChapterRef {
+    pub url: String,
+    pub idx: usize,
+    pub title: String,
+}
+
+/// Per-chapter status within an `EmbedBatch` job's detail.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChapterDetail {
+    pub title: String,
+    pub url: String,
+    /// "Pending" | "Done" | "Failed"
+    pub status: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum JobKind {
     Scrape(String),
     FetchChapter(String, usize),
     FetchCover(String),
+    EmbedBatch(Vec<ChapterRef>),
 }
 
 impl JobKind {
@@ -17,6 +35,7 @@ impl JobKind {
         match self {
             JobKind::Scrape(url) | JobKind::FetchCover(url) => url,
             JobKind::FetchChapter(url, _) => url,
+            JobKind::EmbedBatch(chapters) => chapters.first().map(|c| c.url.as_str()).unwrap_or(""),
         }
     }
 
@@ -25,6 +44,7 @@ impl JobKind {
             JobKind::Scrape(_) => "Scrape",
             JobKind::FetchChapter(_, _) => "FetchCh",
             JobKind::FetchCover(_) => "Cover",
+            JobKind::EmbedBatch(_) => "EmbedBatch",
         }
     }
 
@@ -34,6 +54,15 @@ impl JobKind {
             JobKind::Scrape(_) => "Scrape",
             JobKind::FetchChapter(_, _) => "FetchChapter",
             JobKind::FetchCover(_) => "FetchCover",
+            JobKind::EmbedBatch(_) => "EmbedBatch",
+        }
+    }
+
+    /// The chapter refs for an `EmbedBatch` job, `None` for other kinds.
+    pub fn chapters(&self) -> Option<&[ChapterRef]> {
+        match self {
+            JobKind::EmbedBatch(chapters) => Some(chapters),
+            _ => None,
         }
     }
 }
@@ -103,6 +132,8 @@ pub struct Job {
     pub completed_at: Option<Instant>,
     pub error: Option<String>,
     pub outcome: Option<JobOutcome>,
+    /// Per-chapter detail for `EmbedBatch` jobs (e.g. "Pending"/"Done"/"Failed").
+    pub detail: Option<Vec<ChapterDetail>>,
 }
 
 impl Job {
@@ -118,6 +149,7 @@ impl Job {
             completed_at: None,
             error: None,
             outcome: None,
+            detail: None,
         }
     }
 }
@@ -145,7 +177,7 @@ pub fn job_now_ms() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JobDto {
     pub id: u64,
-    /// "Scrape" | "FetchChapter" | "FetchCover"
+    /// "Scrape" | "FetchChapter" | "FetchCover" | "EmbedBatch"
     pub kind: String,
     /// "Queued" | "Running" | "Completed" | "Failed" | "Cancelled"
     pub status: String,
@@ -159,6 +191,8 @@ pub struct JobDto {
     pub completed_at_ms: Option<u64>,
     pub error: Option<String>,
     pub outcome: Option<JobOutcomeDto>,
+    /// Per-chapter detail for `EmbedBatch` jobs.
+    pub detail: Option<Vec<ChapterDetail>>,
 }
 
 /// Serializable job outcome payload.
@@ -191,6 +225,7 @@ impl From<&Job> for JobDto {
             completed_at_ms: job.completed_at.map(to_ms),
             error: job.error.clone(),
             outcome: job.outcome.as_ref().map(JobOutcomeDto::from),
+            detail: job.detail.clone(),
         }
     }
 }
@@ -391,6 +426,8 @@ mod tests {
             "FetchChapter"
         );
         assert_eq!(JobKind::FetchCover("u".into()).as_str(), "FetchCover");
+        assert_eq!(JobKind::EmbedBatch(vec![]).as_str(), "EmbedBatch");
+        assert_eq!(JobKind::EmbedBatch(vec![]).label(), "EmbedBatch");
         assert_eq!(JobStatus::Queued.as_str(), "Queued");
         assert_eq!(JobStatus::Running.as_str(), "Running");
         assert_eq!(JobStatus::Completed.as_str(), "Completed");
@@ -398,5 +435,74 @@ mod tests {
         assert_eq!(JobStatus::Cancelled.as_str(), "Cancelled");
         assert_eq!(JobPriority::Normal.as_str(), "Normal");
         assert_eq!(JobPriority::High.as_str(), "High");
+    }
+
+    #[test]
+    fn test_chapter_ref_serde_roundtrip() {
+        let ch = ChapterRef {
+            url: "http://example.com/ch1".into(),
+            idx: 3,
+            title: "Chapter 3".into(),
+        };
+        let json = serde_json::to_string(&ch).unwrap();
+        let back: ChapterRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(ch, back);
+    }
+
+    #[test]
+    fn test_chapter_detail_serde_roundtrip() {
+        let d = ChapterDetail {
+            title: "Chapter 3".into(),
+            url: "http://example.com/ch1".into(),
+            status: "Done".into(),
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: ChapterDetail = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
+    }
+
+    #[test]
+    fn test_job_dto_detail_conversion() {
+        let chapters = vec![ChapterRef {
+            url: "http://example.com/ch1".into(),
+            idx: 0,
+            title: "Ch1".into(),
+        }];
+        let mut job = Job::new(
+            10,
+            JobKind::EmbedBatch(chapters),
+            "Embed 1 chapters".into(),
+            JobPriority::High,
+        );
+        job.detail = Some(vec![ChapterDetail {
+            title: "Ch1".into(),
+            url: "http://example.com/ch1".into(),
+            status: "Pending".into(),
+        }]);
+        let dto = JobDto::from(&job);
+        assert_eq!(dto.kind, "EmbedBatch");
+        let detail = dto.detail.unwrap();
+        assert_eq!(detail.len(), 1);
+        assert_eq!(detail[0].status, "Pending");
+        assert_eq!(detail[0].title, "Ch1");
+    }
+
+    #[test]
+    fn test_embed_batch_target_is_first_chapter_url() {
+        let chapters = vec![
+            ChapterRef {
+                url: "http://example.com/ch1".into(),
+                idx: 0,
+                title: "Ch1".into(),
+            },
+            ChapterRef {
+                url: "http://example.com/ch2".into(),
+                idx: 1,
+                title: "Ch2".into(),
+            },
+        ];
+        let kind = JobKind::EmbedBatch(chapters);
+        assert_eq!(kind.target(), "http://example.com/ch1");
+        assert_eq!(JobKind::EmbedBatch(vec![]).target(), "");
     }
 }

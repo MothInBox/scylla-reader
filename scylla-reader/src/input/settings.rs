@@ -63,6 +63,22 @@ pub fn handle_settings_main(lib: &mut LibraryState, key: KeyEvent) -> bool {
                     lib.settings.reader_mode = lib.settings.reader_mode.toggle();
                     lib.settings.save();
                 }
+                SettingsField::AutoEmbed => {
+                    lib.server_settings.autoembed = !lib.server_settings.autoembed;
+                    let base = crate::storage::client::api_base_for(&lib.manager);
+                    if let Err(e) =
+                        crate::storage::client::block_on(crate::storage::client::update_autoembed(
+                            &base,
+                            lib.server_settings.autoembed,
+                        ))
+                    {
+                        crate::settings::log(
+                            crate::settings::LogLevel::Error,
+                            "INPUT",
+                            &format!("Failed to set autoembed: {}", e),
+                        );
+                    }
+                }
                 SettingsField::Plugins => {
                     lib.settings.reload_plugins();
                     lib.settings_ui.selected_plugin = 0;
@@ -331,6 +347,22 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_settings_main_enter_toggles_autoembed() {
+        // MockBackend → api_base is "http://mock" (non-resolvable), so the
+        // PATCH fails deterministically but the local value still flips.
+        let mut state = test_state_with_backend(Box::new(MockBackend::new("mock")));
+        state.lib.settings_ui.selected_field = 3; // SettingsField::AutoEmbed
+        assert!(!state.lib.server_settings.autoembed);
+
+        let result = handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
+        assert!(result);
+        assert!(state.lib.server_settings.autoembed);
+
+        handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
+        assert!(!state.lib.server_settings.autoembed);
+    }
+
+    #[test]
     fn test_handle_plugin_field_edit_enter_saves_and_goes_back() {
         let mut state = test_state();
         state.lib.settings_ui.settings_page = SettingsPage::PluginFieldEdit;
@@ -405,7 +437,7 @@ mod tests {
     fn test_handle_settings_main_enter_server_refreshes() {
         let mock = MockBackend::new("mock");
         let mut state = test_state_with_backend(Box::new(mock));
-        state.lib.settings_ui.selected_field = 4; // SettingsField::Server
+        state.lib.settings_ui.selected_field = 5; // SettingsField::Server
         handle_settings_main(&mut state.lib, key_event(KEY_ENTER));
         assert_eq!(state.lib.settings_ui.settings_page, SettingsPage::Server);
         // MockBackend's get_server_settings returns Err via the trait default,

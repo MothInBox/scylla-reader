@@ -37,7 +37,18 @@ fn draw_main(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
     let fields = SettingsField::all();
     let items: Vec<ListItem> = fields
         .iter()
-        .map(|f| ListItem::new(format!("  {}: {}", f.label(), lib.settings.field_value(f))))
+        .map(|f| {
+            let value = if *f == SettingsField::AutoEmbed {
+                if lib.server_settings.autoembed {
+                    "ON".to_string()
+                } else {
+                    "OFF".to_string()
+                }
+            } else {
+                lib.settings.field_value(f)
+            };
+            ListItem::new(format!("  {}: {}", f.label(), value))
+        })
         .collect();
 
     let list = List::new(items)
@@ -371,5 +382,28 @@ mod tests {
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(!content.contains("[Enter]"));
+    }
+
+    #[test]
+    fn test_settings_draw_shows_autoembed_value() {
+        let mut state = make_state();
+        state.lib.server_settings.autoembed = true;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &state.lib, &state.ui);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            content.contains("Auto-Embed New Chapters"),
+            "content: {}",
+            content
+        );
+        assert!(content.contains(": ON"), "content: {}", content);
     }
 }

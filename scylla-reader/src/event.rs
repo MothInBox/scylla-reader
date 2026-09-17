@@ -81,6 +81,22 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                 );
                 state.jobs.set_outcome(id, outcome);
             }
+            ServerEvent::JobDetailChanged { id, detail } => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    &format!("Job {} detail: {} chapters", id, detail.len()),
+                );
+                state.jobs.update_from_detail(id, detail);
+            }
+            ServerEvent::ChapterToEmbed { .. } => {
+                // Server-internal — the TUI ignores it.
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "UI",
+                    "ChapterToEmbed event ignored",
+                );
+            }
             ServerEvent::WorkersChanged { max_workers } => {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
@@ -162,6 +178,17 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     "UI",
                     &format!("Chapter received: {}", title),
                 );
+                if !state.reader.loading {
+                    // Background fetch (embed modal / crawl) — the user isn't
+                    // waiting for this chapter, so don't navigate to the reader
+                    // or touch session progress.
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "UI",
+                        "Background chapter fetch — skipping reader navigation",
+                    );
+                    continue;
+                }
                 let session_id = state.reader.session_id;
                 if let Some(book) = state.lib.library.selected_book_mut()
                     && let Some(session) = book.sessions.iter_mut().find(|s| s.id == session_id)
@@ -365,33 +392,72 @@ pub fn update_covers(state: &mut AppState, fetched_covers: &mut std::collections
     }
 }
 
-/// Fetch the embedding status for the selected book once per session and cache
-/// it, so the details panel can show embedding progress. Failures (e.g. the
-/// book isn't embedded yet) are logged at Debug and never panic.
+/// How often the selected book's embedding status is re-fetched so the
+/// "Embedded: N/M" indicator shows live progress as embed jobs complete.
+const EMBEDDING_STATUS_REFRESH: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Whether the embedding status for a book should be (re-)fetched: never
+/// fetched before, or the last fetch is older than [`EMBEDDING_STATUS_REFRESH`].
+fn should_refresh(last_fetch: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    match last_fetch {
+        None => true,
+        Some(last) => now.duration_since(last) >= EMBEDDING_STATUS_REFRESH,
+    }
+}
+
+/// Fetch the embedding status for the selected book and cache it, so the
+/// details panel can show embedding progress. Re-fetches periodically (see
+/// [`EMBEDDING_STATUS_REFRESH`]) so the indicator tracks live progress.
+/// Failures (e.g. the book isn't embedded yet) are logged at Debug and never
+/// panic.
 pub fn update_embedding_statuses(state: &mut AppState) {
     let current_url = state.lib.library.selected_book().map(|b| b.url.clone());
     let Some(url) = current_url else {
         return;
     };
-    if state.lib.library.embedding_status_cache.contains_key(&url) {
+    let last_fetch = state
+        .lib
+        .library
+        .embedding_status_fetched_at
+        .get(&url)
+        .copied();
+    if !should_refresh(last_fetch, std::time::Instant::now()) {
         return;
     }
     let base = crate::storage::client::api_base(state);
     match crate::storage::client::block_on(crate::storage::client::embedding_status(&base, &url)) {
         Ok(status) => {
-            state.lib.library.embedding_status_cache.insert(url, status);
+            state
+                .lib
+                .library
+                .embedding_status_cache
+                .insert(url.clone(), status);
+            state
+                .lib
+                .library
+                .embedding_status_fetched_at
+                .insert(url, std::time::Instant::now());
         }
-        Err(e) => crate::settings::log(
-            crate::settings::LogLevel::Debug,
-            "UI",
-            &format!("Failed to fetch embedding status for {}: {}", url, e),
-        ),
+        Err(e) => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "UI",
+                &format!("Failed to fetch embedding status for {}: {}", url, e),
+            );
+            // Record the attempt so we don't hammer a failing endpoint.
+            state
+                .lib
+                .library
+                .embedding_status_fetched_at
+                .insert(url, std::time::Instant::now());
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::Page;
     use crate::test_helpers::*;
     use scylla_core::types::{BookStatus, Chapter, JobDto, Progress, Session};
 
@@ -426,6 +492,7 @@ mod tests {
             completed_at_ms: None,
             error: None,
             outcome: None,
+            detail: None,
         }
     }
 
@@ -577,6 +644,7 @@ mod tests {
             });
         }
         state.reader.session_id = 42;
+        state.reader.loading = true; // user is waiting for this chapter
 
         send(
             &mut state,
@@ -594,6 +662,7 @@ mod tests {
             "expected update_progress call, got: {:?}",
             calls
         );
+        assert_eq!(state.ui.page, Page::Reader);
     }
 
     #[test]
@@ -602,6 +671,7 @@ mod tests {
         let calls = mock.calls.clone();
         let mut state = test_state_with_backend(Box::new(mock));
         state.reader.session_id = -1; // guest session (AI jump, book not in library)
+        state.reader.loading = true; // user is waiting for this chapter
 
         send(
             &mut state,
@@ -617,6 +687,34 @@ mod tests {
         assert!(
             !calls.iter().any(|c| c.starts_with("update_progress")),
             "expected no update_progress call for guest session, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_chapter_fetched_background_does_not_open_reader() {
+        let mock = MockBackend::new("mock");
+        let calls = mock.calls.clone();
+        let mut state = test_state_with_backend(Box::new(mock));
+        state.ui.page = Page::Library;
+        state.reader.loading = false; // background fetch (embed modal / crawl)
+
+        send(
+            &mut state,
+            ServerEvent::ChapterFetched {
+                url: "".into(),
+                chapter_idx: 3,
+                title: "Ch3".into(),
+                content: "text".into(),
+            },
+        );
+
+        // The reader page must NOT open and progress must NOT be updated.
+        assert_eq!(state.ui.page, Page::Library);
+        let calls = calls.lock().unwrap().clone();
+        assert!(
+            !calls.iter().any(|c| c.starts_with("update_progress")),
+            "expected no update_progress call for background fetch, got: {:?}",
             calls
         );
     }
@@ -722,6 +820,40 @@ mod tests {
         assert_eq!(state.jobs.jobs[0].status, "Running");
         assert_eq!(state.jobs.jobs[0].started_at_ms, Some(200));
         assert_eq!(state.jobs.active_count, 1);
+    }
+
+    #[test]
+    fn test_job_detail_changed_updates_job() {
+        let mut state = test_state();
+        state.jobs.jobs.push(sample_job(1, "Running"));
+        let detail = vec![scylla_core::types::ChapterDetail {
+            title: "1.1 Crappy Monday".into(),
+            url: "u1".into(),
+            status: "Done".into(),
+        }];
+        send(
+            &mut state,
+            ServerEvent::JobDetailChanged {
+                id: 1,
+                detail: detail.clone(),
+            },
+        );
+        assert_eq!(state.jobs.jobs[0].detail, Some(detail));
+    }
+
+    #[test]
+    fn test_chapter_to_embed_is_ignored() {
+        let mut state = test_state();
+        state.jobs.jobs.push(sample_job(1, "Running"));
+        send(
+            &mut state,
+            ServerEvent::ChapterToEmbed {
+                chapter: serde_json::json!({ "url": "u1", "idx": 0, "title": "Ch1" }),
+            },
+        );
+        // No state change — the event is a no-op.
+        assert_eq!(state.jobs.jobs[0].detail, None);
+        assert_eq!(state.ui.page, Page::Library);
     }
 
     #[test]
@@ -951,5 +1083,25 @@ mod tests {
         assert_eq!(groups[0].best_score, 0.9);
         assert_eq!(groups[0].chapters[0].chapter_idx, 1);
         assert_eq!(groups[0].chapters[1].chapter_idx, 0);
+    }
+
+    #[test]
+    fn test_should_refresh_never_fetched() {
+        let now = std::time::Instant::now();
+        assert!(should_refresh(None, now));
+    }
+
+    #[test]
+    fn test_should_refresh_stale_entry() {
+        let now = std::time::Instant::now();
+        let stale = now - std::time::Duration::from_secs(11);
+        assert!(should_refresh(Some(stale), now));
+    }
+
+    #[test]
+    fn test_should_refresh_recent_entry_skips() {
+        let now = std::time::Instant::now();
+        let recent = now - std::time::Duration::from_secs(5);
+        assert!(!should_refresh(Some(recent), now));
     }
 }

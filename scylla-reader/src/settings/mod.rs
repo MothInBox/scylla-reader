@@ -279,6 +279,7 @@ impl Settings {
                 }
             }
             SettingsField::ReaderMode => self.reader_mode.to_string(),
+            SettingsField::AutoEmbed => "ON/OFF".to_string(),
             SettingsField::Plugins => {
                 format!("{} domain(s)", self.plugin_configs.len())
             }

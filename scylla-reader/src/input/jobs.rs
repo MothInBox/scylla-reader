@@ -251,6 +251,7 @@ mod tests {
             completed_at_ms: None,
             error: None,
             outcome: None,
+            detail: None,
         }
     }
 

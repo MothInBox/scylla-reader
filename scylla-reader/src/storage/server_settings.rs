@@ -4,6 +4,7 @@ pub struct ServerSettingsState {
     pub port: u16,
     pub max_workers: u8,
     pub rate_limit: u64,
+    pub autoembed: bool,
     pub plugins: Vec<String>,
     pub loading: bool,
     pub error: Option<String>,
@@ -16,6 +17,7 @@ impl ServerSettingsState {
             port: 8080,
             max_workers: 4,
             rate_limit: 2,
+            autoembed: false,
             plugins: vec![],
             loading: false,
             error: None,
@@ -29,6 +31,10 @@ impl ServerSettingsState {
                 self.port = v.get("port").and_then(|x| x.as_u64()).unwrap_or(8080) as u16;
                 self.max_workers = v.get("max_workers").and_then(|x| x.as_u64()).unwrap_or(4) as u8;
                 self.rate_limit = v.get("rate_limit").and_then(|x| x.as_u64()).unwrap_or(2);
+                self.autoembed = v
+                    .get("autoembed")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false);
                 self.plugins = v
                     .get("plugins")
                     .and_then(|x| x.as_array())
@@ -68,6 +74,7 @@ mod tests {
             "port": 9090,
             "max_workers": 8,
             "rate_limit": 5,
+            "autoembed": true,
             "plugins": ["p1"],
         }));
         let mut state = ServerSettingsState::new();
@@ -76,6 +83,7 @@ mod tests {
         assert_eq!(state.port, 9090);
         assert_eq!(state.max_workers, 8);
         assert_eq!(state.rate_limit, 5);
+        assert!(state.autoembed);
         assert_eq!(state.plugins, vec!["p1"]);
         assert!(state.error.is_none());
     }

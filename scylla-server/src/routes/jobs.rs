@@ -133,23 +133,27 @@ pub async fn set_rate_limit(
     StatusCode::OK
 }
 
-/// POST /api/jobs/enqueue — body `{"kind": "Scrape"|"FetchChapter"|"FetchCover",
-/// "url": "...", "chapter_idx": N?}`.
+/// POST /api/jobs/enqueue — body `{"kind": "Scrape"|"FetchChapter"|"FetchCover"|"EmbedBatch",
+/// "url": "...", "chapter_idx": N?, "chapters": [{"url","idx","title"}, ...]}`.
 pub async fn enqueue_job(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
 ) -> StatusCode {
     let kind = payload.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-    let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("");
-    if url.is_empty() {
-        return StatusCode::BAD_REQUEST;
-    }
     match kind {
         "Scrape" => {
+            let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            if url.is_empty() {
+                return StatusCode::BAD_REQUEST;
+            }
             let _ = state.cmd_tx.send(AppCommand::Scrape(url.to_string()));
             StatusCode::ACCEPTED
         }
         "FetchChapter" => {
+            let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            if url.is_empty() {
+                return StatusCode::BAD_REQUEST;
+            }
             let Some(idx) = payload.get("chapter_idx").and_then(|v| v.as_u64()) else {
                 return StatusCode::BAD_REQUEST;
             };
@@ -159,7 +163,36 @@ pub async fn enqueue_job(
             StatusCode::ACCEPTED
         }
         "FetchCover" => {
+            let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            if url.is_empty() {
+                return StatusCode::BAD_REQUEST;
+            }
             let _ = state.cmd_tx.send(AppCommand::FetchCover(url.to_string()));
+            StatusCode::ACCEPTED
+        }
+        "EmbedBatch" => {
+            let Some(chapters) = payload.get("chapters").and_then(|v| v.as_array()) else {
+                return StatusCode::BAD_REQUEST;
+            };
+            if chapters.is_empty() {
+                return StatusCode::BAD_REQUEST;
+            }
+            let mut refs = Vec::with_capacity(chapters.len());
+            for ch in chapters {
+                let Some(url) = ch.get("url").and_then(|v| v.as_str()) else {
+                    return StatusCode::BAD_REQUEST;
+                };
+                let Some(idx) = ch.get("idx").and_then(|v| v.as_u64()) else {
+                    return StatusCode::BAD_REQUEST;
+                };
+                let title = ch.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                refs.push(scylla_core::types::ChapterRef {
+                    url: url.to_string(),
+                    idx: idx as usize,
+                    title: title.to_string(),
+                });
+            }
+            let _ = state.cmd_tx.send(AppCommand::EmbedBatch(refs));
             StatusCode::ACCEPTED
         }
         _ => StatusCode::BAD_REQUEST,
@@ -196,6 +229,11 @@ pub fn update_job_snapshot(jobs: &Arc<std::sync::Mutex<Vec<JobDto>>>, event: &Ap
         AppEvent::JobOutcome(id, outcome) => {
             if let Some(job) = jobs.iter_mut().find(|j| j.id == *id) {
                 job.outcome = Some(JobOutcomeDto::from(outcome));
+            }
+        }
+        AppEvent::JobDetailChanged(id, detail) => {
+            if let Some(job) = jobs.iter_mut().find(|j| j.id == *id) {
+                job.detail = Some(detail.clone());
             }
         }
         _ => {}
@@ -241,6 +279,11 @@ pub fn event_to_envelope(
             "id": id,
             "outcome": JobOutcomeDto::from(outcome),
         }),
+        AppEvent::JobDetailChanged(id, detail) => json!({
+            "type": "JobDetailChanged",
+            "id": id,
+            "detail": detail,
+        }),
         AppEvent::WorkersChanged(n) => json!({
             "type": "WorkersChanged",
             "max_workers": n,
@@ -251,6 +294,15 @@ pub fn event_to_envelope(
         }),
         AppEvent::ChapterFetched(c) => json!({
             "type": "ChapterFetched",
+            "chapter": {
+                "url": c.url,
+                "chapter_idx": c.chapter_idx,
+                "title": c.title,
+                "content": c.content,
+            },
+        }),
+        AppEvent::ChapterToEmbed(c) => json!({
+            "type": "ChapterToEmbed",
             "chapter": {
                 "url": c.url,
                 "chapter_idx": c.chapter_idx,
@@ -361,6 +413,7 @@ mod tests {
             completed_at_ms: Some(300),
             error: None,
             outcome: None,
+            detail: None,
         });
         let envelope =
             event_to_envelope(&AppEvent::JobStatusChanged(2, JobStatus::Completed), &jobs);
@@ -431,6 +484,22 @@ mod tests {
     fn test_envelope_chapter_fetch_failed() {
         let envelope = event_to_envelope(&AppEvent::ChapterFetchFailed, &empty_jobs());
         assert_eq!(envelope["type"], "ChapterFetchFailed");
+    }
+
+    #[test]
+    fn test_envelope_chapter_to_embed() {
+        let content = scylla_core::messenger::ChapterContent {
+            url: "http://example.com/ch1".into(),
+            chapter_idx: 0,
+            title: "Ch1".into(),
+            content: "text".into(),
+        };
+        let envelope = event_to_envelope(&AppEvent::ChapterToEmbed(content), &empty_jobs());
+        assert_eq!(envelope["type"], "ChapterToEmbed");
+        assert_eq!(envelope["chapter"]["url"], "http://example.com/ch1");
+        assert_eq!(envelope["chapter"]["chapter_idx"], 0);
+        assert_eq!(envelope["chapter"]["title"], "Ch1");
+        assert_eq!(envelope["chapter"]["content"], "text");
     }
 
     #[test]
@@ -532,5 +601,38 @@ mod tests {
             &AppEvent::PluginInstalled("example.com".into(), "/p.wasm".into()),
         ));
         assert!(registry.lock().is_ok());
+    }
+
+    #[test]
+    fn test_envelope_job_detail_changed() {
+        let detail = vec![scylla_core::types::ChapterDetail {
+            title: "Ch1".into(),
+            url: "http://example.com/ch1".into(),
+            status: "Done".into(),
+        }];
+        let envelope = event_to_envelope(&AppEvent::JobDetailChanged(3, detail), &empty_jobs());
+        assert_eq!(envelope["type"], "JobDetailChanged");
+        assert_eq!(envelope["id"], 3);
+        assert_eq!(envelope["detail"][0]["status"], "Done");
+        assert_eq!(envelope["detail"][0]["title"], "Ch1");
+    }
+
+    #[test]
+    fn test_update_job_snapshot_job_detail_changed() {
+        let jobs: Arc<std::sync::Mutex<Vec<JobDto>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        update_job_snapshot(&jobs, &AppEvent::JobEnqueued(sample_job(4)));
+        let detail = vec![scylla_core::types::ChapterDetail {
+            title: "Ch1".into(),
+            url: "http://example.com/ch1".into(),
+            status: "Done".into(),
+        }];
+        update_job_snapshot(&jobs, &AppEvent::JobDetailChanged(4, detail));
+
+        let snapshot = jobs.lock().unwrap();
+        let job = &snapshot[0];
+        let detail = job.detail.as_ref().unwrap();
+        assert_eq!(detail.len(), 1);
+        assert_eq!(detail[0].status, "Done");
     }
 }

@@ -43,46 +43,36 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
             true
         }
         KEY_EMBED => {
-            if let Some(book) = lib.library.selected_book() {
+            let book = lib
+                .library
+                .selected_book()
+                .map(|b| (b.url.clone(), b.title.clone(), b.chapters.clone()));
+            if let Some((book_url, book_title, chapters)) = book {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
                     "INPUT",
-                    &format!("Opening embed-chapters for {}", book.title),
+                    &format!("Opening embed-chapters for {}", book_title),
                 );
-                // Already-embedded chapter URLs come from the cached status, or
-                // a synchronous fetch when not cached yet.
-                let embedded_urls =
-                    if let Some(status) = lib.library.embedding_status_cache.get(&book.url) {
-                        status.embedded_chapter_urls.clone()
-                    } else {
-                        let base = crate::storage::client::api_base_for(&lib.manager);
-                        match crate::storage::client::block_on(
-                            crate::storage::client::embedding_status(&base, &book.url),
-                        ) {
-                            Ok(status) => status.embedded_chapter_urls,
-                            Err(e) => {
-                                crate::settings::log(
-                                    crate::settings::LogLevel::Debug,
-                                    "INPUT",
-                                    &format!(
-                                        "Failed to fetch embedding status for {}: {}",
-                                        book.url, e
-                                    ),
-                                );
-                                Vec::new()
-                            }
-                        }
-                    };
+                // Always fetch a fresh embedding status so the modal reflects
+                // chapters embedded since the last fetch; on error fall back to
+                // the cached status (or empty).
+                let base = crate::storage::client::api_base_for(&lib.manager);
+                let fetch = crate::storage::client::block_on(
+                    crate::storage::client::embedding_status(&base, &book_url),
+                );
+                let embedded_urls = resolve_embedded_urls(
+                    &mut lib.library.embedding_status_cache,
+                    &book_url,
+                    fetch,
+                );
                 // Start the cursor on the first selectable (non-embedded) row.
-                let initial_cursor = book
-                    .chapters
-                    .iter()
-                    .position(|ch| !embedded_urls.contains(&ch.url))
-                    .unwrap_or(0);
+                let initial_cursor =
+                    crate::input::modal::first_selectable(&chapters, &embedded_urls);
+                let selected = vec![false; chapters.len()];
                 ui.modal = Modal::EmbedChapters {
-                    book_url: book.url.clone(),
-                    chapters: book.chapters.clone(),
-                    selected: vec![false; book.chapters.len()],
+                    book_url,
+                    chapters,
+                    selected,
                     embedded_urls,
                     cursor: initial_cursor,
                     scroll_offset: 0,
@@ -170,6 +160,33 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
             true
         }
         _ => true,
+    }
+}
+
+/// Resolve the embedded chapter URLs for the embed modal from a fresh fetch:
+/// on success, update the cache and return the fresh URLs; on error, fall back
+/// to the cached status if present, else empty.
+fn resolve_embedded_urls(
+    cache: &mut std::collections::HashMap<String, crate::storage::client::EmbeddingStatus>,
+    book_url: &str,
+    fetch: Result<crate::storage::client::EmbeddingStatus, String>,
+) -> Vec<String> {
+    match fetch {
+        Ok(status) => {
+            cache.insert(book_url.to_string(), status.clone());
+            status.embedded_chapter_urls
+        }
+        Err(e) => {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "INPUT",
+                &format!("Failed to fetch embedding status for {}: {}", book_url, e),
+            );
+            cache
+                .get(book_url)
+                .map(|s| s.embedded_chapter_urls.clone())
+                .unwrap_or_default()
+        }
     }
 }
 
@@ -361,5 +378,96 @@ mod tests {
         let mut state = test_state();
         let result = handle_library(&mut state.ui, &mut state.lib, key_event(KeyCode::Char('x')));
         assert!(result);
+    }
+
+    #[test]
+    fn test_handle_library_e_opens_embed_chapters_on_first_selectable() {
+        // MockBackend → api_base is "http://mock" (non-resolvable), so the
+        // fresh fetch always fails and the opener falls back to the cache.
+        let mut state = test_state_with_backend(Box::new(MockBackend::new("mock")));
+        state.lib.library.add_book("Test".into(), "url".into());
+        if let Some(book) = state.lib.library.books.iter_mut().find(|b| b.url == "url") {
+            book.chapters = vec![
+                crate::models::Chapter {
+                    title: "Ch0".into(),
+                    url: "u0".into(),
+                    order: 0,
+                },
+                crate::models::Chapter {
+                    title: "Ch1".into(),
+                    url: "u1".into(),
+                    order: 1,
+                },
+                crate::models::Chapter {
+                    title: "Ch2".into(),
+                    url: "u2".into(),
+                    order: 2,
+                },
+            ];
+        }
+        // ch0 and ch1 embedded → the cursor must land on ch2 (first selectable).
+        state.lib.library.embedding_status_cache.insert(
+            "url".into(),
+            crate::storage::client::EmbeddingStatus {
+                embedded_chapters: 2,
+                total_chapters: 3,
+                aggregate: true,
+                genres: vec![],
+                embedded_chapter_urls: vec!["u0".into(), "u1".into()],
+            },
+        );
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_EMBED));
+        assert!(result);
+        match &state.ui.modal {
+            Modal::EmbedChapters {
+                cursor,
+                embedded_urls,
+                ..
+            } => {
+                assert_eq!(*cursor, 2);
+                assert_eq!(embedded_urls, &vec!["u0".to_string(), "u1".to_string()]);
+            }
+            _ => panic!("Expected EmbedChapters modal"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_embedded_urls_fresh_updates_cache() {
+        let mut cache = std::collections::HashMap::new();
+        let fresh = crate::storage::client::EmbeddingStatus {
+            embedded_chapters: 3,
+            total_chapters: 3,
+            aggregate: true,
+            genres: vec![],
+            embedded_chapter_urls: vec!["u0".into(), "u1".into(), "u2".into()],
+        };
+        let urls = resolve_embedded_urls(&mut cache, "url", Ok(fresh.clone()));
+        assert_eq!(urls, vec!["u0", "u1", "u2"]);
+        // The cache is updated with the fresh status.
+        assert_eq!(cache.get("url"), Some(&fresh));
+    }
+
+    #[test]
+    fn test_resolve_embedded_urls_error_falls_back_to_cache() {
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(
+            "url".into(),
+            crate::storage::client::EmbeddingStatus {
+                embedded_chapters: 1,
+                total_chapters: 3,
+                aggregate: false,
+                genres: vec![],
+                embedded_chapter_urls: vec!["u0".into()],
+            },
+        );
+        let urls = resolve_embedded_urls(&mut cache, "url", Err("boom".into()));
+        assert_eq!(urls, vec!["u0"]);
+    }
+
+    #[test]
+    fn test_resolve_embedded_urls_error_without_cache_is_empty() {
+        let mut cache = std::collections::HashMap::new();
+        let urls = resolve_embedded_urls(&mut cache, "url", Err("boom".into()));
+        assert!(urls.is_empty());
     }
 }

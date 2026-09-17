@@ -139,6 +139,23 @@ fn status_color(status: &str) -> Color {
     }
 }
 
+/// Icon for a per-chapter detail status ("Pending" | "Done" | "Failed").
+fn detail_icon(status: &str) -> &'static str {
+    match status {
+        "Done" => "✓",
+        "Failed" => "✗",
+        _ => "○", // Pending / unknown
+    }
+}
+
+fn detail_color(status: &str) -> Color {
+    match status {
+        "Done" => Color::Cyan,
+        "Failed" => Color::Red,
+        _ => Color::DarkGray,
+    }
+}
+
 fn render_job_row<'a>(
     job: &JobDto,
     server_now_ms: u64,
@@ -172,15 +189,10 @@ fn render_job_row<'a>(
     let mut lines = vec![Line::from(vec![Span::styled(main, style)])];
 
     if expanded {
-        lines.push(Line::from(Span::raw(format!(
-            "  ID: {}  Created: {}s ago",
-            job.id,
-            now_ms.saturating_sub(job.created_at_ms) / 1000
-        ))));
+        lines.push(Line::from(Span::raw(format!("  ID: {}", job.id))));
         if let Some(started) = job.started_at_ms {
             lines.push(Line::from(Span::raw(format!(
-                "  Started: {}s ago  Elapsed: {}s",
-                now_ms.saturating_sub(started) / 1000,
+                "  Elapsed: {}s",
                 now_ms.saturating_sub(started) / 1000
             ))));
         }
@@ -189,6 +201,28 @@ fn render_job_row<'a>(
                 format!("  Outcome: {}", outcome_line(outcome)),
                 Style::default().fg(Color::Cyan),
             )));
+        }
+
+        if let Some(detail) = &job.detail {
+            lines.push(Line::from(Span::styled(
+                "  Chapters:".to_string(),
+                Style::default().fg(Color::DarkGray),
+            )));
+            for ch in detail.iter().take(20) {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("    {} ", detail_icon(&ch.status)),
+                        Style::default().fg(detail_color(&ch.status)),
+                    ),
+                    Span::raw(ch.title.clone()),
+                ]));
+            }
+            if detail.len() > 20 {
+                lines.push(Line::from(Span::styled(
+                    format!("    ... ({} more)", detail.len() - 20),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
         }
 
         if let Some(e) = &job.error {
@@ -257,6 +291,7 @@ mod tests {
             completed_at_ms: None,
             error: None,
             outcome: None,
+            detail: None,
         }
     }
 
@@ -329,5 +364,59 @@ mod tests {
             content_chars: None,
         };
         assert_eq!(outcome_line(&cover), "Cover: fetched");
+    }
+
+    #[test]
+    fn test_detail_icon_and_color() {
+        assert_eq!(detail_icon("Done"), "✓");
+        assert_eq!(detail_icon("Failed"), "✗");
+        assert_eq!(detail_icon("Pending"), "○");
+        assert_eq!(detail_color("Done"), Color::Cyan);
+        assert_eq!(detail_color("Failed"), Color::Red);
+        assert_eq!(detail_color("Pending"), Color::DarkGray);
+    }
+
+    #[test]
+    fn test_jobs_draw_expanded_shows_detail() {
+        let mut state = make_state();
+        let mut job = sample_job(1, "Running");
+        job.kind = "EmbedBatch".into();
+        job.detail = Some(vec![
+            scylla_core::types::ChapterDetail {
+                title: "1.1 Crappy Monday".into(),
+                url: "u1".into(),
+                status: "Done".into(),
+            },
+            scylla_core::types::ChapterDetail {
+                title: "2.1 New Semester".into(),
+                url: "u2".into(),
+                status: "Pending".into(),
+            },
+            scylla_core::types::ChapterDetail {
+                title: "2.3 Bad Day".into(),
+                url: "u3".into(),
+                status: "Failed".into(),
+            },
+        ]);
+        state.jobs.jobs.push(job);
+        state.jobs.detail_expanded = Some(0);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state.jobs, &state.ui);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            content.contains("1.1 Crappy Monday"),
+            "content: {}",
+            content
+        );
+        assert!(content.contains("2.1 New Semester"), "content: {}", content);
+        assert!(content.contains("2.3 Bad Day"), "content: {}", content);
+        assert!(content.contains("Chapters:"), "content: {}", content);
     }
 }
