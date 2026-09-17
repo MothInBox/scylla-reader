@@ -3,11 +3,11 @@
 
 use crate::event;
 use crate::key_handler;
-use crate::messenger::{AppCommand, AppEvent};
-use crate::scrapers::services::ScraperRegistry;
 use crate::state::AppState;
 use crate::ui;
-use crate::worker;
+use scylla_core::messenger::{AppCommand, AppEvent};
+use scylla_core::scraper::ScraperRegistry;
+use scylla_core::worker::JobManager;
 
 use crossterm::{
     ExecutableCommand,
@@ -16,6 +16,8 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 use std::io::stdout;
+use std::net::TcpStream;
+use std::process::{Child, Command};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -25,6 +27,7 @@ pub struct App {
     cmd_tx: mpsc::Sender<AppCommand>,
     event_rx: mpsc::Receiver<AppEvent>,
     fetched_covers: std::collections::HashSet<String>,
+    server_process: Option<Child>,
 }
 
 impl App {
@@ -44,8 +47,23 @@ impl App {
         ))?;
 
         let mut state = AppState::new();
-        for book in state.db.load_books().unwrap_or_default() {
-            state.lib.library.books.push(book);
+
+        let server_process = Self::ensure_local_server();
+
+        match state.lib.manager.primary_backend() {
+            Some(backend) => match crate::storage::client::block_on(backend.list_books()) {
+                Ok(books) => state.lib.library.books = books,
+                Err(e) => crate::settings::log(
+                    crate::settings::LogLevel::Error,
+                    "UI",
+                    &format!("Failed to load books from backend: {}", e),
+                ),
+            },
+            None => crate::settings::log(
+                crate::settings::LogLevel::Error,
+                "UI",
+                "No backend configured — persistence disabled",
+            ),
         }
 
         let max_workers = state.lib.settings.max_workers;
@@ -67,7 +85,87 @@ impl App {
             cmd_tx,
             event_rx,
             fetched_covers: std::collections::HashSet::new(),
+            server_process,
         })
+    }
+
+    fn ensure_local_server() -> Option<Child> {
+        let port = 8080;
+        let addr: std::net::SocketAddr = format!("127.0.0.1:{}", port)
+            .parse()
+            .unwrap_or_else(|_| ([127, 0, 0, 1], port).into());
+
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+            crate::settings::log(
+                crate::settings::LogLevel::Debug,
+                "SERVER",
+                "Server already running",
+            );
+            return None;
+        }
+
+        let child = match Self::server_command().arg(port.to_string()).spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                crate::settings::log(
+                    crate::settings::LogLevel::Error,
+                    "SERVER",
+                    &format!("Failed to start scylla-server from resolved path: {}", e),
+                );
+                // The sibling binary may exist but not be executable — retry
+                // once with a plain PATH lookup before giving up.
+                match Command::new("scylla-server").arg(port.to_string()).spawn() {
+                    Ok(child) => child,
+                    Err(e) => {
+                        crate::settings::log(
+                            crate::settings::LogLevel::Error,
+                            "SERVER",
+                            &format!("Failed to start scylla-server from PATH: {}", e),
+                        );
+                        return None;
+                    }
+                }
+            }
+        };
+
+        for i in 0..25 {
+            std::thread::sleep(Duration::from_millis(200));
+            if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+                crate::settings::log(
+                    crate::settings::LogLevel::Debug,
+                    "SERVER",
+                    &format!("Server started after {} polls", i + 1),
+                );
+                return Some(child);
+            }
+        }
+
+        let mut child = child;
+        crate::settings::log(
+            crate::settings::LogLevel::Error,
+            "SERVER",
+            "Server failed to start within timeout",
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+        None
+    }
+
+    /// Build the command used to launch the local server. Prefers a
+    /// `scylla-server` binary next to the current executable (so plain
+    /// `cargo run -p scylla-reader` finds the sibling binary), falling back to
+    /// a PATH lookup.
+    fn server_command() -> Command {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|p| p.to_path_buf()));
+        let binary = resolve_server_binary(exe_dir.as_deref());
+        crate::settings::log(
+            crate::settings::LogLevel::Debug,
+            "SERVER",
+            &format!("Using server binary: {}", binary.display()),
+        );
+        Command::new(binary)
     }
 
     fn spawn_worker_thread(
@@ -82,7 +180,7 @@ impl App {
         std::thread::Builder::new()
             .name("job-manager".to_string())
             .spawn(move || {
-                let manager = worker::JobManager::new(
+                let manager = JobManager::new(
                     cmd_rx,
                     event_tx,
                     registry,
@@ -146,14 +244,35 @@ impl App {
             cmd_tx,
             event_rx,
             fetched_covers: std::collections::HashSet::new(),
+            server_process: None,
         }
     }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.server_process.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// Resolve which `scylla-server` binary to launch. If `exe_dir` contains a
+/// `scylla-server` file, use it; otherwise fall back to a PATH lookup.
+fn resolve_server_binary(exe_dir: Option<&std::path::Path>) -> std::path::PathBuf {
+    if let Some(dir) = exe_dir {
+        let candidate = dir.join("scylla-server");
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    std::path::PathBuf::from("scylla-server")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
     use crate::input::keybinds::*;
     use crate::key_handler;
     use crate::library::Library;
@@ -161,9 +280,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn test_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
+        AppState::from_parts(Library::new())
     }
 
     fn key_event(code: KeyCode) -> KeyEvent {
@@ -297,5 +414,30 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         key_handler::handle_key(&mut state, key_event(KEY_READER), &tx, Rect::default());
         assert_eq!(state.ui.page, Page::Library);
+    }
+
+    #[test]
+    fn test_resolve_server_binary_prefers_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("scylla-server");
+        std::fs::write(&fake, "").unwrap();
+        assert_eq!(resolve_server_binary(Some(dir.path())), fake);
+    }
+
+    #[test]
+    fn test_resolve_server_binary_falls_back_to_path_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            resolve_server_binary(Some(dir.path())),
+            std::path::PathBuf::from("scylla-server")
+        );
+    }
+
+    #[test]
+    fn test_resolve_server_binary_falls_back_to_path_without_exe_dir() {
+        assert_eq!(
+            resolve_server_binary(None),
+            std::path::PathBuf::from("scylla-server")
+        );
     }
 }

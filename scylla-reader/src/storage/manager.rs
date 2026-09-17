@@ -31,6 +31,13 @@ impl LibraryManager {
         }
     }
 
+    /// The backend used for persistence: the explicitly active one if set,
+    /// otherwise the first configured backend.
+    pub fn primary_backend(&self) -> Option<&dyn StorageBackend> {
+        self.active_backend()
+            .or_else(|| self.backends.first().map(|b| b.as_ref()))
+    }
+
     pub fn cycle_filter_to_next_backend(&mut self) {
         let names = self.backend_names();
         let next = match &self.active_filter {

@@ -8,10 +8,10 @@ pub mod palette;
 pub mod reader;
 pub mod settings;
 
-use crate::messenger::AppCommand;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::KeyEvent;
 use ratatui::prelude::Rect;
+use scylla_core::messenger::AppCommand;
 
 pub fn handle_input(
     state: &mut AppState,
@@ -34,8 +34,8 @@ pub fn handle_input(
     if matches!(&state.ui.modal, Modal::InstallPlugin { .. }) {
         return modal::handle_installing_plugin(&mut state.ui, key, cmd_tx);
     }
-    if matches!(&state.ui.modal, Modal::AddLibrary { .. }) {
-        return modal::handle_key(state, key);
+    if matches!(&state.ui.modal, Modal::BackendPicker { .. }) {
+        return modal::handle_backend_picker(state, key, cmd_tx);
     }
     match &state.ui.page {
         Page::Library => library::handle_library(&mut state.ui, &mut state.lib, key, cmd_tx),

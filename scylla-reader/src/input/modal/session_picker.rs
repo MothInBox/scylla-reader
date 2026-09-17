@@ -1,7 +1,7 @@
 use crate::input::keybinds::*;
-use crate::messenger::AppCommand;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent};
+use scylla_core::messenger::AppCommand;
 
 pub fn handle_session_picker(
     state: &mut AppState,
@@ -76,10 +76,17 @@ pub fn handle_session_picker(
                 {
                     book.active_session_id = Some(session.id);
                 }
-                state
-                    .db
-                    .set_active_session(&book_url, Some(session.id))
-                    .ok();
+                if let Some(backend) = state.lib.manager.primary_backend()
+                    && let Err(e) = crate::storage::client::block_on(
+                        backend.set_active_session(&book_url, session.id),
+                    )
+                {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Error,
+                        "UI",
+                        &format!("Failed to set active session: {}", e),
+                    );
+                }
                 if let Some(book) = state.lib.library.books.iter().find(|b| b.url == book_url)
                     && !book.chapters.is_empty()
                 {
@@ -155,34 +162,52 @@ pub fn handle_session_picker(
                     .find(|b| b.url == book_url)
                     .and_then(|b| b.sessions.get(cursor))
                     .map(|s| s.id);
-                if let Some(session_id) = session_id {
-                    if session_count > 1 {
-                        state.db.delete_session(session_id).ok();
-                        if let Ok(loaded) = state.db.load_sessions_for_book(&book_url)
-                            && let Some(book) = state
-                                .lib
-                                .library
-                                .books
-                                .iter_mut()
-                                .find(|b| b.url == book_url)
-                        {
-                            book.sessions = loaded;
+                if session_count > 1 {
+                    if let Some(book) = state
+                        .lib
+                        .library
+                        .books
+                        .iter_mut()
+                        .find(|b| b.url == book_url)
+                    {
+                        book.sessions.remove(cursor);
+                        if book.active_session_id == session_id {
+                            book.active_session_id = None;
                         }
-                        let new_cursor = cursor.min(session_count.saturating_sub(2));
-                        if let Modal::SessionPicker { cursor: c, .. } = &mut state.ui.modal {
-                            *c = new_cursor;
-                        }
-                    } else {
-                        state.db.delete_book(&book_url).ok();
-                        state.lib.library.books.retain(|b| b.url != book_url);
-                        let new_len = state.lib.library.visible_indices().len();
-                        if state.lib.library.selected_index > 0
-                            && state.lib.library.selected_index >= new_len
-                        {
-                            state.lib.library.selected_index -= 1;
-                        }
-                        state.ui.modal = Modal::None;
                     }
+                    if let Some(id) = session_id
+                        && let Some(backend) = state.lib.manager.primary_backend()
+                        && let Err(e) = crate::storage::client::block_on(backend.delete_session(id))
+                    {
+                        crate::settings::log(
+                            crate::settings::LogLevel::Error,
+                            "UI",
+                            &format!("Failed to delete session {}: {}", id, e),
+                        );
+                    }
+                    let new_cursor = cursor.min(session_count.saturating_sub(2));
+                    if let Modal::SessionPicker { cursor: c, .. } = &mut state.ui.modal {
+                        *c = new_cursor;
+                    }
+                } else {
+                    state.lib.library.books.retain(|b| b.url != book_url);
+                    let new_len = state.lib.library.visible_indices().len();
+                    if state.lib.library.selected_index > 0
+                        && state.lib.library.selected_index >= new_len
+                    {
+                        state.lib.library.selected_index -= 1;
+                    }
+                    if let Some(backend) = state.lib.manager.primary_backend()
+                        && let Err(e) =
+                            crate::storage::client::block_on(backend.delete_book(&book_url))
+                    {
+                        crate::settings::log(
+                            crate::settings::LogLevel::Error,
+                            "UI",
+                            &format!("Failed to delete book {}: {}", book_url, e),
+                        );
+                    }
+                    state.ui.modal = Modal::None;
                 }
             }
         }
@@ -246,45 +271,85 @@ fn handle_session_picker_editing(
                 {
                     session.name = name.clone();
                 }
-                state.db.rename_session(session_id, &name).ok();
-                if let Ok(loaded) = state.db.load_sessions_for_book(&book_url)
-                    && let Some(book) = state
-                        .lib
-                        .library
-                        .books
-                        .iter_mut()
-                        .find(|b| b.url == book_url)
+                if let Some(backend) = state.lib.manager.primary_backend()
+                    && let Err(e) =
+                        crate::storage::client::block_on(backend.rename_session(session_id, &name))
                 {
-                    book.sessions = loaded;
+                    crate::settings::log(
+                        crate::settings::LogLevel::Error,
+                        "UI",
+                        &format!("Failed to rename session {}: {}", session_id, e),
+                    );
                 }
             } else {
-                if let Some(book) = state
+                let total = state
                     .lib
                     .library
                     .books
-                    .iter_mut()
+                    .iter()
                     .find(|b| b.url == book_url)
-                    && let Ok(session) =
-                        state
-                            .db
-                            .create_session(&book_url, &name, book.chapters.len() as u32)
-                {
-                    if let Ok(loaded) = state.db.load_sessions_for_book(&book_url) {
-                        book.sessions = loaded;
-                    }
-                    if let Some(s) = book.sessions.iter().find(|s| s.id == session.id) {
-                        book.active_session_id = Some(s.id);
-                        state.reader.session_id = s.id;
-                        state.reader.session_name = s.name.clone();
-                        state.db.set_active_session(&book_url, Some(s.id)).ok();
-                    }
-                    if !book.chapters.is_empty() {
-                        state.reader.loading = true;
-                        state.ui.page = Page::Reader;
-                        if let Some(ch) = book.chapters.first() {
-                            let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), 0));
+                    .map(|b| b.chapters.len() as u32)
+                    .unwrap_or(0);
+                let created = state.lib.manager.primary_backend().map(|backend| {
+                    crate::storage::client::block_on(
+                        backend.create_session(&book_url, &name, total),
+                    )
+                });
+                match created {
+                    Some(Ok(session)) => {
+                        if let Some(book) = state
+                            .lib
+                            .library
+                            .books
+                            .iter_mut()
+                            .find(|b| b.url == book_url)
+                        {
+                            book.sessions.push(session.clone());
+                            book.active_session_id = Some(session.id);
+                        }
+                        if let Some(backend) = state.lib.manager.primary_backend()
+                            && let Err(e) = crate::storage::client::block_on(
+                                backend.set_active_session(&book_url, session.id),
+                            )
+                        {
+                            crate::settings::log(
+                                crate::settings::LogLevel::Error,
+                                "UI",
+                                &format!("Failed to set active session: {}", e),
+                            );
+                        }
+                        state.reader.session_id = session.id;
+                        state.reader.session_name = session.name.clone();
+                        let has_chapters = state
+                            .lib
+                            .library
+                            .books
+                            .iter()
+                            .find(|b| b.url == book_url)
+                            .map(|b| !b.chapters.is_empty())
+                            .unwrap_or(false);
+                        if has_chapters {
+                            state.reader.loading = true;
+                            state.ui.page = Page::Reader;
+                            if let Some(ch) = state
+                                .lib
+                                .library
+                                .books
+                                .iter()
+                                .find(|b| b.url == book_url)
+                                .and_then(|b| b.chapters.first())
+                                .cloned()
+                            {
+                                let _ = cmd_tx.send(AppCommand::FetchChapter(ch.url.clone(), 0));
+                            }
                         }
                     }
+                    Some(Err(e)) => crate::settings::log(
+                        crate::settings::LogLevel::Error,
+                        "UI",
+                        &format!("Failed to create session: {}", e),
+                    ),
+                    None => {}
                 }
             }
             if let Modal::SessionPicker {
@@ -326,6 +391,7 @@ mod tests {
     use super::*;
     use crate::test_helpers::*;
     use crossterm::event::KeyCode;
+    use scylla_core::types::{Progress, Session};
 
     fn setup_session_picker_state(sessions: usize, cursor: usize) -> AppState {
         let mut state = test_state();
@@ -333,31 +399,25 @@ mod tests {
             .lib
             .library
             .add_book("Test Book".into(), "test_url".into());
-        if let Some(book) = state.lib.library.books.iter().find(|b| b.url == "test_url") {
-            let _ = state.db.upsert_book(book);
-        }
-        // Remove the default "Initial" session that upsert_book created
-        if let Ok(loaded) = state.db.load_sessions_for_book("test_url") {
-            for s in &loaded {
-                let _ = state.db.delete_session(s.id);
-            }
-        }
-        // Create the exact number of test sessions
-        for i in 0..sessions {
-            let _ = state
-                .db
-                .create_session("test_url", &format!("Session {}", i), 10);
-        }
-        // Reload sessions from DB into library model
-        if let Ok(loaded) = state.db.load_sessions_for_book("test_url") {
-            if let Some(book) = state
-                .lib
-                .library
-                .books
-                .iter_mut()
-                .find(|b| b.url == "test_url")
-            {
-                book.sessions = loaded;
+        if let Some(book) = state
+            .lib
+            .library
+            .books
+            .iter_mut()
+            .find(|b| b.url == "test_url")
+        {
+            for i in 0..sessions {
+                book.sessions.push(Session {
+                    id: i as i64,
+                    book_url: "test_url".into(),
+                    name: format!("Session {}", i),
+                    progress: Progress {
+                        current: 0,
+                        total: 10,
+                    },
+                    created_at: String::new(),
+                    updated_at: String::new(),
+                });
             }
         }
         state.ui.modal = Modal::SessionPicker {
@@ -511,5 +571,288 @@ mod tests {
         handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
         assert_eq!(state.ui.modal, Modal::None);
         assert_eq!(state.reader.session_name, "Session 0");
+    }
+
+    #[test]
+    fn test_session_picker_new_session_persists_and_uses_returned_id() {
+        let mock = MockBackend::new("mock");
+        let calls = mock.calls.clone();
+        let mut state = test_state_with_backend(Box::new(mock));
+        state.lib.library.add_book("Test".into(), "test_url".into());
+        state.ui.modal = Modal::SessionPicker {
+            book_url: "test_url".into(),
+            cursor: 0,
+            scroll_offset: 0,
+            input: Some("New Session".into()),
+            editing_id: None,
+            pending_delete_url: None,
+        };
+        let (tx, _rx) = channel();
+        handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
+
+        let calls = calls.lock().unwrap().clone();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c == "create_session:test_url:New Session"),
+            "expected create_session call, got: {:?}",
+            calls
+        );
+        let book = state
+            .lib
+            .library
+            .books
+            .iter()
+            .find(|b| b.url == "test_url")
+            .unwrap();
+        assert_eq!(book.sessions.len(), 1);
+        assert!(book.sessions[0].id >= 100, "expected real backend id");
+        assert_eq!(book.active_session_id, Some(book.sessions[0].id));
+    }
+
+    #[test]
+    fn test_session_picker_delete_session_persists_and_clears_active() {
+        let mock = MockBackend::new("mock");
+        let calls = mock.calls.clone();
+        let mut state = test_state_with_backend(Box::new(mock));
+        state.lib.library.add_book("Test".into(), "test_url".into());
+        if let Some(book) = state
+            .lib
+            .library
+            .books
+            .iter_mut()
+            .find(|b| b.url == "test_url")
+        {
+            book.sessions.push(Session {
+                id: 7,
+                book_url: "test_url".into(),
+                name: "S7".into(),
+                progress: Progress {
+                    current: 0,
+                    total: 10,
+                },
+                created_at: String::new(),
+                updated_at: String::new(),
+            });
+            book.sessions.push(Session {
+                id: 8,
+                book_url: "test_url".into(),
+                name: "S8".into(),
+                progress: Progress {
+                    current: 0,
+                    total: 10,
+                },
+                created_at: String::new(),
+                updated_at: String::new(),
+            });
+            book.active_session_id = Some(7);
+        }
+        state.ui.modal = Modal::SessionPicker {
+            book_url: "test_url".into(),
+            cursor: 0,
+            scroll_offset: 0,
+            input: None,
+            editing_id: None,
+            pending_delete_url: None,
+        };
+        let (tx, _rx) = channel();
+        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+
+        let calls = calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().any(|c| c == "delete_session:7"),
+            "expected delete_session call, got: {:?}",
+            calls
+        );
+        let book = state
+            .lib
+            .library
+            .books
+            .iter()
+            .find(|b| b.url == "test_url")
+            .unwrap();
+        assert_eq!(book.sessions.len(), 1);
+        assert_eq!(book.sessions[0].id, 8);
+        assert_eq!(book.active_session_id, None);
+    }
+
+    #[test]
+    fn test_session_picker_rename_persists() {
+        let mock = MockBackend::new("mock");
+        let calls = mock.calls.clone();
+        let mut state = test_state_with_backend(Box::new(mock));
+        state.lib.library.add_book("Test".into(), "test_url".into());
+        if let Some(book) = state
+            .lib
+            .library
+            .books
+            .iter_mut()
+            .find(|b| b.url == "test_url")
+        {
+            book.sessions.push(Session {
+                id: 7,
+                book_url: "test_url".into(),
+                name: "Old".into(),
+                progress: Progress {
+                    current: 0,
+                    total: 10,
+                },
+                created_at: String::new(),
+                updated_at: String::new(),
+            });
+        }
+        state.ui.modal = Modal::SessionPicker {
+            book_url: "test_url".into(),
+            cursor: 0,
+            scroll_offset: 0,
+            input: Some("New Name".into()),
+            editing_id: Some(7),
+            pending_delete_url: None,
+        };
+        let (tx, _rx) = channel();
+        handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
+
+        let calls = calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().any(|c| c == "rename_session:7"),
+            "expected rename_session call, got: {:?}",
+            calls
+        );
+        let book = state
+            .lib
+            .library
+            .books
+            .iter()
+            .find(|b| b.url == "test_url")
+            .unwrap();
+        assert_eq!(book.sessions[0].name, "New Name");
+    }
+
+    #[test]
+    fn test_session_picker_select_persists_active_session() {
+        let mock = MockBackend::new("mock");
+        let calls = mock.calls.clone();
+        let mut state = test_state_with_backend(Box::new(mock));
+        state.lib.library.add_book("Test".into(), "test_url".into());
+        if let Some(book) = state
+            .lib
+            .library
+            .books
+            .iter_mut()
+            .find(|b| b.url == "test_url")
+        {
+            book.sessions.push(Session {
+                id: 7,
+                book_url: "test_url".into(),
+                name: "S7".into(),
+                progress: Progress {
+                    current: 0,
+                    total: 10,
+                },
+                created_at: String::new(),
+                updated_at: String::new(),
+            });
+            book.sessions.push(Session {
+                id: 8,
+                book_url: "test_url".into(),
+                name: "S8".into(),
+                progress: Progress {
+                    current: 0,
+                    total: 10,
+                },
+                created_at: String::new(),
+                updated_at: String::new(),
+            });
+        }
+        state.ui.modal = Modal::SessionPicker {
+            book_url: "test_url".into(),
+            cursor: 1,
+            scroll_offset: 0,
+            input: None,
+            editing_id: None,
+            pending_delete_url: None,
+        };
+        let (tx, _rx) = channel();
+        handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
+
+        let calls = calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().any(|c| c == "set_active_session:test_url:8"),
+            "expected set_active_session call, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_session_picker_delete_last_session_persists_book_delete() {
+        let mock = MockBackend::new("mock");
+        let calls = mock.calls.clone();
+        let mut state = test_state_with_backend(Box::new(mock));
+        state.lib.library.add_book("Test".into(), "test_url".into());
+        if let Some(book) = state
+            .lib
+            .library
+            .books
+            .iter_mut()
+            .find(|b| b.url == "test_url")
+        {
+            book.sessions.push(Session {
+                id: 7,
+                book_url: "test_url".into(),
+                name: "S7".into(),
+                progress: Progress {
+                    current: 0,
+                    total: 10,
+                },
+                created_at: String::new(),
+                updated_at: String::new(),
+            });
+        }
+        state.ui.modal = Modal::SessionPicker {
+            book_url: "test_url".into(),
+            cursor: 0,
+            scroll_offset: 0,
+            input: None,
+            editing_id: None,
+            pending_delete_url: Some("test_url".into()),
+        };
+        let (tx, _rx) = channel();
+        handle_session_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+
+        assert!(state.lib.library.books.is_empty());
+        let calls = calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().any(|c| c == "delete:test_url"),
+            "expected delete_book call, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_session_picker_new_session_backend_failure_leaves_state_unchanged() {
+        let mock = MockBackend::new("mock");
+        mock.set_fail(true);
+        let mut state = test_state_with_backend(Box::new(mock));
+        state.lib.library.add_book("Test".into(), "test_url".into());
+        state.ui.modal = Modal::SessionPicker {
+            book_url: "test_url".into(),
+            cursor: 0,
+            scroll_offset: 0,
+            input: Some("New Session".into()),
+            editing_id: None,
+            pending_delete_url: None,
+        };
+        let (tx, _rx) = channel();
+        handle_session_picker(&mut state, key_event(KEY_ENTER), &tx);
+
+        let book = state
+            .lib
+            .library
+            .books
+            .iter()
+            .find(|b| b.url == "test_url")
+            .unwrap();
+        assert!(book.sessions.is_empty());
+        assert_eq!(book.active_session_id, None);
     }
 }

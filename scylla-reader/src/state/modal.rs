@@ -37,11 +37,12 @@ pub enum Modal {
         cursor: usize,
         scroll_offset: usize,
     },
-    AddLibrary {
-        name: String,
-        url: String,
+    BackendPicker {
         cursor: usize,
-        focused_field: usize,
+        scroll_offset: usize,
+        input: Option<String>,
+        editing_idx: Option<usize>,
+        pending_delete_idx: Option<usize>,
     },
 }
 
@@ -214,26 +215,29 @@ mod tests {
     }
 
     #[test]
-    fn test_modal_add_library_construction() {
-        let modal = Modal::AddLibrary {
-            name: "my-library".into(),
-            url: "http://example.com".into(),
-            cursor: 5,
-            focused_field: 0,
+    fn test_modal_backend_picker_construction() {
+        let modal = Modal::BackendPicker {
+            cursor: 1,
+            scroll_offset: 0,
+            input: Some("my-backend".into()),
+            editing_idx: None,
+            pending_delete_idx: Some(2),
         };
-        if let Modal::AddLibrary {
-            name,
-            url,
+        if let Modal::BackendPicker {
             cursor,
-            focused_field,
+            scroll_offset,
+            input,
+            editing_idx,
+            pending_delete_idx,
         } = &modal
         {
-            assert_eq!(name, "my-library");
-            assert_eq!(url, "http://example.com");
-            assert_eq!(*cursor, 5);
-            assert_eq!(*focused_field, 0);
+            assert_eq!(*cursor, 1);
+            assert_eq!(*scroll_offset, 0);
+            assert_eq!(input.as_deref(), Some("my-backend"));
+            assert_eq!(*editing_idx, None);
+            assert_eq!(*pending_delete_idx, Some(2));
         } else {
-            panic!("Expected AddLibrary variant");
+            panic!("Expected BackendPicker variant");
         }
     }
 

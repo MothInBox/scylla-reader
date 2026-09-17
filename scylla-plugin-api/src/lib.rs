@@ -21,7 +21,6 @@ pub struct ScrapeInput {
     pub config: Option<String>,
 }
 
-
 #[derive(Serialize, Deserialize)]
 pub struct ScrapeOutput {
     pub title: String,
@@ -31,7 +30,6 @@ pub struct ScrapeOutput {
     pub total_chapters: u32,
     pub chapters: Vec<PluginChapter>,
 }
-
 
 #[derive(Serialize, Deserialize)]
 pub struct ChapterOutput {
@@ -45,5 +43,3 @@ pub struct PluginChapter {
     pub url: String,
     pub order: u32,
 }
-
-

@@ -1,15 +1,11 @@
 //! Binary entry point — panic hook, then delegate to App.
 
 pub mod app;
-pub mod db;
 pub mod event;
 pub mod input;
 pub mod key_handler;
 pub mod library;
-pub mod messenger;
 pub mod models;
-pub mod plugin_config;
-pub mod scrapers;
 pub mod settings;
 pub mod state;
 pub mod storage;
@@ -17,7 +13,6 @@ pub mod storage;
 pub mod test_helpers;
 pub mod textwrap;
 pub mod ui;
-pub mod worker;
 
 use crossterm::{
     ExecutableCommand,

@@ -1,8 +1,8 @@
 use crate::input::keybinds::*;
-use crate::messenger::AppCommand;
 use crate::settings::{SettingsField, SettingsPage};
 use crate::state::LibraryState;
 use crossterm::event::{KeyCode, KeyEvent};
+use scylla_core::messenger::AppCommand;
 
 pub fn handle_settings(
     lib: &mut LibraryState,
@@ -15,6 +15,7 @@ pub fn handle_settings(
         SettingsPage::PluginList => handle_plugin_list(lib, key),
         SettingsPage::PluginFields => handle_plugin_fields(lib, key),
         SettingsPage::PluginFieldEdit => handle_plugin_field_edit(lib, key),
+        SettingsPage::Server => handle_server_page(lib, key),
     }
 }
 
@@ -62,6 +63,10 @@ pub fn handle_settings_main(
                     lib.settings.reload_plugins();
                     lib.settings_ui.selected_plugin = 0;
                     lib.settings_ui.settings_page = SettingsPage::PluginList;
+                }
+                SettingsField::Server => {
+                    lib.settings_ui.settings_page = SettingsPage::Server;
+                    refresh_server_settings(lib);
                 }
             }
             true
@@ -178,6 +183,35 @@ pub fn handle_plugin_fields(lib: &mut LibraryState, key: KeyEvent) -> bool {
             true
         }
         _ => true,
+    }
+}
+
+pub fn handle_server_page(lib: &mut LibraryState, key: KeyEvent) -> bool {
+    match key.code {
+        KEY_ESCAPE => {
+            lib.settings_ui.settings_page = SettingsPage::Main;
+            true
+        }
+        KeyCode::Char('s') => {
+            refresh_server_settings(lib);
+            true
+        }
+        _ => true,
+    }
+}
+
+/// Pull live server settings from the primary backend into
+/// `lib.server_settings`. Logs an Error when no backend is configured.
+fn refresh_server_settings(lib: &mut LibraryState) {
+    match lib.manager.primary_backend() {
+        Some(backend) => {
+            crate::storage::client::block_on(lib.server_settings.refresh_from_server(backend));
+        }
+        None => crate::settings::log(
+            crate::settings::LogLevel::Error,
+            "INPUT",
+            "No backend configured — cannot refresh server settings",
+        ),
     }
 }
 
@@ -371,5 +405,28 @@ mod tests {
         handle_plugin_list(&mut state.lib, key_event(KEY_NAV_DOWN));
         handle_plugin_list(&mut state.lib, key_event(KEY_NAV_UP));
         assert_eq!(state.lib.settings_ui.selected_plugin, 0);
+    }
+
+    #[test]
+    fn test_handle_settings_main_enter_server_refreshes() {
+        let mock = MockBackend::new("mock");
+        let mut state = test_state_with_backend(Box::new(mock));
+        state.lib.settings_ui.selected_field = 4; // SettingsField::Server
+        let (tx, _rx) = channel();
+        handle_settings_main(&mut state.lib, key_event(KEY_ENTER), &tx);
+        assert_eq!(state.lib.settings_ui.settings_page, SettingsPage::Server);
+        // MockBackend's get_server_settings returns Err via the trait default,
+        // so the refresh records an error rather than panicking.
+        assert!(state.lib.server_settings.error.is_some());
+    }
+
+    #[test]
+    fn test_handle_server_page_s_refreshes() {
+        let mock = MockBackend::new("mock");
+        let mut state = test_state_with_backend(Box::new(mock));
+        state.lib.settings_ui.settings_page = SettingsPage::Server;
+        let result = handle_server_page(&mut state.lib, key_event(KeyCode::Char('s')));
+        assert!(result);
+        assert!(state.lib.server_settings.error.is_some());
     }
 }

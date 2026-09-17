@@ -1,8 +1,8 @@
 use crate::input::keybinds::*;
-use crate::messenger::AppCommand;
 use crate::models::Chapter;
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::{KeyCode, KeyEvent};
+use scylla_core::messenger::AppCommand;
 use std::sync::mpsc;
 
 pub fn handle_jumping_chapter(
@@ -74,9 +74,6 @@ pub fn handle_jumping_chapter(
                 let active_id = book.active_session_id;
                 if let Some(session) = book.sessions.iter_mut().find(|s| Some(s.id) == active_id) {
                     session.progress.current = idx as u32;
-                    let _ = state
-                        .db
-                        .update_session_progress(session.id, session.progress.current);
                 }
             }
         }

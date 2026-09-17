@@ -3032,17 +3032,16 @@ dependencies = [
  "dirs",
  "extism",
  "image",
+ "percent-encoding",
  "ratatui",
  "ratatui-image",
  "reqwest",
- "rusqlite",
  "scylla-core",
  "scylla-plugin-api",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
- "url",
 ]
 
 [[package]]
@@ -3052,6 +3051,7 @@ dependencies = [
  "axum",
  "dirs",
  "extism",
+ "http-body-util",
  "image",
  "ratatui-image",
  "reqwest",
@@ -3062,6 +3062,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tower",
  "tower-http 0.5.2",
 ]
 

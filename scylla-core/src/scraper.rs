@@ -366,11 +366,7 @@ pub(crate) fn host_curl_fetch(
     let url = parts.next().unwrap_or("").to_string();
     let cookies = parts.next().unwrap_or("").to_string();
 
-    crate::log::log(
-        "DEBUG",
-        "SCRAPE",
-        &format!("Fetching: {}", url),
-    );
+    crate::log::log("DEBUG", "SCRAPE", &format!("Fetching: {}", url));
 
     if !cookies.is_empty() {
         let has_equals = cookies.contains('=');
@@ -401,11 +397,7 @@ pub(crate) fn host_scylla_fail(
     _user_data: UserData<()>,
 ) -> Result<(), extism::Error> {
     let msg = plugin.memory_get_val::<String>(&inputs[0])?;
-    crate::log::log(
-        "DEBUG",
-        "PLUGIN",
-        &format!("Plugin called fail(): {}", msg),
-    );
+    crate::log::log("DEBUG", "PLUGIN", &format!("Plugin called fail(): {}", msg));
     Err(extism::Error::msg(msg))
 }
 

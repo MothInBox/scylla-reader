@@ -1,10 +1,10 @@
 //! Jobs page input handler — navigation, cancel, retry, filter, worker adjustment.
 
 use crate::input::keybinds::*;
-use crate::messenger::AppCommand;
 use crate::models::job::{JobFilter, JobStatus};
 use crate::state::{JobsState, LibraryState};
 use crossterm::event::{KeyCode, KeyEvent};
+use scylla_core::messenger::AppCommand;
 
 pub fn handle_jobs(
     jobs: &mut JobsState,

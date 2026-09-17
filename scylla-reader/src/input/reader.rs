@@ -1,11 +1,11 @@
 //! Reader page input handler — paging, scrolling, chapter nav.
 
 use crate::input::keybinds::*;
-use crate::messenger::AppCommand;
 use crate::state::AppState;
 use crate::state::Modal;
 use crossterm::event::KeyEvent;
 use ratatui::prelude::Rect;
+use scylla_core::messenger::AppCommand;
 
 pub fn handle_reader(
     state: &mut AppState,

@@ -205,50 +205,61 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
             );
         }
 
-        Modal::AddLibrary {
-            name,
-            url,
-            cursor: _,
-            focused_field,
+        Modal::BackendPicker {
+            cursor,
+            scroll_offset,
+            input,
+            editing_idx: _,
+            pending_delete_idx,
         } => {
-            let popup_area = centered_rect(60, 30, area);
+            let popup_area = centered_rect(60, 50, area);
             frame.render_widget(Clear, popup_area);
 
-            let name_style = if *focused_field == 0 {
-                Style::default().fg(Color::Yellow)
+            let backends: Vec<String> = lib
+                .manager
+                .backends
+                .iter()
+                .map(|b| b.name().to_string())
+                .collect();
+
+            let hints = if pending_delete_idx.is_some() {
+                " Press d again to confirm deletion  [Esc] Cancel "
+            } else if input.is_some() {
+                " [Enter] Confirm  [Esc] Cancel "
             } else {
-                Style::default()
-            };
-            let url_style = if *focused_field == 1 {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default()
+                " [Enter] Select  [n] New  [r] Rename  [d] Delete  [↑↓] Move  [Esc] Cancel "
             };
 
-            let display_name = if name.is_empty() {
-                "Enter library name...".to_string()
+            let items: Vec<ListItem> = if let Some(text) = input {
+                let mut items: Vec<ListItem> = Vec::with_capacity(backends.len() + 1);
+                items.push(ListItem::new(format!("Name: {}", text)));
+                for b in &backends {
+                    items.push(ListItem::new(b.clone()));
+                }
+                items
             } else {
-                name.clone()
-            };
-            let display_url = if url.is_empty() {
-                "Enter library URL...".to_string()
-            } else {
-                url.clone()
+                backends.iter().map(|b| ListItem::new(b.clone())).collect()
             };
 
-            let items = vec![
-                ListItem::new(format!("Name: {}", display_name)).style(name_style),
-                ListItem::new(format!("URL:  {}", display_url)).style(url_style),
-            ];
+            let display_count = if input.is_some() {
+                backends.len() + 1
+            } else {
+                backends.len()
+            };
+            let title = format!(
+                " Backends ({} Backend{}) ",
+                display_count,
+                if display_count == 1 { "" } else { "s" }
+            );
 
             draw_scrollable_list(
                 frame,
                 popup_area,
-                " Add Library ".to_string(),
+                title,
                 items,
-                0,
-                &mut 0,
-                " [Tab] Switch field  [Enter] Save  [Esc] Cancel ",
+                *cursor,
+                scroll_offset,
+                hints,
             );
         }
     }
@@ -295,16 +306,13 @@ fn draw_scrollable_list(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
     use crate::library::Library;
     use crate::state::AppState;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     fn make_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
+        AppState::from_parts(Library::new())
     }
 
     fn draw_modal_with(state: &mut AppState) {

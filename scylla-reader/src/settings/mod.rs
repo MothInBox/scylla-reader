@@ -3,7 +3,7 @@
 pub mod fields;
 pub use fields::SettingsField;
 
-use crate::plugin_config::PluginConfig;
+use scylla_core::plugin_config::PluginConfig;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -67,6 +67,7 @@ pub enum SettingsPage {
     PluginList,
     PluginFields,
     PluginFieldEdit,
+    Server,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -119,7 +120,7 @@ impl Default for PersistedSettings {
 }
 
 fn settings_path() -> std::path::PathBuf {
-    crate::plugin_config::config_dir().join("settings.json")
+    scylla_core::plugin_config::config_dir().join("settings.json")
 }
 
 fn compiled_defaults() -> PersistedSettings {
@@ -149,8 +150,9 @@ pub fn set_path_overrides(
     config_dir: Option<std::path::PathBuf>,
     data_dir: Option<std::path::PathBuf>,
 ) {
-    let _ = CONFIG_DIR_OVERRIDE.set(config_dir);
+    let _ = CONFIG_DIR_OVERRIDE.set(config_dir.clone());
     let _ = DATA_DIR_OVERRIDE.set(data_dir);
+    let _ = scylla_core::paths::CONFIG_DIR_OVERRIDE.set(config_dir);
 }
 
 pub struct Settings {
@@ -280,6 +282,7 @@ impl Settings {
             SettingsField::Plugins => {
                 format!("{} domain(s)", self.plugin_configs.len())
             }
+            SettingsField::Server => "Server Connection".to_string(),
         }
     }
 }

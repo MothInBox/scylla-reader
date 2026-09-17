@@ -1,11 +1,18 @@
-//! Domain models — Book, Chapter, Session, Progress, BookStatus, LibraryFilter.
+//! Domain models — re-exported from scylla_core.
 
-pub mod book;
-pub mod job;
-pub mod progress;
-pub mod session;
+pub use scylla_core::types::{
+    Book, BookStatus, Chapter, Job, JobFilter, JobId, JobKind, JobOutcome, JobPriority, JobStatus,
+    Progress, Session,
+};
 
-pub use book::{Book, BookStatus, Chapter};
-pub use job::{Job, JobFilter, JobId, JobKind, JobOutcome, JobPriority, JobStatus};
-pub use progress::Progress;
-pub use session::Session;
+/// Re-export so `crate::models::job::*` still works.
+pub mod job {
+    pub use scylla_core::types::{
+        Job, JobFilter, JobId, JobKind, JobOutcome, JobPriority, JobStatus,
+    };
+}
+
+/// Re-export so `crate::models::book::BookStatus` etc. still work.
+pub mod book {
+    pub use scylla_core::types::{Book, BookStatus, Chapter};
+}

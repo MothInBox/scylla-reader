@@ -14,3 +14,9 @@ target
 **/mutants.out*/
 rustc-ice-*.txt
 .worktrees
+
+# Deepwork state (git-local, OpenCode-readable)
+.slim/deepwork/
+
+# Nix build output symlink
+result

@@ -1,10 +1,10 @@
 //! Palette input handler.
 
 use crate::input::keybinds::*;
-use crate::messenger::AppCommand;
 use crate::state::AppState;
 use crate::state::Modal;
 use crossterm::event::{KeyCode, KeyEvent};
+use scylla_core::messenger::AppCommand;
 use std::sync::mpsc;
 
 pub fn handle_palette(

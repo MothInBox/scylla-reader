@@ -13,6 +13,8 @@ Multiple reading modes:
 The project contains multiple crates:
 
 - **`scylla-reader/`**: The TUI application.
+- **`scylla-core/`**: Shared library — common types, scraper, worker, and messenger.
+- **`scylla-server/`**: REST API server backed by the SQLite database.
 - **`scylla-plugin-api/`**: Type definitions for plugin developers.
 - **`plugin-template/`**: A baseline wasm plugin to help you write new scrapers with Extism.
 
@@ -236,12 +238,12 @@ Users install by entering the repo URL in the Install Plugin modal.
 - Curl requests have a 30s timeout
 - Shared cookie-parsing helper
 - Test setup deduplicated across 10 modules
+- **HTTPS server** — `scylla-server` crate exposes a REST API for books, chapters, sessions, and settings, backed by SQLite.
+- **Scylla as server client** — the TUI runs as a client of the server API through the `StorageBackend` abstraction.
+- **AI Classification Model** — books are embedded locally (all-MiniLM-L6-v2) on chapter fetch and book creation, with genre classification and semantic search across chapters.
 
 ### Planned
 
 - **Plugin explore feed** — in-app browser for discovering books. Plugins expose a `search(query) -> SearchResults` function. TUI renders results, user picks one, then `scrape_book` runs. Start with search input + paginated results.
 - **Plugin download from GitHub** — `scylla plugin install <repo-url>`. Fetches wasm from releases, validates by calling `get_config_schema`, places in plugins folder. CLI command or TUI modal.
 - **Customizable file paths** — add `data_dir`, `config_dir`, `plugin_dir` to `PersistedSettings`. `config_dir()` checks these overrides before `dirs`-based defaults.
-- **HTTPS server** — new `scylla-server` crate with axum/actix-web. Shares DB and plugin system. Start API-only (serve chapters, manage library), add web UI later. Replaces old daemon idea.
-- **Scylla as server client** — optionally run TUI as a client to the HTTPS server API instead of direct DB access. Concurrent SQLite with WAL mode, or independent consumers of the same DB.
-- **AI Classification Model** — Have a vauge recollection of a book you made? Generate an embedding upon book creation to search. We may wish to update the embedding with each chapter read, as to limit spam but gain a good embedding over time.

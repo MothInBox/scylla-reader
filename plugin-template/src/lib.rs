@@ -1,5 +1,7 @@
 use extism_pdk::*;
-use scylla_plugin_api::{ChapterOutput, ConfigField, PluginChapter, PluginSchema, ScrapeInput, ScrapeOutput};
+use scylla_plugin_api::{
+    ChapterOutput, ConfigField, PluginChapter, PluginSchema, ScrapeInput, ScrapeOutput,
+};
 
 #[link(wasm_import_module = "wasi_snapshot_preview1")]
 extern "C" {
@@ -197,7 +199,11 @@ pub fn scrape_book(Json(input): Json<ScrapeInput>) -> FnResult<Json<ScrapeOutput
     }
 
     let title = "Inifine Scroll (Template)".to_string();
-    let cover_url = Some(config_value(&input.config, "cover_source", "https://picsum.photos/400/600"));
+    let cover_url = Some(config_value(
+        &input.config,
+        "cover_source",
+        "https://picsum.photos/400/600",
+    ));
     let description = Some(
         "An infinite scroll containing choas (this is the template plugin included with scylla-reader)."
             .to_string(),

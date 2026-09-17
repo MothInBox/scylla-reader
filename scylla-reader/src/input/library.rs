@@ -1,9 +1,9 @@
 //! Library page input handler — navigation, filter, add/delete, jump.
 
 use crate::input::keybinds::*;
-use crate::messenger::AppCommand;
 use crate::state::{LibraryState, Modal, UiState};
 use crossterm::event::KeyEvent;
+use scylla_core::messenger::AppCommand;
 
 pub fn handle_library(
     ui: &mut UiState,
@@ -20,12 +20,13 @@ pub fn handle_library(
             };
             true
         }
-        KEY_ADD_LIBRARY => {
-            ui.modal = Modal::AddLibrary {
-                name: String::new(),
-                url: String::new(),
+        KEY_BACKENDS => {
+            ui.modal = Modal::BackendPicker {
                 cursor: 0,
-                focused_field: 0,
+                scroll_offset: 0,
+                input: None,
+                editing_idx: None,
+                pending_delete_idx: None,
             };
             true
         }

@@ -181,8 +181,14 @@ impl ServerDb {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(url) DO UPDATE SET
                title             = excluded.title,
-               status            = excluded.status,
-               active_session_id = excluded.active_session_id,
+               status            = CASE
+                 WHEN excluded.status = 'Reading' AND books.status != 'Reading' THEN books.status
+                 ELSE excluded.status
+               END,
+               active_session_id = CASE
+                 WHEN excluded.active_session_id IS NULL THEN books.active_session_id
+                 ELSE excluded.active_session_id
+               END,
                cover_url         = excluded.cover_url,
                description       = excluded.description",
             params![
@@ -195,12 +201,14 @@ impl ServerDb {
             ],
         )?;
 
-        tx.execute("DELETE FROM tags WHERE book_url = ?", [&book.url])?;
-        {
-            let mut stmt =
-                tx.prepare("INSERT OR IGNORE INTO tags (book_url, tag) VALUES (?1, ?2)")?;
-            for tag in &book.tags {
-                stmt.execute(params![book.url, tag])?;
+        if !book.tags.is_empty() {
+            tx.execute("DELETE FROM tags WHERE book_url = ?", [&book.url])?;
+            {
+                let mut stmt =
+                    tx.prepare("INSERT OR IGNORE INTO tags (book_url, tag) VALUES (?1, ?2)")?;
+                for tag in &book.tags {
+                    stmt.execute(params![book.url, tag])?;
+                }
             }
         }
 
@@ -252,18 +260,24 @@ impl ServerDb {
         })
     }
 
-    pub fn rename_session(&self, id: i64, name: &str) -> Result<()> {
+    pub fn rename_session(&self, id: i64, name: &str) -> Result<usize> {
         self.conn.execute(
             "UPDATE sessions SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
             params![name, id],
-        )?;
-        Ok(())
+        )
     }
 
-    pub fn delete_session(&self, id: i64) -> Result<()> {
-        self.conn
+    pub fn delete_session(&self, id: i64) -> Result<usize> {
+        let affected = self
+            .conn
             .execute("DELETE FROM sessions WHERE id = ?", [id])?;
-        Ok(())
+        if affected > 0 {
+            self.conn.execute(
+                "UPDATE books SET active_session_id = NULL WHERE active_session_id = ?",
+                [id],
+            )?;
+        }
+        Ok(affected)
     }
 
     pub fn update_session_progress(&self, id: i64, current: u32) -> Result<()> {
@@ -434,7 +448,7 @@ mod tests {
         let db = test_db();
         db.upsert_book(&sample_book("url")).unwrap();
         let session = db.create_session("url", "Old", 10).unwrap();
-        db.rename_session(session.id, "New").unwrap();
+        assert_eq!(db.rename_session(session.id, "New").unwrap(), 1);
         let books = db.load_books().unwrap();
         let s = books[0]
             .sessions
@@ -445,17 +459,67 @@ mod tests {
     }
 
     #[test]
+    fn test_rename_missing_session_affects_zero_rows() {
+        let db = test_db();
+        assert_eq!(db.rename_session(999999, "New").unwrap(), 0);
+    }
+
+    #[test]
     fn test_delete_session() {
         let db = test_db();
         db.upsert_book(&sample_book("url")).unwrap();
         let books = db.load_books().unwrap();
-        db.delete_session(books[0].sessions[0].id).unwrap();
+        assert_eq!(db.delete_session(books[0].sessions[0].id).unwrap(), 1);
         let s1 = db.create_session("url", "S1", 10).unwrap();
         let s2 = db.create_session("url", "S2", 10).unwrap();
-        db.delete_session(s1.id).unwrap();
+        assert_eq!(db.delete_session(s1.id).unwrap(), 1);
         let books = db.load_books().unwrap();
         assert_eq!(books[0].sessions.len(), 1);
         assert_eq!(books[0].sessions[0].id, s2.id);
+    }
+
+    #[test]
+    fn test_delete_missing_session_affects_zero_rows() {
+        let db = test_db();
+        assert_eq!(db.delete_session(999999).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_delete_session_clears_active_session_id() {
+        let db = test_db();
+        db.upsert_book(&sample_book("url")).unwrap();
+        let session = db.create_session("url", "Active", 10).unwrap();
+        db.set_active_session("url", Some(session.id)).unwrap();
+        let books = db.load_books().unwrap();
+        assert_eq!(books[0].active_session_id, Some(session.id));
+
+        db.delete_session(session.id).unwrap();
+        let books = db.load_books().unwrap();
+        assert_eq!(books[0].active_session_id, None);
+    }
+
+    #[test]
+    fn test_upsert_preserves_user_data_on_rescrape() {
+        let db = test_db();
+        let mut book = sample_book("url");
+        book.status = BookStatus::Completed;
+        book.tags = vec!["keep-tag".into()];
+        db.upsert_book(&book).unwrap();
+
+        let session = db.create_session("url", "Active", 10).unwrap();
+        db.set_active_session("url", Some(session.id)).unwrap();
+
+        // Fresh scraped book: status Reading, no tags, no active session.
+        let mut scraped = sample_book("url");
+        scraped.status = BookStatus::Reading;
+        scraped.tags = vec![];
+        scraped.active_session_id = None;
+        db.upsert_book(&scraped).unwrap();
+
+        let books = db.load_books().unwrap();
+        assert_eq!(books[0].status, BookStatus::Completed);
+        assert_eq!(books[0].tags, vec!["keep-tag"]);
+        assert_eq!(books[0].active_session_id, Some(session.id));
     }
 
     #[test]

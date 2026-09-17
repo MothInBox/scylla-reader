@@ -4,12 +4,14 @@ use crate::library::Library;
 use crate::settings::Settings;
 use crate::state::settings_ui::SettingsUiState;
 use crate::storage::manager::LibraryManager;
+use crate::storage::server_settings::ServerSettingsState;
 
 pub struct LibraryState {
     pub library: Library,
     pub manager: LibraryManager,
     pub settings: Settings,
     pub settings_ui: SettingsUiState,
+    pub server_settings: ServerSettingsState,
 }
 
 impl LibraryState {
@@ -19,6 +21,7 @@ impl LibraryState {
             manager: LibraryManager::new(vec![]),
             settings: Settings::new(),
             settings_ui: SettingsUiState::new(),
+            server_settings: ServerSettingsState::new(),
         }
     }
 }

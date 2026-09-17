@@ -1,5 +1,5 @@
-use crate::messenger::AppCommand;
 use crate::state::AppState;
+use scylla_core::messenger::AppCommand;
 use std::sync::mpsc;
 
 #[derive(Debug, Clone)]

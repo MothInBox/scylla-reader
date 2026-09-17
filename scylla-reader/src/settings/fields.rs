@@ -6,6 +6,7 @@ pub enum SettingsField {
     DebugLog,
     ReaderMode,
     Plugins,
+    Server,
 }
 
 impl SettingsField {
@@ -15,6 +16,7 @@ impl SettingsField {
             SettingsField::DebugLog => "Debug Logging",
             SettingsField::ReaderMode => "Reader Mode",
             SettingsField::Plugins => "Plugin Configs",
+            SettingsField::Server => "Server Connection",
         }
     }
 
@@ -24,6 +26,7 @@ impl SettingsField {
             SettingsField::DebugLog,
             SettingsField::ReaderMode,
             SettingsField::Plugins,
+            SettingsField::Server,
         ]
     }
 }
@@ -33,9 +36,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_all_returns_four_variants() {
+    fn test_all_returns_five_variants() {
         let all = SettingsField::all();
-        assert_eq!(all.len(), 4);
+        assert_eq!(all.len(), 5);
     }
 
     #[test]

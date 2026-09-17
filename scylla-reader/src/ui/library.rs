@@ -41,11 +41,13 @@ pub fn draw(frame: &mut Frame, area: Rect, lib: &mut LibraryState, ui: &UiState)
             Paragraph::new(hint_line(
                 "Actions",
                 &[
-                    ("i", "Add"),
+                    ("i", "Add Book"),
+                    ("L", "Backends"),
                     ("j", "Jump"),
                     ("d", "Delete"),
                     ("u", "Update"),
                     ("f", "Filter"),
+                    ("l", "Swap Lib"),
                     ("Space", "Status"),
                 ],
             )),
@@ -184,17 +186,18 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, lib: &mut LibraryState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
     use crate::library::Library;
     use crate::state::AppState;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
+    fn make_state() -> AppState {
+        AppState::from_parts(Library::new())
+    }
+
     #[test]
     fn test_library_draw_shows_hints_when_enabled() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        let mut state = AppState::from_parts(db, Library::new());
+        let mut state = make_state();
         state.ui.show_hints = true;
 
         let backend = TestBackend::new(80, 24);
@@ -212,9 +215,7 @@ mod tests {
 
     #[test]
     fn test_library_draw_shows_book_titles() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        let mut state = AppState::from_parts(db, Library::new());
+        let mut state = make_state();
         state
             .lib
             .library
@@ -235,9 +236,7 @@ mod tests {
 
     #[test]
     fn test_library_draw_hides_hints_when_disabled() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        let mut state = AppState::from_parts(db, Library::new());
+        let mut state = make_state();
         state.ui.show_hints = false;
 
         let backend = TestBackend::new(80, 24);

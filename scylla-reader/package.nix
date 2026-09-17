@@ -11,6 +11,7 @@ rustPlatform.buildRustPackage {
   src = ../.;
   cargoRoot = "scylla-reader";
   buildAndTestSubdir = "scylla-reader";
+  cargoBuildFlags = ["-p" "scylla-reader" "-p" "scylla-server"];
   cargoLock.lockFile = ./Cargo.lock;
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [ openssl curl ];

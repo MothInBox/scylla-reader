@@ -186,11 +186,7 @@ impl JobManager {
                         let _ = event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Completed));
                     }
                     Err(e) => {
-                        crate::log::log(
-                            "DEBUG",
-                            "WORKER",
-                            &format!("Job {} failed: {}", id, e),
-                        );
+                        crate::log::log("DEBUG", "WORKER", &format!("Job {} failed: {}", id, e));
                         let _ = event_tx.send(AppEvent::JobStatusChanged(id, JobStatus::Failed(e)));
                     }
                 }

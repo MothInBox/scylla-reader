@@ -1,7 +1,7 @@
 use crate::input::keybinds::*;
-use crate::messenger::AppCommand;
 use crate::state::{Modal, Page, UiState};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use scylla_core::messenger::AppCommand;
 
 pub fn handle_adding_book(
     ui: &mut UiState,

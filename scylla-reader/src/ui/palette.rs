@@ -1,9 +1,9 @@
-use crate::messenger::AppCommand;
 use crate::state::palette_action::PaletteAction;
 use crate::state::{Modal, Page, UiState};
 use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
+use scylla_core::messenger::AppCommand;
 use std::sync::mpsc;
 
 pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAction> {
@@ -245,7 +245,6 @@ pub fn draw_palette(frame: &mut Frame, area: Rect, ui: &UiState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
     use crate::library::Library;
     use crate::state::AppState;
     use ratatui::Terminal;
@@ -283,9 +282,7 @@ mod tests {
 
     #[test]
     fn test_draw_palette_renders_without_panic() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        let mut state = AppState::from_parts(db, Library::new());
+        let mut state = AppState::from_parts(Library::new());
         state.ui.modal = Modal::CommandPalette {
             query: "test".into(),
             filtered: vec![],

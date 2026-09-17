@@ -1,46 +1,44 @@
-workspace := "scylla-reader"
-
 default: test
 
 # Run cargo check
 check:
-    cargo check --manifest-path {{workspace}}/Cargo.toml
+    cargo check --workspace
 
 # Run all tests
 test:
-    cargo test --manifest-path {{workspace}}/Cargo.toml
+    cargo test --workspace
 
 # Run clippy
 lint:
-    cargo clippy --manifest-path {{workspace}}/Cargo.toml -- -D warnings
+    cargo clippy --workspace -- -D warnings
 
 # Run rustfmt check
 fmt:
-    cargo fmt --manifest-path {{workspace}}/Cargo.toml --check
+    cargo fmt --all --check
 
 # Auto-fix clippy suggestions
 fix:
-    cargo clippy --manifest-path {{workspace}}/Cargo.toml --fix --allow-dirty -- -D warnings
+    cargo clippy --workspace --fix --allow-dirty -- -D warnings
 
 # Format code
 format:
-    cargo fmt --manifest-path {{workspace}}/Cargo.toml
+    cargo fmt --all
 
 # Full CI pipeline: check + test + lint + fmt-check
 ci: check test lint fmt
 
 # Watch mode — re-run check on file changes (requires cargo-watch)
 watch:
-    cargo watch --manifest-path {{workspace}}/Cargo.toml -x check
+    cargo watch -x check
 
-# Build debug
+# Build debug (reader + server)
 build:
-    cargo build --manifest-path {{workspace}}/Cargo.toml
+    cargo build -p scylla-reader -p scylla-server
 
-# Build release
+# Build release (reader + server)
 release:
-    cargo build --manifest-path {{workspace}}/Cargo.toml --release
+    cargo build --release -p scylla-reader -p scylla-server
 
-# Run the app
+# Run the app (builds the server first so the TUI can spawn it)
 run:
-    cargo run --manifest-path {{workspace}}/Cargo.toml
+    cargo build -p scylla-server && cargo run -p scylla-reader

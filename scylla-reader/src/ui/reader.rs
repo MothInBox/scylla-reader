@@ -161,16 +161,13 @@ fn draw_scrollable(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
     use crate::library::Library;
     use crate::state::AppState;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     fn state_with_reader_content() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        let mut state = AppState::from_parts(db, Library::new());
+        let mut state = AppState::from_parts(Library::new());
         state.lib.library.add_book("Test Book".into(), "url".into());
         state.reader.load(
             "Test Book".into(),

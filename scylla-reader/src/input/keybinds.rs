@@ -30,8 +30,8 @@ pub const KEY_SCROLL_DOWN: KeyCode = KeyCode::Down;
 pub const KEY_MANAGE_SESSIONS: KeyCode = KeyCode::Char('s');
 
 // ── Library Management ──
-pub const KEY_ADD_LIBRARY: KeyCode = KeyCode::Char('L');
-pub const KEY_CYCLE_BACKEND_FILTER: KeyCode = KeyCode::Char('b');
+pub const KEY_BACKENDS: KeyCode = KeyCode::Char('L');
+pub const KEY_CYCLE_BACKEND_FILTER: KeyCode = KeyCode::Char('l');
 
 // ── Modal: Add Book ──
 pub const KEY_SUBMIT_MODIFIER: KeyModifiers = KeyModifiers::CONTROL;

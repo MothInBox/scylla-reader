@@ -15,7 +15,6 @@ pub mod jobs;
 pub use jobs::JobsState;
 pub mod settings_ui;
 
-use crate::db::Db;
 use crate::library::Library;
 use crate::storage::config;
 use crate::storage::manager::LibraryManager;
@@ -27,7 +26,6 @@ pub struct AppState {
     pub(crate) lib: LibraryState,
     pub(crate) reader: ReaderState,
     pub(crate) jobs: JobsState,
-    pub(crate) db: Db,
 }
 
 impl Default for AppState {
@@ -50,17 +48,10 @@ impl AppState {
                 manager,
                 settings: crate::settings::Settings::new(),
                 settings_ui: crate::state::settings_ui::SettingsUiState::new(),
+                server_settings: crate::storage::server_settings::ServerSettingsState::new(),
             },
             reader: ReaderState::new(),
             jobs: JobsState::new(),
-            db: Db::open().unwrap_or_else(|e| {
-                crate::settings::log(
-                    crate::settings::LogLevel::Error,
-                    "DB",
-                    &format!("DB open failed: {}", e),
-                );
-                panic!("Could not open database");
-            }),
         };
         state.jobs.max_workers = state.lib.settings.max_workers;
         state
@@ -71,7 +62,7 @@ impl AppState {
     }
 
     #[cfg(test)]
-    pub fn from_parts(db: crate::db::Db, library: crate::library::Library) -> Self {
+    pub fn from_parts(library: crate::library::Library) -> Self {
         Self {
             ui: UiState::new(),
             lib: LibraryState {
@@ -79,10 +70,10 @@ impl AppState {
                 manager: LibraryManager::new(vec![]),
                 settings: crate::settings::Settings::new(),
                 settings_ui: crate::state::settings_ui::SettingsUiState::new(),
+                server_settings: crate::storage::server_settings::ServerSettingsState::new(),
             },
             reader: ReaderState::new(),
             jobs: JobsState::new(),
-            db,
         }
     }
 
@@ -133,13 +124,10 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
     use crate::library::Library;
 
     fn test_state() -> AppState {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        AppState::from_parts(db, Library::new())
+        AppState::from_parts(Library::new())
     }
 
     #[test]

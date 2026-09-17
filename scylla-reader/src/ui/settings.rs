@@ -3,6 +3,18 @@ use crate::state::{LibraryState, UiState};
 use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use std::net::TcpStream;
+use std::time::Duration;
+
+/// Extract the `SocketAddr` from a backend URL like `http://127.0.0.1:8080`.
+fn socket_addr_from_url(url: &str) -> Option<std::net::SocketAddr> {
+    let without_scheme = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or(url);
+    let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
+    host_port.parse().ok()
+}
 
 pub fn draw(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
     match lib.settings_ui.settings_page {
@@ -11,6 +23,7 @@ pub fn draw(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
         SettingsPage::PluginList => draw_plugin_list(frame, area, lib, ui),
         SettingsPage::PluginFields => draw_plugin_fields(frame, area, lib, ui),
         SettingsPage::PluginFieldEdit => draw_plugin_field_edit(frame, area, lib, ui),
+        SettingsPage::Server => draw_server_page(frame, area, lib, ui),
     }
 }
 
@@ -193,6 +206,86 @@ fn draw_plugin_field_edit(frame: &mut Frame, area: Rect, lib: &LibraryState, ui:
     draw_hints(frame, chunks[1], ui.show_hints);
 }
 
+fn draw_server_page(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
+    let hint_height: u16 = if ui.show_hints { 2 } else { 1 };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(hint_height)])
+        .split(area);
+
+    let mut connected = lib.server_settings.connected;
+    if !connected {
+        let probe_addr = lib
+            .manager
+            .primary_backend()
+            .and_then(|b| b.url())
+            .and_then(|u| socket_addr_from_url(&u))
+            .unwrap_or_else(|| "127.0.0.1:8080".parse().unwrap());
+        connected = TcpStream::connect_timeout(&probe_addr, Duration::from_millis(500)).is_ok();
+    }
+
+    let status = if connected {
+        "Connected"
+    } else {
+        "Disconnected"
+    };
+    let status_style = if connected {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::Red)
+    };
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::raw("Status: "),
+            Span::styled(status, status_style),
+        ]),
+        Line::from(format!("Port: {}", lib.server_settings.port)),
+        Line::from(format!("Max Workers: {}", lib.server_settings.max_workers)),
+        Line::from(format!("Rate Limit: {}s", lib.server_settings.rate_limit)),
+    ];
+
+    if !lib.server_settings.plugins.is_empty() {
+        lines.push(Line::from("Plugins:"));
+        for plugin in &lib.server_settings.plugins {
+            lines.push(Line::from(format!("  - {}", plugin)));
+        }
+    }
+
+    if let Some(ref err) = lib.server_settings.error {
+        lines.push(Line::from(Span::styled(
+            format!("Error: {}", err),
+            Style::default().fg(Color::Red),
+        )));
+    }
+
+    if lib.server_settings.loading {
+        lines.push(Line::from("Loading..."));
+    }
+
+    let paragraph = Paragraph::new(lines).block(
+        Block::default()
+            .title(" Server Connection ")
+            .borders(Borders::ALL),
+    );
+    frame.render_widget(paragraph, chunks[0]);
+
+    if ui.show_hints {
+        let hint_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(chunks[1]);
+        frame.render_widget(
+            Paragraph::new(hint_line("Actions", &[("s", "Refresh")])),
+            hint_chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(hint_line("Nav", crate::ui::widgets::NAV_HINTS)),
+            hint_chunks[1],
+        );
+    }
+}
+
 fn draw_hints(frame: &mut Frame, area: Rect, show_hints: bool) {
     if !show_hints {
         return;
@@ -217,17 +310,18 @@ fn draw_hints(frame: &mut Frame, area: Rect, show_hints: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
     use crate::library::Library;
     use crate::state::AppState;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
+    fn make_state() -> AppState {
+        AppState::from_parts(Library::new())
+    }
+
     #[test]
     fn test_settings_draw_shows_hints_when_enabled() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        let mut state = AppState::from_parts(db, Library::new());
+        let mut state = make_state();
         state.ui.show_hints = true;
 
         let backend = TestBackend::new(80, 24);
@@ -245,9 +339,7 @@ mod tests {
 
     #[test]
     fn test_settings_draw_shows_rate_limit_label() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        let mut state = AppState::from_parts(db, Library::new());
+        let mut state = make_state();
         state.ui.show_hints = true;
 
         let backend = TestBackend::new(80, 24);
@@ -265,9 +357,7 @@ mod tests {
 
     #[test]
     fn test_settings_draw_hides_hints_when_disabled() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Db::open_conn(conn).unwrap();
-        let mut state = AppState::from_parts(db, Library::new());
+        let mut state = make_state();
         state.ui.show_hints = false;
 
         let backend = TestBackend::new(80, 24);
