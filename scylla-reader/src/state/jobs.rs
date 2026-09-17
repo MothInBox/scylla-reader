@@ -1,4 +1,45 @@
 use scylla_core::types::{ChapterDetail, JobDto, JobFilter, JobOutcomeDto};
+use std::collections::{HashMap, VecDeque};
+use std::time::Instant;
+
+/// Rolling completion-time windows for a job's fetch and embed phases.
+#[derive(Debug, Default)]
+pub struct JobTiming {
+    /// Last N JobDetailChanged arrival times (fetch completions).
+    pub fetch_times: VecDeque<Instant>,
+    /// Last N ChapterEmbedded/ChapterEmbeddedFailed arrival times.
+    pub embed_times: VecDeque<Instant>,
+}
+
+/// Max completion samples kept per phase for the rolling-window pace.
+const TIMING_WINDOW: usize = 10;
+
+/// Gap below which embed arrivals are treated as one batch burst (the embedding
+/// thread emits ~8 ChapterEmbedded events in quick succession).
+const EMBED_BURST_GAP: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Seconds per completion over the rolling window's OWN span:
+/// `(newest - oldest) / (len - 1)`. The span is fixed once the window fills, so
+/// the pace doesn't creep up when no completions arrive. None when there are
+/// fewer than 2 samples.
+pub fn rolling_pace(times: &VecDeque<Instant>) -> Option<f64> {
+    if times.len() < 2 {
+        return None;
+    }
+    let oldest = *times.front()?;
+    let newest = *times.back()?;
+    let span = newest.duration_since(oldest);
+    Some(span.as_secs_f64() / (times.len() - 1) as f64)
+}
+
+/// Whole seconds remaining: `pace × remaining`. None when pace is None or remaining == 0.
+pub fn phase_eta(pace: Option<f64>, remaining: usize) -> Option<u64> {
+    let pace = pace?;
+    if remaining == 0 {
+        return None;
+    }
+    Some((pace * remaining as f64) as u64)
+}
 
 #[derive(Debug)]
 pub struct JobsState {
@@ -13,6 +54,8 @@ pub struct JobsState {
     /// Job timestamps are monotonic relative to this reference; 0 until the
     /// first snapshot arrives.
     pub server_now_ms: u64,
+    /// Rolling fetch/embed completion windows per job (for the two-phase ETA).
+    pub timings: HashMap<u64, JobTiming>,
 }
 
 impl Default for JobsState {
@@ -32,6 +75,33 @@ impl JobsState {
             detail_expanded: None,
             connected: false,
             server_now_ms: 0,
+            timings: HashMap::new(),
+        }
+    }
+
+    /// Record a fetch completion (JobDetailChanged arrival) for the job.
+    pub fn record_fetch(&mut self, id: u64) {
+        let timing = self.timings.entry(id).or_default();
+        timing.fetch_times.push_back(Instant::now());
+        if timing.fetch_times.len() > TIMING_WINDOW {
+            timing.fetch_times.pop_front();
+        }
+    }
+
+    /// Record an embed completion (ChapterEmbedded/ChapterEmbeddedFailed arrival).
+    /// The embedding thread emits ~8 events in a burst; arrivals within
+    /// [`EMBED_BURST_GAP`] of the last one are treated as the same batch.
+    pub fn record_embed(&mut self, id: u64) {
+        let timing = self.timings.entry(id).or_default();
+        let now = Instant::now();
+        if let Some(last) = timing.embed_times.back()
+            && now.duration_since(*last) < EMBED_BURST_GAP
+        {
+            return;
+        }
+        timing.embed_times.push_back(now);
+        if timing.embed_times.len() > TIMING_WINDOW {
+            timing.embed_times.pop_front();
         }
     }
 
@@ -104,11 +174,30 @@ impl JobsState {
         }
     }
 
-    /// Apply a `JobDetailChanged` event: set the per-chapter detail on the
-    /// matching `EmbedBatch` job.
+    /// Apply a `JobDetailChanged` event: merge the worker's per-chapter detail
+    /// into the job's existing detail. Chapters already marked "Embedded" or
+    /// "Failed" by `ChapterEmbedded`/`ChapterEmbeddedFailed` events keep their
+    /// status; all other chapters take the incoming status. Chapters not
+    /// present in the existing detail are appended.
     pub fn update_from_detail(&mut self, id: u64, detail: Vec<ChapterDetail>) {
         if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id) {
-            job.detail = Some(detail);
+            let merged = match job.detail.take() {
+                Some(mut existing) => {
+                    for incoming in detail {
+                        match existing.iter_mut().find(|c| c.url == incoming.url) {
+                            Some(ch) => {
+                                if ch.status != "Embedded" && ch.status != "Failed" {
+                                    ch.status = incoming.status;
+                                }
+                            }
+                            None => existing.push(incoming),
+                        }
+                    }
+                    existing
+                }
+                None => detail,
+            };
+            job.detail = Some(merged);
         }
     }
 
@@ -278,6 +367,109 @@ mod tests {
     }
 
     #[test]
+    fn test_update_from_detail_preserves_embedded_status() {
+        let mut jobs = JobsState::new();
+        jobs.jobs.push(sample_job(1, "Running"));
+        // Worker's first detail snapshot.
+        jobs.update_from_detail(
+            1,
+            vec![
+                ChapterDetail {
+                    title: "Ch1".into(),
+                    url: "u1".into(),
+                    status: "Fetched".into(),
+                },
+                ChapterDetail {
+                    title: "Ch2".into(),
+                    url: "u2".into(),
+                    status: "Pending".into(),
+                },
+            ],
+        );
+        // Embed event flips ch1 to "Embedded".
+        jobs.update_from_embedded(1, "u1");
+        // A later worker snapshot still reports ch1 as "Fetched" — the merge
+        // must keep the event-set "Embedded" status while ch2 takes "Fetched".
+        jobs.update_from_detail(
+            1,
+            vec![
+                ChapterDetail {
+                    title: "Ch1".into(),
+                    url: "u1".into(),
+                    status: "Fetched".into(),
+                },
+                ChapterDetail {
+                    title: "Ch2".into(),
+                    url: "u2".into(),
+                    status: "Fetched".into(),
+                },
+            ],
+        );
+        let detail = jobs.jobs[0].detail.as_ref().unwrap();
+        assert_eq!(detail[0].status, "Embedded");
+        assert_eq!(detail[1].status, "Fetched");
+    }
+
+    #[test]
+    fn test_update_from_detail_preserves_failed_status() {
+        let mut jobs = JobsState::new();
+        jobs.jobs.push(sample_job(1, "Running"));
+        jobs.update_from_detail(
+            1,
+            vec![ChapterDetail {
+                title: "Ch1".into(),
+                url: "u1".into(),
+                status: "Fetched".into(),
+            }],
+        );
+        jobs.update_from_embedded_failed(1, "u1");
+        // Worker's stale snapshot must not resurrect a failed embed.
+        jobs.update_from_detail(
+            1,
+            vec![ChapterDetail {
+                title: "Ch1".into(),
+                url: "u1".into(),
+                status: "Fetched".into(),
+            }],
+        );
+        assert_eq!(jobs.jobs[0].detail.as_ref().unwrap()[0].status, "Failed");
+    }
+
+    #[test]
+    fn test_update_from_detail_appends_new_chapters() {
+        let mut jobs = JobsState::new();
+        jobs.jobs.push(sample_job(1, "Running"));
+        jobs.update_from_detail(
+            1,
+            vec![ChapterDetail {
+                title: "Ch1".into(),
+                url: "u1".into(),
+                status: "Fetched".into(),
+            }],
+        );
+        // A later snapshot adds ch2 — it must be appended, not dropped.
+        jobs.update_from_detail(
+            1,
+            vec![
+                ChapterDetail {
+                    title: "Ch1".into(),
+                    url: "u1".into(),
+                    status: "Fetched".into(),
+                },
+                ChapterDetail {
+                    title: "Ch2".into(),
+                    url: "u2".into(),
+                    status: "Fetched".into(),
+                },
+            ],
+        );
+        let detail = jobs.jobs[0].detail.as_ref().unwrap();
+        assert_eq!(detail.len(), 2);
+        assert_eq!(detail[1].url, "u2");
+        assert_eq!(detail[1].status, "Fetched");
+    }
+
+    #[test]
     fn test_update_from_embedded_marks_chapter() {
         let mut jobs = JobsState::new();
         let mut job = sample_job(1, "Running");
@@ -383,5 +575,72 @@ mod tests {
     fn test_server_now_ms_defaults_zero() {
         let jobs = JobsState::new();
         assert_eq!(jobs.server_now_ms, 0);
+    }
+
+    #[test]
+    fn test_rolling_pace_too_few_samples() {
+        let now = Instant::now();
+        let mut times = VecDeque::new();
+        assert_eq!(rolling_pace(&times), None);
+        times.push_back(now);
+        assert_eq!(rolling_pace(&times), None);
+    }
+
+    #[test]
+    fn test_rolling_pace_window_math() {
+        let now = Instant::now();
+        // 3 samples over 6 seconds → 3s per completion (the window's own span).
+        let mut times = VecDeque::new();
+        times.push_back(now - std::time::Duration::from_secs(6));
+        times.push_back(now - std::time::Duration::from_secs(3));
+        times.push_back(now);
+        let pace = rolling_pace(&times).unwrap();
+        assert!((pace - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_rolling_pace_uses_window_span_not_external_now() {
+        // The pace is the window's own span (newest - oldest) — there is no
+        // external `now` to advance, so it never creeps up between completions.
+        let now = Instant::now();
+        let mut times = VecDeque::new();
+        times.push_back(now - std::time::Duration::from_secs(6));
+        times.push_back(now - std::time::Duration::from_secs(3));
+        times.push_back(now);
+        let pace = rolling_pace(&times).unwrap();
+        assert!((pace - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_phase_eta() {
+        assert_eq!(phase_eta(Some(2.0), 8), Some(16));
+        assert_eq!(phase_eta(Some(2.0), 0), None);
+        assert_eq!(phase_eta(None, 8), None);
+    }
+
+    #[test]
+    fn test_record_fetch_caps_window() {
+        let mut jobs = JobsState::new();
+        for _ in 0..15 {
+            jobs.record_fetch(1);
+        }
+        assert_eq!(jobs.timings.get(&1).unwrap().fetch_times.len(), 10);
+    }
+
+    #[test]
+    fn test_record_embed_burst_skips_within_gap() {
+        let mut jobs = JobsState::new();
+        jobs.record_embed(1);
+        jobs.record_embed(1); // within 1s → same burst, skipped
+        assert_eq!(jobs.timings.get(&1).unwrap().embed_times.len(), 1);
+    }
+
+    #[test]
+    fn test_record_embed_batch_gap_records() {
+        let mut jobs = JobsState::new();
+        jobs.record_embed(1);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        jobs.record_embed(1); // > 1s apart → new batch
+        assert_eq!(jobs.timings.get(&1).unwrap().embed_times.len(), 2);
     }
 }

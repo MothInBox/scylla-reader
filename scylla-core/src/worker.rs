@@ -104,6 +104,7 @@ impl JobManager {
             let event_tx = self.event_tx.clone();
             let registry = self.registry.clone();
             let runtime_ref = runtime.handle().clone();
+            let rate_limit_secs = self.rate_limit_secs;
 
             let handle = runtime.spawn_blocking(move || {
                 let (result, outcome) = match &job.kind {
@@ -169,6 +170,10 @@ impl JobManager {
                         let mut any_ok = false;
                         let mut last_err = String::new();
                         for (i, ch) in chapters.iter().enumerate() {
+                            // Space requests out by the rate limit between chapters.
+                            if i > 0 {
+                                std::thread::sleep(std::time::Duration::from_secs(rate_limit_secs));
+                            }
                             let reg = registry.lock().unwrap();
                             match runtime_ref.block_on(reg.scrape_chapter(&ch.url)) {
                                 Ok((title, content)) => {

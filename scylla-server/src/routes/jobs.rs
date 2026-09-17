@@ -240,7 +240,20 @@ pub fn update_job_snapshot(
         }
         AppEvent::JobDetailChanged(id, detail) => {
             if let Some(job) = jobs.iter_mut().find(|j| j.id == *id) {
-                job.detail = Some(detail.clone());
+                let existing = job.detail.get_or_insert_with(Vec::new);
+                for incoming in detail {
+                    match existing.iter_mut().find(|c| c.url == incoming.url) {
+                        Some(existing_ch) => {
+                            // Keep "Embedded"/"Failed" statuses set by the
+                            // embedding thread — the worker's detail only knows
+                            // about the fetch, so it must not clobber them.
+                            if existing_ch.status != "Embedded" && existing_ch.status != "Failed" {
+                                existing_ch.status = incoming.status.clone();
+                            }
+                        }
+                        None => existing.push(incoming.clone()),
+                    }
+                }
             }
             None
         }
@@ -730,6 +743,54 @@ mod tests {
             &jobs,
             &AppEvent::ChapterEmbedded(5, "http://example.com/ch1".into()),
         );
+
+        let snapshot = jobs.lock().unwrap();
+        let job = &snapshot[0];
+        let detail = job.detail.as_ref().unwrap();
+        assert_eq!(detail[0].status, "Embedded");
+        assert_eq!(detail[1].status, "Fetched");
+    }
+
+    #[test]
+    fn test_job_detail_changed_does_not_clobber_embedded_status() {
+        let jobs: Arc<std::sync::Mutex<Vec<JobDto>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        update_job_snapshot(&jobs, &AppEvent::JobEnqueued(sample_job(8)));
+        let detail = vec![
+            scylla_core::types::ChapterDetail {
+                title: "Ch1".into(),
+                url: "http://example.com/ch1".into(),
+                status: "Fetched".into(),
+            },
+            scylla_core::types::ChapterDetail {
+                title: "Ch2".into(),
+                url: "http://example.com/ch2".into(),
+                status: "Fetched".into(),
+            },
+        ];
+        update_job_snapshot(&jobs, &AppEvent::JobDetailChanged(8, detail));
+
+        // The embedding thread reports chapter 1 embedded.
+        update_job_snapshot(
+            &jobs,
+            &AppEvent::ChapterEmbedded(8, "http://example.com/ch1".into()),
+        );
+
+        // The worker emits another JobDetailChanged with its fetch-only view
+        // (ch1 "Fetched", ch2 "Fetched") — it must not clobber ch1's "Embedded".
+        let worker_detail = vec![
+            scylla_core::types::ChapterDetail {
+                title: "Ch1".into(),
+                url: "http://example.com/ch1".into(),
+                status: "Fetched".into(),
+            },
+            scylla_core::types::ChapterDetail {
+                title: "Ch2".into(),
+                url: "http://example.com/ch2".into(),
+                status: "Fetched".into(),
+            },
+        ];
+        update_job_snapshot(&jobs, &AppEvent::JobDetailChanged(8, worker_detail));
 
         let snapshot = jobs.lock().unwrap();
         let job = &snapshot[0];

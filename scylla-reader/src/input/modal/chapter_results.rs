@@ -357,7 +357,9 @@ mod tests {
     fn test_nav_down_expanded_moves_across_chapters() {
         let mut state = results_state();
         if let Modal::ChapterResults {
-            cursor, expanded, ..
+            cursor: _,
+            expanded,
+            ..
         } = &mut state.ui.modal
         {
             *expanded = Some(0);
@@ -397,7 +399,9 @@ mod tests {
     fn test_enter_jumps_when_expanded() {
         let mut state = results_state();
         if let Modal::ChapterResults {
-            cursor, expanded, ..
+            cursor: _,
+            expanded,
+            ..
         } = &mut state.ui.modal
         {
             *expanded = Some(0);

@@ -399,6 +399,9 @@ fn process_embed_batch(
     chapter_counts: &mut std::collections::HashMap<String, u32>,
     genre_embeddings: &mut Option<Vec<(String, Vec<f32>)>>,
 ) {
+    let batch_start = std::time::Instant::now();
+    let mut db_time = std::time::Duration::ZERO;
+
     // Per-request skip checks (chapters already embedded with the same hash).
     let mut pending: Vec<(EmbedRequest, String)> = Vec::new();
     for req in batch {
@@ -406,8 +409,11 @@ fn process_embed_batch(
             EmbedRequest::Chapter {
                 chapter_url, text, ..
             } => {
+                let db_start = std::time::Instant::now();
                 let hash = content_hash(text);
-                if should_skip_embedding(embed_db, chapter_url, &hash) {
+                let skip = should_skip_embedding(embed_db, chapter_url, &hash);
+                db_time += db_start.elapsed();
+                if skip {
                     eprintln!("EMBED: chapter {chapter_url} already embedded, skipping");
                     continue;
                 }
@@ -436,6 +442,7 @@ fn process_embed_batch(
             EmbedRequest::Description { text, .. } => text.as_str(),
         })
         .collect();
+    let model_start = std::time::Instant::now();
     let embeddings = match embed(&texts) {
         Ok(e) => e,
         Err(e) => {
@@ -457,6 +464,7 @@ fn process_embed_batch(
             return;
         }
     };
+    let model_time = model_start.elapsed();
     for ((req, hash), embedding) in pending.iter().zip(embeddings.iter()) {
         match req {
             EmbedRequest::Chapter {
@@ -465,6 +473,7 @@ fn process_embed_batch(
                 ..
             } => {
                 eprintln!("EMBED: embedding chapter {chapter_url}");
+                let db_start = std::time::Instant::now();
                 let book_url = embed_db
                     .blocking_lock()
                     .find_book_url_for_chapter(chapter_url)
@@ -494,6 +503,7 @@ fn process_embed_batch(
                     continue;
                 }
                 drop(db);
+                db_time += db_start.elapsed();
                 eprintln!(
                     "EMBED: stored embedding for chapter {chapter_url} (book: {:?})",
                     book_url
@@ -514,17 +524,26 @@ fn process_embed_batch(
             }
             EmbedRequest::Description { book_url, .. } => {
                 eprintln!("EMBED: embedding description for {book_url}");
+                let db_start = std::time::Instant::now();
                 let db = embed_db.blocking_lock();
                 if let Err(e) = db.upsert_book_embedding(book_url, Some(embedding), None, None) {
                     eprintln!("EMBED: failed to store description embedding: {e}");
                     continue;
                 }
                 drop(db);
+                db_time += db_start.elapsed();
                 eprintln!("EMBED: stored description embedding for {book_url}");
                 recompute_aggregate(embed_db, book_url, &*embed, genre_embeddings);
             }
         }
     }
+    eprintln!(
+        "EMBED: batch {} chapters: model {}ms, db {}ms, total {}ms",
+        pending.len(),
+        model_time.as_millis(),
+        db_time.as_millis(),
+        batch_start.elapsed().as_millis()
+    );
 }
 
 #[cfg(test)]

@@ -1,10 +1,17 @@
+use crate::state::jobs::JobTiming;
 use crate::state::{JobsState, UiState};
 use crate::ui::widgets::hint_line;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use scylla_core::types::{ChapterDetail, JobDto, JobOutcomeDto, job_now_ms};
 
-pub fn draw(frame: &mut Frame, area: Rect, jobs: &mut JobsState, ui: &UiState) {
+pub fn draw(
+    frame: &mut Frame,
+    area: Rect,
+    jobs: &mut JobsState,
+    ui: &UiState,
+    rate_limit_secs: u64,
+) {
     let hint_height: u16 = if ui.show_hints { 4 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -41,7 +48,15 @@ pub fn draw(frame: &mut Frame, area: Rect, jobs: &mut JobsState, ui: &UiState) {
                 .map(|&si| si == i)
                 .unwrap_or(false);
             let is_expanded = jobs.detail_expanded == Some(i);
-            render_job_row(job, jobs.server_now_ms, is_selected, is_expanded)
+            let timing = jobs.timings.get(&job.id);
+            render_job_row(
+                job,
+                jobs.server_now_ms,
+                timing,
+                rate_limit_secs,
+                is_selected,
+                is_expanded,
+            )
         })
         .collect();
 
@@ -159,21 +174,31 @@ fn detail_color(status: &str) -> Color {
     }
 }
 
-/// Estimated seconds remaining for a job with a per-chapter detail.
-/// processed = chapters with status "Embedded" (the embedding pace);
-/// avg per-chapter time = elapsed / processed; eta = avg * remaining.
-/// None when there's no started time, nothing embedded yet, or nothing remaining.
-fn estimate_eta(detail: &[ChapterDetail], started_at_ms: Option<u64>, now_ms: u64) -> Option<u64> {
-    let processed = detail.iter().filter(|d| d.status == "Embedded").count();
-    let remaining = detail.len().saturating_sub(processed);
-    let started = started_at_ms?;
-    if processed == 0 || remaining == 0 {
-        return None;
-    }
-    let elapsed_ms = now_ms.saturating_sub(started);
-    let avg_ms = elapsed_ms / processed as u64;
-    let eta_ms = avg_ms * remaining as u64;
-    Some(eta_ms / 1000)
+/// Two-phase ETA for a job: the max of the fetch and embed phase estimates.
+/// Returns `(max_eta, fetch_eta, embed_eta)` so the expanded view can show both.
+/// The fetch pace is floored by the settings' rate-limit delay; the embed pace
+/// is per batch (the server embeds in batches of 8).
+fn job_eta(
+    detail: &[ChapterDetail],
+    timing: Option<&JobTiming>,
+    rate_limit_secs: u64,
+) -> (Option<u64>, Option<u64>, Option<u64>) {
+    let (fetched, embedded, total) = detail_progress(detail).unwrap_or((0, 0, detail.len()));
+    let fetch_pace = timing
+        .and_then(|t| crate::state::jobs::rolling_pace(&t.fetch_times))
+        .map(|p| p.max(rate_limit_secs as f64));
+    let fetch_eta = crate::state::jobs::phase_eta(fetch_pace, total.saturating_sub(fetched));
+    let embed_batch_pace = timing.and_then(|t| crate::state::jobs::rolling_pace(&t.embed_times));
+    // The server's embedding thread processes batches of 8 (EMBED_BATCH_SIZE).
+    let remaining_batches = (total.saturating_sub(embedded)).div_ceil(8);
+    let embed_eta = crate::state::jobs::phase_eta(embed_batch_pace, remaining_batches);
+    let max_eta = match (fetch_eta, embed_eta) {
+        (Some(f), Some(e)) => Some(f.max(e)),
+        (Some(f), None) => Some(f),
+        (None, Some(e)) => Some(e),
+        (None, None) => None,
+    };
+    (max_eta, fetch_eta, embed_eta)
 }
 
 /// Progress counts for a job's per-chapter detail: `(fetched, embedded, total)`
@@ -194,6 +219,8 @@ fn detail_progress(detail: &[ChapterDetail]) -> Option<(usize, usize, usize)> {
 fn render_job_row<'a>(
     job: &JobDto,
     server_now_ms: u64,
+    timing: Option<&JobTiming>,
+    rate_limit_secs: u64,
     _selected: bool,
     expanded: bool,
 ) -> ListItem<'a> {
@@ -214,15 +241,15 @@ fn render_job_row<'a>(
     } else {
         String::new()
     };
-    let eta = if job.status == "Running" {
+    let (max_eta, fetch_eta, embed_eta) = if job.status == "Running" {
         job.detail
             .as_deref()
-            .and_then(|d| estimate_eta(d, job.started_at_ms, now_ms))
-            .map(|s| format!(" ETA ~{}s", s))
-            .unwrap_or_default()
+            .map(|d| job_eta(d, timing, rate_limit_secs))
+            .unwrap_or((None, None, None))
     } else {
-        String::new()
+        (None, None, None)
     };
+    let eta = max_eta.map(|s| format!(" ETA ~{}s", s)).unwrap_or_default();
     let progress = job
         .detail
         .as_deref()
@@ -254,14 +281,17 @@ fn render_job_row<'a>(
         }
 
         if let Some(detail) = &job.detail {
-            if let Some(eta) = estimate_eta(detail, job.started_at_ms, now_ms) {
-                let (fetched, embedded, total) =
-                    detail_progress(detail).unwrap_or((0, 0, detail.len()));
+            if let Some(max_eta) = max_eta {
+                let eta_line = match (fetch_eta, embed_eta) {
+                    (Some(f), Some(e)) => {
+                        format!("  ETA: ~{}s (fetch ~{}s · embed ~{}s)", max_eta, f, e)
+                    }
+                    (Some(f), None) => format!("  ETA: ~{}s (fetch ~{}s)", max_eta, f),
+                    (None, Some(e)) => format!("  ETA: ~{}s (embed ~{}s)", max_eta, e),
+                    (None, None) => format!("  ETA: ~{}s", max_eta),
+                };
                 lines.push(Line::from(Span::styled(
-                    format!(
-                        "  ETA: ~{}s ({} fetched, {} embedded / {})",
-                        eta, fetched, embedded, total
-                    ),
+                    eta_line,
                     Style::default().fg(Color::DarkGray),
                 )));
             }
@@ -334,6 +364,7 @@ mod tests {
     use crate::state::AppState;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use std::time::Instant;
 
     fn make_state() -> AppState {
         AppState::from_parts(Library::new())
@@ -367,7 +398,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &mut state.jobs, &state.ui);
+                draw(f, f.area(), &mut state.jobs, &state.ui, 2);
             })
             .unwrap();
     }
@@ -380,7 +411,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &mut state.jobs, &state.ui);
+                draw(f, f.area(), &mut state.jobs, &state.ui, 2);
             })
             .unwrap();
         let buf = terminal.backend().buffer();
@@ -468,7 +499,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &mut state.jobs, &state.ui);
+                draw(f, f.area(), &mut state.jobs, &state.ui, 2);
             })
             .unwrap();
         let buf = terminal.backend().buffer();
@@ -495,41 +526,77 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn test_estimate_eta_no_started_time() {
-        let d = detail(&["Embedded", "Pending"]);
-        assert_eq!(estimate_eta(&d, None, 100_000), None);
+    fn timing(fetch_secs_ago: &[u64], embed_secs_ago: &[u64]) -> JobTiming {
+        let now = Instant::now();
+        JobTiming {
+            fetch_times: fetch_secs_ago
+                .iter()
+                .map(|&s| now - std::time::Duration::from_secs(s))
+                .collect(),
+            embed_times: embed_secs_ago
+                .iter()
+                .map(|&s| now - std::time::Duration::from_secs(s))
+                .collect(),
+        }
     }
 
     #[test]
-    fn test_estimate_eta_nothing_processed() {
-        let d = detail(&["Pending", "Pending"]);
-        assert_eq!(estimate_eta(&d, Some(0), 100_000), None);
+    fn test_job_eta_no_timing() {
+        let d = detail(&["Fetched", "Pending"]);
+        assert_eq!(job_eta(&d, None, 2), (None, None, None));
     }
 
     #[test]
-    fn test_estimate_eta_all_done() {
-        let d = detail(&["Embedded", "Embedded"]);
-        assert_eq!(estimate_eta(&d, Some(0), 100_000), None);
-    }
-
-    #[test]
-    fn test_estimate_eta_partial_progress() {
-        // 2 of 10 done in 4s → avg 2s per chapter → eta 8 * 2 = 16s.
+    fn test_job_eta_fetch_only() {
+        // 2 fetched of 10, fetch pace 3s → fetch eta 8 * 3 = 24s; no embed pace.
         let mut d = detail(&["Pending"; 10]);
+        d[0].status = "Fetched".into();
+        d[1].status = "Fetched".into();
+        let t = timing(&[6, 3, 0], &[]);
+        assert_eq!(job_eta(&d, Some(&t), 2), (Some(24), Some(24), None));
+    }
+
+    #[test]
+    fn test_job_eta_both_phases_max() {
+        // 4 fetched, 2 embedded of 10. fetch pace 3s → 6 * 3 = 18s;
+        // embed pace 2s per batch, 1 batch remaining → 2s; max = 18s.
+        let mut d = detail(&["Pending"; 10]);
+        d[0].status = "Fetched".into();
+        d[1].status = "Fetched".into();
+        d[2].status = "Embedded".into();
+        d[3].status = "Embedded".into();
+        let t = timing(&[6, 3, 0], &[4, 2, 0]);
+        assert_eq!(job_eta(&d, Some(&t), 2), (Some(18), Some(18), Some(2)));
+    }
+
+    #[test]
+    fn test_job_eta_rate_limit_floor() {
+        // fetch pace 3s floored to rate_limit 5s → 8 * 5 = 40s.
+        let mut d = detail(&["Pending"; 10]);
+        d[0].status = "Fetched".into();
+        d[1].status = "Fetched".into();
+        let t = timing(&[6, 3, 0], &[]);
+        let (_, fetch_eta, _) = job_eta(&d, Some(&t), 5);
+        assert_eq!(fetch_eta, Some(40));
+    }
+
+    #[test]
+    fn test_job_eta_all_done() {
+        let d = detail(&["Embedded"; 10]);
+        let t = timing(&[6, 3, 0], &[4, 2, 0]);
+        assert_eq!(job_eta(&d, Some(&t), 2), (None, None, None));
+    }
+
+    #[test]
+    fn test_job_eta_embed_uses_batches() {
+        // 2 embedded of 20 → 18 remaining → 3 batches (ceil(18/8)).
+        // embed pace 2s per batch → 6s.
+        let mut d = detail(&["Pending"; 20]);
         d[0].status = "Embedded".into();
         d[1].status = "Embedded".into();
-        assert_eq!(estimate_eta(&d, Some(96_000), 100_000), Some(16));
-    }
-
-    #[test]
-    fn test_estimate_eta_failed_not_counted_as_processed() {
-        // Only "Embedded" counts as processed for the ETA: 1 embedded of 4,
-        // elapsed 4s → avg 4s → eta 3 * 4 = 12s.
-        let mut d = detail(&["Pending"; 4]);
-        d[0].status = "Embedded".into();
-        d[1].status = "Failed".into();
-        assert_eq!(estimate_eta(&d, Some(96_000), 100_000), Some(12));
+        let t = timing(&[], &[4, 2, 0]);
+        let (_, _, embed_eta) = job_eta(&d, Some(&t), 2);
+        assert_eq!(embed_eta, Some(6));
     }
 
     #[test]
@@ -541,19 +608,20 @@ mod tests {
         job.detail = Some(detail(&["Embedded", "Embedded", "Pending", "Pending"]));
         state.jobs.jobs.push(job);
         state.jobs.detail_expanded = Some(0);
+        state.jobs.timings.insert(1, timing(&[4, 0], &[4, 0]));
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &mut state.jobs, &state.ui);
+                draw(f, f.area(), &mut state.jobs, &state.ui, 2);
             })
             .unwrap();
         let buf = terminal.backend().buffer();
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(content.contains("ETA ~"), "content: {}", content);
         assert!(
-            content.contains("(2 fetched, 2 embedded / 4)"),
+            content.contains("(fetch ~8s · embed ~4s)"),
             "content: {}",
             content
         );
@@ -570,7 +638,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &mut state.jobs, &state.ui);
+                draw(f, f.area(), &mut state.jobs, &state.ui, 2);
             })
             .unwrap();
         let buf = terminal.backend().buffer();
@@ -611,12 +679,13 @@ mod tests {
         d[1].status = "Embedded".into();
         job.detail = Some(d);
         state.jobs.jobs.push(job);
+        state.jobs.timings.insert(1, timing(&[4, 0], &[4, 0]));
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &mut state.jobs, &state.ui);
+                draw(f, f.area(), &mut state.jobs, &state.ui, 2);
             })
             .unwrap();
         let buf = terminal.backend().buffer();
@@ -638,7 +707,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                draw(f, f.area(), &mut state.jobs, &state.ui);
+                draw(f, f.area(), &mut state.jobs, &state.ui, 2);
             })
             .unwrap();
         let buf = terminal.backend().buffer();

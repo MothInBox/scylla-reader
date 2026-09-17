@@ -528,6 +528,14 @@ async fn sse_loop(base_url: &str, event_tx: &mpsc::Sender<ServerEvent>) -> SseEx
 /// `scylla-server` file, use it; otherwise fall back to a PATH lookup.
 fn resolve_server_binary(exe_dir: Option<&std::path::Path>) -> std::path::PathBuf {
     if let Some(dir) = exe_dir {
+        // Prefer the release sibling (e.g. target/debug/../release/scylla-server)
+        // — the embedding inference is far slower in debug builds.
+        if let Some(parent) = dir.parent() {
+            let release = parent.join("release").join("scylla-server");
+            if release.is_file() {
+                return release;
+            }
+        }
         let candidate = dir.join("scylla-server");
         if candidate.is_file() {
             return candidate;
@@ -655,6 +663,22 @@ mod tests {
         let fake = dir.path().join("scylla-server");
         std::fs::write(&fake, "").unwrap();
         assert_eq!(resolve_server_binary(Some(dir.path())), fake);
+    }
+
+    #[test]
+    fn test_resolve_server_binary_prefers_release_sibling() {
+        // exe_dir = target/debug → the release sibling target/release/scylla-server
+        // must win over the debug sibling.
+        let dir = tempfile::tempdir().unwrap();
+        let debug_dir = dir.path().join("debug");
+        let release_dir = dir.path().join("release");
+        std::fs::create_dir_all(&debug_dir).unwrap();
+        std::fs::create_dir_all(&release_dir).unwrap();
+        let debug_bin = debug_dir.join("scylla-server");
+        let release_bin = release_dir.join("scylla-server");
+        std::fs::write(&debug_bin, "").unwrap();
+        std::fs::write(&release_bin, "").unwrap();
+        assert_eq!(resolve_server_binary(Some(&debug_dir)), release_bin);
     }
 
     #[test]

@@ -39,6 +39,6 @@ build:
 release:
     cargo build --release -p scylla-reader -p scylla-server
 
-# Run the app (builds the server first so the TUI can spawn it)
+# Run the app (builds the server in release first so the TUI can spawn it)
 run:
-    cargo build -p scylla-server && cargo run -p scylla-reader
+    cargo build --release -p scylla-server && cargo run -p scylla-reader

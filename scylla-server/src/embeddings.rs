@@ -127,8 +127,13 @@ impl SharedEmbedder {
             .join("scylla-reader")
             .join("models");
         eprintln!("Loading embedding model (first run downloads ~91MB)...");
+        let load_start = std::time::Instant::now();
         match Embedder::load(cache_dir) {
             Ok(e) => {
+                eprintln!(
+                    "EMBED: model loaded in {}ms",
+                    load_start.elapsed().as_millis()
+                );
                 let e = Arc::new(e);
                 let f: EmbedFn = Arc::new(move |texts: &[&str]| e.batch_embed(texts));
                 let mut state = self.inner.lock().unwrap();
@@ -136,7 +141,10 @@ impl SharedEmbedder {
                 Some(f)
             }
             Err(e) => {
-                eprintln!("Failed to load embedding model: {e}");
+                eprintln!(
+                    "EMBED: model load failed in {}ms: {e}",
+                    load_start.elapsed().as_millis()
+                );
                 let mut state = self.inner.lock().unwrap();
                 state.last_failure = Some(std::time::Instant::now());
                 None
@@ -232,6 +240,7 @@ impl Embedder {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
+        let tokenize_start = std::time::Instant::now();
         let encodings: Vec<_> = texts
             .iter()
             .map(|t| {
@@ -240,6 +249,7 @@ impl Embedder {
                     .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))
             })
             .collect::<Result<_>>()?;
+        let tokenize_time = tokenize_start.elapsed();
         let max_len = encodings
             .iter()
             .map(|e| e.get_ids().len())
@@ -264,10 +274,20 @@ impl Embedder {
         let token_type_ids =
             Tensor::new(token_type_ids.as_slice(), &self.device)?.reshape((batch, max_len))?;
 
+        let forward_start = std::time::Instant::now();
         let out = self
             .model
             .forward(&input_ids, &token_type_ids, Some(&attention_mask))?;
         let pooled = self.pool(&out, &attention_mask)?;
+        let forward_time = forward_start.elapsed();
+
+        eprintln!(
+            "EMBED: batch_embed {} texts max_len {}: tokenize {}ms, forward {}ms",
+            batch,
+            max_len,
+            tokenize_time.as_millis(),
+            forward_time.as_millis()
+        );
 
         let mut result = Vec::with_capacity(batch);
         for i in 0..batch {

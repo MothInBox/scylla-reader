@@ -87,6 +87,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     "UI",
                     &format!("Job {} detail: {} chapters", id, detail.len()),
                 );
+                state.jobs.record_fetch(id);
                 state.jobs.update_from_detail(id, detail);
             }
             ServerEvent::ChapterToEmbed { .. } => {
@@ -103,6 +104,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     "UI",
                     &format!("Chapter embedded for job {}: {}", id, url),
                 );
+                state.jobs.record_embed(id);
                 state.jobs.update_from_embedded(id, &url);
             }
             ServerEvent::ChapterEmbeddedFailed { id, url } => {
@@ -111,6 +113,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     "UI",
                     &format!("Chapter embedding failed for job {}: {}", id, url),
                 );
+                state.jobs.record_embed(id);
                 state.jobs.update_from_embedded_failed(id, &url);
             }
             ServerEvent::WorkersChanged { max_workers } => {
@@ -857,6 +860,36 @@ mod tests {
             },
         );
         assert_eq!(state.jobs.jobs[0].detail, Some(detail));
+        // The event also records a fetch completion for the rolling window.
+        assert_eq!(state.jobs.timings.get(&1).unwrap().fetch_times.len(), 1);
+    }
+
+    #[test]
+    fn test_chapter_embedded_records_embed_timing() {
+        let mut state = test_state();
+        state.jobs.jobs.push(sample_job(1, "Running"));
+        send(
+            &mut state,
+            ServerEvent::ChapterEmbedded {
+                id: 1,
+                url: "u1".into(),
+            },
+        );
+        assert_eq!(state.jobs.timings.get(&1).unwrap().embed_times.len(), 1);
+    }
+
+    #[test]
+    fn test_chapter_embedded_failed_records_embed_timing() {
+        let mut state = test_state();
+        state.jobs.jobs.push(sample_job(1, "Running"));
+        send(
+            &mut state,
+            ServerEvent::ChapterEmbeddedFailed {
+                id: 1,
+                url: "u1".into(),
+            },
+        );
+        assert_eq!(state.jobs.timings.get(&1).unwrap().embed_times.len(), 1);
     }
 
     #[test]

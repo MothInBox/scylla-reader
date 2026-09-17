@@ -24,7 +24,13 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
             reader::draw(frame, area, &state.reader, &state.lib, &state.ui);
         }
         Page::Jobs => {
-            jobs::draw(frame, area, &mut state.jobs, &state.ui);
+            jobs::draw(
+                frame,
+                area,
+                &mut state.jobs,
+                &state.ui,
+                state.lib.settings.rate_limit_secs,
+            );
         }
     }
 
