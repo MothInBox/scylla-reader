@@ -37,6 +37,9 @@ pub fn handle_input(
     if matches!(&state.ui.modal, Modal::BackendPicker { .. }) {
         return modal::handle_backend_picker(state, key, cmd_tx);
     }
+    if matches!(&state.ui.modal, Modal::Filter { .. }) {
+        return modal::handle_filter(state, key, cmd_tx);
+    }
     match &state.ui.page {
         Page::Library => library::handle_library(&mut state.ui, &mut state.lib, key, cmd_tx),
         Page::Settings => settings::handle_settings(&mut state.lib, key, cmd_tx),

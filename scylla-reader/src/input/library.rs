@@ -30,17 +30,6 @@ pub fn handle_library(
             };
             true
         }
-        KEY_CYCLE_BACKEND_FILTER => {
-            lib.manager.cycle_filter_to_next_backend();
-            lib.library.filter = match &lib.manager.active_filter {
-                scylla_core::types::LibraryFilter::All => crate::library::LibraryFilter::All,
-                scylla_core::types::LibraryFilter::Backend(name) => {
-                    crate::library::LibraryFilter::Backend(name.clone())
-                }
-                _ => crate::library::LibraryFilter::All,
-            };
-            true
-        }
         KEY_JUMP_CHAPTER => {
             if let Some(book) = lib.library.selected_book() {
                 crate::settings::log(
@@ -67,8 +56,19 @@ pub fn handle_library(
             lib.library.cycle_selected_status();
             true
         }
-        KEY_CYCLE_FILTER => {
-            lib.library.cycle_filter();
+        KEY_FILTER => {
+            ui.modal = Modal::Filter {
+                working: lib.library.filter.clone(),
+                focus: crate::state::modal::FilterRow::Search,
+                tag_query: String::new(),
+                tag_cursor: 0,
+                tag_scroll: 0,
+                status_cursor: lib.library.filter.status_cursor(),
+                lib_cursor: lib
+                    .library
+                    .filter
+                    .library_cursor(&lib.manager.backend_names()),
+            };
             true
         }
         KEY_SESSIONS => {
@@ -128,7 +128,6 @@ pub fn handle_library(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::LibraryFilter;
     use crate::models::Chapter;
     use crate::models::book::BookStatus;
     use crate::state::Page;
@@ -224,21 +223,53 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_library_f_cycles_filter() {
+    fn test_handle_library_f_opens_filter_modal() {
         let mut state = test_state();
-        assert_eq!(state.lib.library.filter, LibraryFilter::All);
+        state.lib.library.filter.name = "glo".into();
         let (tx, _rx) = channel();
-        let result = handle_library(
-            &mut state.ui,
-            &mut state.lib,
-            key_event(KEY_CYCLE_FILTER),
-            &tx,
-        );
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_FILTER), &tx);
         assert!(result);
-        assert_eq!(
-            state.lib.library.filter,
-            LibraryFilter::ByStatus(BookStatus::Reading)
-        );
+        if let Modal::Filter {
+            working,
+            focus,
+            tag_query,
+            tag_cursor,
+            tag_scroll,
+            status_cursor,
+            lib_cursor,
+        } = &state.ui.modal
+        {
+            assert_eq!(working.name, "glo");
+            assert_eq!(*focus, crate::state::modal::FilterRow::Search);
+            assert!(tag_query.is_empty());
+            assert_eq!(*tag_cursor, 0);
+            assert_eq!(*tag_scroll, 0);
+            assert_eq!(*status_cursor, 0);
+            assert_eq!(*lib_cursor, 0);
+        } else {
+            panic!("Expected Filter modal");
+        }
+    }
+
+    #[test]
+    fn test_handle_library_f_seeds_cursors_from_filter() {
+        let mut state = test_state_with_backend(Box::new(MockBackend::new("remote1")));
+        state.lib.library.filter.status = Some(BookStatus::Dropped);
+        state.lib.library.filter.library = Some("remote1".into());
+        let (tx, _rx) = channel();
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_FILTER), &tx);
+        assert!(result);
+        if let Modal::Filter {
+            status_cursor,
+            lib_cursor,
+            ..
+        } = &state.ui.modal
+        {
+            assert_eq!(*status_cursor, 3);
+            assert_eq!(*lib_cursor, 1);
+        } else {
+            panic!("Expected Filter modal");
+        }
     }
 
     #[test]

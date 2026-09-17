@@ -3,6 +3,15 @@
 use crate::models::Chapter;
 use crate::state::palette_action::PaletteAction;
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum FilterRow {
+    Status,
+    Search,
+    Tags,
+    Library,
+    Ai,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Modal {
     None,
@@ -43,6 +52,15 @@ pub enum Modal {
         input: Option<String>,
         editing_idx: Option<usize>,
         pending_delete_idx: Option<usize>,
+    },
+    Filter {
+        working: crate::library::BookFilter,
+        focus: FilterRow,
+        tag_query: String,
+        tag_cursor: usize,
+        tag_scroll: usize,
+        status_cursor: usize,
+        lib_cursor: usize,
     },
 }
 
@@ -252,5 +270,80 @@ mod tests {
         assert_eq!(action.category, "navigation");
         assert_eq!(action.label, "Go Home");
         assert_eq!(action.keys, "g");
+    }
+
+    #[test]
+    fn test_filter_row_equality_and_copy() {
+        assert_eq!(FilterRow::Status, FilterRow::Status);
+        assert_ne!(FilterRow::Status, FilterRow::Search);
+        assert_ne!(FilterRow::Search, FilterRow::Tags);
+        assert_ne!(FilterRow::Tags, FilterRow::Library);
+        assert_ne!(FilterRow::Library, FilterRow::Ai);
+        let row = FilterRow::Search;
+        let copied = row;
+        assert_eq!(row, copied);
+    }
+
+    #[test]
+    fn test_modal_filter_construction_and_field_access() {
+        let expected_working = crate::library::BookFilter {
+            name: "glo".into(),
+            tags: vec!["fantasy".into()],
+            status: Some(crate::models::BookStatus::Reading),
+            library: None,
+        };
+        let modal = Modal::Filter {
+            working: expected_working.clone(),
+            focus: FilterRow::Tags,
+            tag_query: "fan".into(),
+            tag_cursor: 2,
+            tag_scroll: 1,
+            status_cursor: 3,
+            lib_cursor: 4,
+        };
+        if let Modal::Filter {
+            working,
+            focus,
+            tag_query,
+            tag_cursor,
+            tag_scroll,
+            status_cursor,
+            lib_cursor,
+        } = &modal
+        {
+            assert_eq!(working, &expected_working);
+            assert_eq!(*focus, FilterRow::Tags);
+            assert_eq!(tag_query, "fan");
+            assert_eq!(*tag_cursor, 2);
+            assert_eq!(*tag_scroll, 1);
+            assert_eq!(*status_cursor, 3);
+            assert_eq!(*lib_cursor, 4);
+        } else {
+            panic!("Expected Filter variant");
+        }
+    }
+
+    #[test]
+    fn test_modal_filter_equality() {
+        let a = Modal::Filter {
+            working: crate::library::BookFilter::default(),
+            focus: FilterRow::Search,
+            tag_query: String::new(),
+            tag_cursor: 0,
+            tag_scroll: 0,
+            status_cursor: 0,
+            lib_cursor: 0,
+        };
+        let b = Modal::Filter {
+            working: crate::library::BookFilter::default(),
+            focus: FilterRow::Search,
+            tag_query: String::new(),
+            tag_cursor: 0,
+            tag_scroll: 0,
+            status_cursor: 0,
+            lib_cursor: 0,
+        };
+        assert_eq!(a, b);
+        assert_ne!(a, Modal::None);
     }
 }

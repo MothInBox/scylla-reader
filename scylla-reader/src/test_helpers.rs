@@ -109,6 +109,10 @@ impl StorageBackend for MockBackend {
     }
 
     async fn list_books(&self) -> Result<Vec<Book>, String> {
+        self.record("list_books".to_string());
+        if self.should_fail() {
+            return Err("mock failure".to_string());
+        }
         Ok(self.books.lock().unwrap().clone())
     }
 

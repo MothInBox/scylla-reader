@@ -14,11 +14,14 @@ pub const KEY_ADD_BOOK: KeyCode = KeyCode::Char('i');
 pub const KEY_JUMP_CHAPTER: KeyCode = KeyCode::Char('j');
 pub const KEY_DELETE: KeyCode = KeyCode::Char('d');
 pub const KEY_CYCLE_STATUS: KeyCode = KeyCode::Char(' ');
-pub const KEY_CYCLE_FILTER: KeyCode = KeyCode::Char('f');
+pub const KEY_FILTER: KeyCode = KeyCode::Char('f');
 pub const KEY_UPDATE_ALL: KeyCode = KeyCode::Char('u');
 pub const KEY_SESSIONS: KeyCode = KeyCode::Enter;
 pub const KEY_NAV_UP: KeyCode = KeyCode::Up;
 pub const KEY_NAV_DOWN: KeyCode = KeyCode::Down;
+
+// ── Library Management ──
+pub const KEY_BACKENDS: KeyCode = KeyCode::Char('L');
 
 // ── Reader Page ──
 pub const KEY_NEXT_CHAPTER: KeyCode = KeyCode::Char('>');
@@ -29,9 +32,11 @@ pub const KEY_SCROLL_UP: KeyCode = KeyCode::Up;
 pub const KEY_SCROLL_DOWN: KeyCode = KeyCode::Down;
 pub const KEY_MANAGE_SESSIONS: KeyCode = KeyCode::Char('s');
 
-// ── Library Management ──
-pub const KEY_BACKENDS: KeyCode = KeyCode::Char('L');
-pub const KEY_CYCLE_BACKEND_FILTER: KeyCode = KeyCode::Char('l');
+// ── Modal: Filter ──
+pub const KEY_FILTER_CLEAR: KeyCode = KeyCode::Char('c');
+pub const KEY_ROW_NEXT: KeyCode = KeyCode::Tab;
+pub const KEY_ROW_PREV: KeyCode = KeyCode::BackTab;
+pub const KEY_TOGGLE_ITEM: KeyCode = KeyCode::Char(' ');
 
 // ── Modal: Add Book ──
 pub const KEY_SUBMIT_MODIFIER: KeyModifiers = KeyModifiers::CONTROL;

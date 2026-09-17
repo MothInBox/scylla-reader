@@ -47,7 +47,6 @@ pub fn draw(frame: &mut Frame, area: Rect, lib: &mut LibraryState, ui: &UiState)
                     ("d", "Delete"),
                     ("u", "Update"),
                     ("f", "Filter"),
-                    ("l", "Swap Lib"),
                     ("Space", "Status"),
                 ],
             )),

@@ -56,8 +56,20 @@ pub fn handle_backend_picker(
                 .get(idx)
                 .map(|b| b.name().to_string())
             {
-                state.lib.manager.active_filter = LibraryFilter::Backend(name.clone());
-                state.lib.library.set_backend_filter(&name);
+                state.lib.manager.set_active_backend(Some(name.clone()));
+                state.lib.library.filter.library = Some(name.clone());
+                state.lib.library.selected_index = 0;
+                state.lib.library.search_order = None;
+                if let Some(backend) = state.lib.manager.primary_backend() {
+                    match crate::storage::client::block_on(backend.list_books()) {
+                        Ok(books) => state.lib.library.books = books,
+                        Err(e) => crate::settings::log(
+                            crate::settings::LogLevel::Error,
+                            "BACKEND",
+                            &format!("Failed to reload books: {}", e),
+                        ),
+                    }
+                }
             }
             state.ui.modal = Modal::None;
         }
@@ -119,14 +131,24 @@ pub fn handle_backend_picker(
                 }
 
                 if count > 1 {
+                    let deleted_name = state.lib.manager.backends[idx].name().to_string();
                     state.lib.manager.backends.remove(idx);
+                    if state.lib.library.filter.library.as_deref() == Some(deleted_name.as_str()) {
+                        state.lib.library.filter.library = None;
+                        state.lib.library.selected_index = 0;
+                    }
                     let new_cursor = idx.min(count.saturating_sub(2));
                     if let Modal::BackendPicker { cursor, .. } = &mut state.ui.modal {
                         *cursor = new_cursor;
                     }
                     save_backend_configs(&state.lib.manager);
                 } else {
+                    let deleted_name = state.lib.manager.backends[0].name().to_string();
                     state.lib.manager.backends.clear();
+                    if state.lib.library.filter.library.as_deref() == Some(deleted_name.as_str()) {
+                        state.lib.library.filter.library = None;
+                        state.lib.library.selected_index = 0;
+                    }
                     save_backend_configs(&state.lib.manager);
                     state.ui.modal = Modal::None;
                 }
@@ -298,9 +320,24 @@ fn handle_editing(state: &mut AppState, key: KeyEvent) -> bool {
 mod tests {
     use super::*;
     use crate::test_helpers::{
-        MockBackend, key_event, test_state_with_backend, test_state_with_backends,
+        MockBackend, channel, key_event, test_state_with_backend, test_state_with_backends,
     };
     use crossterm::event::KeyCode;
+
+    /// Redirect config writes to a temp dir so tests never touch the
+    /// developer's real `libraries.json`.
+    fn redirect_config_dir() {
+        let tmp = std::env::temp_dir().join(format!("scylla-test-config-{}", std::process::id()));
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &tmp);
+        }
+    }
+
+    fn restore_config_dir() {
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+    }
 
     fn mock(name: &str) -> Box<dyn StorageBackend> {
         Box::new(MockBackend::new(name))
@@ -451,5 +488,51 @@ mod tests {
         state.lib.manager.backends.clear();
 
         assert!(backend_configs(&state.lib.manager).is_empty());
+    }
+
+    #[test]
+    fn test_deleting_active_filter_backend_clears_filter_library() {
+        redirect_config_dir();
+        let mut state = test_state_with_backends(vec![mock("a"), mock("b")]);
+        state.lib.library.filter.library = Some("a".into());
+        state.lib.library.selected_index = 3;
+        state.ui.modal = Modal::BackendPicker {
+            cursor: 0,
+            scroll_offset: 0,
+            input: None,
+            editing_idx: None,
+            pending_delete_idx: None,
+        };
+        let (tx, _rx) = channel();
+        handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+        restore_config_dir();
+
+        assert_eq!(state.lib.library.filter.library, None);
+        assert_eq!(state.lib.library.selected_index, 0);
+        assert_eq!(state.lib.manager.backends.len(), 1);
+    }
+
+    #[test]
+    fn test_deleting_last_active_filter_backend_clears_filter_library() {
+        redirect_config_dir();
+        let mut state = test_state_with_backend(mock("only"));
+        state.lib.library.filter.library = Some("only".into());
+        state.lib.library.selected_index = 2;
+        state.ui.modal = Modal::BackendPicker {
+            cursor: 0,
+            scroll_offset: 0,
+            input: None,
+            editing_idx: None,
+            pending_delete_idx: None,
+        };
+        let (tx, _rx) = channel();
+        // First press arms the confirmation, second confirms the deletion.
+        handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+        handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION), &tx);
+        restore_config_dir();
+
+        assert_eq!(state.lib.library.filter.library, None);
+        assert_eq!(state.lib.library.selected_index, 0);
+        assert!(state.lib.manager.backends.is_empty());
     }
 }

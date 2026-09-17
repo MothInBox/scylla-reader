@@ -38,29 +38,11 @@ impl LibraryManager {
             .or_else(|| self.backends.first().map(|b| b.as_ref()))
     }
 
-    pub fn cycle_filter_to_next_backend(&mut self) {
-        let names = self.backend_names();
-        let next = match &self.active_filter {
-            LibraryFilter::All => names.first().cloned().map(LibraryFilter::Backend),
-            LibraryFilter::Backend(current) => {
-                if let Some(pos) = names.iter().position(|n| n == current) {
-                    if pos + 1 < names.len() {
-                        Some(LibraryFilter::Backend(names[pos + 1].clone()))
-                    } else {
-                        Some(LibraryFilter::All)
-                    }
-                } else {
-                    names.first().cloned().map(LibraryFilter::Backend)
-                }
-            }
-            other => names
-                .first()
-                .cloned()
-                .map(LibraryFilter::Backend)
-                .or_else(|| Some(other.clone())),
+    /// Set the active backend by name, or clear it (back to `All`) when `None`.
+    pub fn set_active_backend(&mut self, name: Option<String>) {
+        self.active_filter = match name {
+            Some(name) => LibraryFilter::Backend(name),
+            None => LibraryFilter::All,
         };
-        if let Some(f) = next {
-            self.active_filter = f;
-        }
     }
 }

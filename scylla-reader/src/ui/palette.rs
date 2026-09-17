@@ -1,3 +1,4 @@
+use crate::state::modal::FilterRow;
 use crate::state::palette_action::PaletteAction;
 use crate::state::{Modal, Page, UiState};
 use crate::ui::widgets::centered_rect;
@@ -87,10 +88,22 @@ pub fn build_palette_actions(_cmd_tx: mpsc::Sender<AppCommand>) -> Vec<PaletteAc
         },
         PaletteAction {
             category: "Library",
-            label: "Cycle Filter",
-            keys: "f", // KEY_CYCLE_FILTER
+            label: "Filter Library…",
+            keys: "f", // KEY_FILTER
             handler: |s, _| {
-                s.lib.library.cycle_filter();
+                s.ui.modal = Modal::Filter {
+                    working: s.lib.library.filter.clone(),
+                    focus: FilterRow::Search,
+                    tag_query: String::new(),
+                    tag_cursor: 0,
+                    tag_scroll: 0,
+                    status_cursor: s.lib.library.filter.status_cursor(),
+                    lib_cursor: s
+                        .lib
+                        .library
+                        .filter
+                        .library_cursor(&s.lib.manager.backend_names()),
+                };
             },
         },
         PaletteAction {
