@@ -50,6 +50,9 @@ pub struct JobsState {
     pub active_count: u8,
     pub detail_expanded: Option<usize>, // index into jobs[] (unfiltered)
     pub connected: bool,
+    /// Last SSE connection error — Some while disconnected (the reason the
+    /// connection failed/lost), cleared to None on reconnect.
+    pub connection_error: Option<String>,
     /// Server-relative "now" from the latest jobs snapshot (`server_now_ms`).
     /// Job timestamps are monotonic relative to this reference; 0 until the
     /// first snapshot arrives.
@@ -74,6 +77,7 @@ impl JobsState {
             active_count: 0,
             detail_expanded: None,
             connected: false,
+            connection_error: None,
             server_now_ms: 0,
             timings: HashMap::new(),
         }
@@ -333,6 +337,7 @@ mod tests {
             chapters: Some(3),
             cover: Some(true),
             content_chars: None,
+            plugins: None,
         };
         jobs.set_outcome(1, outcome.clone());
         assert_eq!(jobs.jobs[0].outcome, Some(outcome));
@@ -569,6 +574,7 @@ mod tests {
     fn test_connected_defaults_false() {
         let jobs = JobsState::new();
         assert!(!jobs.connected);
+        assert!(jobs.connection_error.is_none());
     }
 
     #[test]

@@ -2,7 +2,7 @@ use crate::scraper::{host_curl_fetch, host_scylla_fail};
 use extism::{Function, Manifest, Plugin, UserData, ValType, Wasm};
 use scylla_plugin_api::PluginSchema;
 
-pub fn install_plugin(repo_url: &str) -> Result<(String, String), String> {
+pub fn install_plugin(repo_url: &str) -> Result<Vec<(String, String)>, String> {
     let (owner, repo) = parse_github_url(repo_url)?;
 
     let release_url = format!(
@@ -79,7 +79,7 @@ pub fn install_plugin(repo_url: &str) -> Result<(String, String), String> {
         return Err("No .wasm files found in release".to_string());
     }
 
-    Ok(installed[0].clone())
+    Ok(installed)
 }
 
 fn parse_github_url(url: &str) -> Result<(String, String), String> {

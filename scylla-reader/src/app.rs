@@ -245,14 +245,24 @@ impl App {
                 loop {
                     match runtime.block_on(sse_loop(&base_url, &event_tx)) {
                         SseExit::Shutdown => break,
-                        SseExit::Connected => {
-                            let _ =
-                                event_tx.send(ServerEvent::ConnectionState { connected: false });
+                        SseExit::Connected(reason) => {
+                            let _ = event_tx.send(ServerEvent::ConnectionState {
+                                connected: false,
+                                error: Some(format!(
+                                    "SSE connection to {} lost: {}",
+                                    base_url, reason
+                                )),
+                            });
                             backoff = Duration::from_secs(1);
                         }
-                        SseExit::Disconnected => {
-                            let _ =
-                                event_tx.send(ServerEvent::ConnectionState { connected: false });
+                        SseExit::Disconnected(reason) => {
+                            let _ = event_tx.send(ServerEvent::ConnectionState {
+                                connected: false,
+                                error: Some(format!(
+                                    "Failed to connect to {}: {}",
+                                    base_url, reason
+                                )),
+                            });
                         }
                     }
                     std::thread::sleep(backoff);
@@ -327,10 +337,12 @@ impl Drop for App {
 
 /// Outcome of one SSE connection cycle.
 enum SseExit {
-    /// Stream was established and then ended/errored — reconnect with a reset backoff.
-    Connected,
-    /// Never connected — reconnect with a growing backoff.
-    Disconnected,
+    /// Stream was established and then ended/errored — reconnect with a reset
+    /// backoff. Carries the reason the stream ended.
+    Connected(String),
+    /// Never connected — reconnect with a growing backoff. Carries the reason
+    /// the connection failed.
+    Disconnected(String),
     /// The event receiver is gone (TUI exited) — stop the thread.
     Shutdown,
 }
@@ -358,7 +370,7 @@ async fn sse_loop(base_url: &str, event_tx: &mpsc::Sender<ServerEvent>) -> SseEx
                 "SSE",
                 &format!("SSE stream HTTP {}", resp.status()),
             );
-            return SseExit::Disconnected;
+            return SseExit::Disconnected(format!("SSE stream HTTP {}", resp.status()));
         }
         Err(e) => {
             crate::settings::log(
@@ -366,13 +378,16 @@ async fn sse_loop(base_url: &str, event_tx: &mpsc::Sender<ServerEvent>) -> SseEx
                 "SSE",
                 &format!("Failed to subscribe to SSE stream: {}", e),
             );
-            return SseExit::Disconnected;
+            return SseExit::Disconnected(format!("Failed to subscribe to SSE stream: {}", e));
         }
     };
 
     // 2. Mark connected.
     if event_tx
-        .send(ServerEvent::ConnectionState { connected: true })
+        .send(ServerEvent::ConnectionState {
+            connected: true,
+            error: None,
+        })
         .is_err()
     {
         return SseExit::Shutdown;
@@ -428,7 +443,7 @@ async fn sse_loop(base_url: &str, event_tx: &mpsc::Sender<ServerEvent>) -> SseEx
                             "SSE",
                             &format!("SSE stream error: {}", e),
                         );
-                        return SseExit::Connected;
+                        return SseExit::Connected(format!("SSE stream error: {}", e));
                     }
                     None => {
                         // Stream ended — flush any buffered events so they
@@ -438,7 +453,7 @@ async fn sse_loop(base_url: &str, event_tx: &mpsc::Sender<ServerEvent>) -> SseEx
                                 return SseExit::Shutdown;
                             }
                         }
-                        return SseExit::Connected;
+                        return SseExit::Connected("stream ended".to_string());
                     }
                 }
             }
@@ -501,6 +516,13 @@ async fn sse_loop(base_url: &str, event_tx: &mpsc::Sender<ServerEvent>) -> SseEx
                             "SSE",
                             &format!("Jobs snapshot HTTP {}", resp.status()),
                         );
+                        // The snapshot is the source of truth for existing
+                        // jobs — without it, streaming would show an empty
+                        // list for the whole connection. Reconnect instead.
+                        return SseExit::Disconnected(format!(
+                            "Jobs snapshot HTTP {}",
+                            resp.status()
+                        ));
                     }
                     Err(e) => {
                         crate::settings::log(
@@ -508,6 +530,11 @@ async fn sse_loop(base_url: &str, event_tx: &mpsc::Sender<ServerEvent>) -> SseEx
                             "SSE",
                             &format!("Failed to fetch jobs snapshot: {}", e),
                         );
+                        // Same as above: never stream with an empty snapshot.
+                        return SseExit::Disconnected(format!(
+                            "Failed to fetch jobs snapshot: {}",
+                            e
+                        ));
                     }
                 }
                 snapshot_applied = true;

@@ -24,9 +24,16 @@ pub fn draw(
 
     // Header bar
     let connected = if jobs.connected { "●" } else { "○" };
+    let status = if !jobs.connected
+        && let Some(err) = &jobs.connection_error
+    {
+        format!("{} Disconnected — {}", connected, err)
+    } else {
+        connected.to_string()
+    };
     let header = format!(
         " Jobs  {}  Workers: {}/{}  [+][-]",
-        connected, jobs.active_count, jobs.max_workers,
+        status, jobs.active_count, jobs.max_workers,
     );
     frame.render_widget(
         Paragraph::new(header).style(Style::default().fg(Color::Cyan)),
@@ -353,6 +360,17 @@ fn outcome_line(outcome: &JobOutcomeDto) -> String {
             outcome.content_chars.unwrap_or(0)
         ),
         "CoverFetched" => "Cover: fetched".to_string(),
+        "PluginInstalled" => {
+            let list = outcome
+                .plugins
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|(domain, path)| format!("{} → {}", domain, path))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Installed {}", list)
+        }
         _ => outcome.kind.to_string(),
     }
 }
@@ -420,6 +438,24 @@ mod tests {
     }
 
     #[test]
+    fn test_jobs_draw_shows_connection_error() {
+        let mut state = make_state();
+        state.jobs.connected = false;
+        state.jobs.connection_error = Some("Failed to connect to http://mock: boom".into());
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &mut state.jobs, &state.ui, 2);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Disconnected"), "content: {}", content);
+        assert!(content.contains("http://mock"), "content: {}", content);
+    }
+
+    #[test]
     fn test_status_icon_and_color() {
         assert_eq!(status_icon("Queued"), "○");
         assert_eq!(status_icon("Running"), "●");
@@ -438,6 +474,7 @@ mod tests {
             chapters: Some(3),
             cover: Some(true),
             content_chars: None,
+            plugins: None,
         };
         assert_eq!(outcome_line(&book), "Book: Book (3 chapters, cover: yes)");
         let chapter = JobOutcomeDto {
@@ -446,6 +483,7 @@ mod tests {
             chapters: None,
             cover: None,
             content_chars: Some(500),
+            plugins: None,
         };
         assert_eq!(outcome_line(&chapter), "Chapter: Ch1 (500 chars)");
         let cover = JobOutcomeDto {
@@ -454,8 +492,24 @@ mod tests {
             chapters: None,
             cover: None,
             content_chars: None,
+            plugins: None,
         };
         assert_eq!(outcome_line(&cover), "Cover: fetched");
+        let plugin = JobOutcomeDto {
+            kind: "PluginInstalled".into(),
+            title: None,
+            chapters: None,
+            cover: None,
+            content_chars: None,
+            plugins: Some(vec![
+                ("royalroad".to_string(), "/p-royalroad.wasm".to_string()),
+                ("template".to_string(), "/p-template.wasm".to_string()),
+            ]),
+        };
+        assert_eq!(
+            outcome_line(&plugin),
+            "Installed royalroad → /p-royalroad.wasm, template → /p-template.wasm"
+        );
     }
 
     #[test]

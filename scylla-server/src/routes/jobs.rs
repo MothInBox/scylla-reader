@@ -170,6 +170,16 @@ pub async fn enqueue_job(
             let _ = state.cmd_tx.send(AppCommand::FetchCover(url.to_string()));
             StatusCode::ACCEPTED
         }
+        "InstallPlugin" => {
+            let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            if url.is_empty() {
+                return StatusCode::BAD_REQUEST;
+            }
+            let _ = state
+                .cmd_tx
+                .send(AppCommand::InstallPlugin(url.to_string()));
+            StatusCode::ACCEPTED
+        }
         "EmbedBatch" => {
             let Some(chapters) = payload.get("chapters").and_then(|v| v.as_array()) else {
                 return StatusCode::BAD_REQUEST;

@@ -23,14 +23,14 @@ impl JobManager {
     pub fn new(
         cmd_rx: mpsc::Receiver<AppCommand>,
         event_tx: mpsc::Sender<AppEvent>,
-        registry: ScraperRegistry,
+        registry: Arc<Mutex<ScraperRegistry>>,
         max_workers: u8,
         rate_limit_secs: u64,
     ) -> Self {
         Self {
             cmd_rx,
             event_tx,
-            registry: Arc::new(Mutex::new(registry)),
+            registry,
             job_queue: Vec::new(),
             delayed_queue: Vec::new(),
             active_jobs: HashMap::new(),
@@ -158,6 +158,22 @@ impl JobManager {
                         },
                         Err(e) => (Err(format!("Cover fetch: {}", e)), None),
                     },
+                    JobKind::InstallPlugin(url) => {
+                        match crate::plugin_install::install_plugin(url) {
+                            Ok(plugins) => {
+                                for (domain, path) in &plugins {
+                                    let _ = event_tx.send(AppEvent::PluginInstalled(
+                                        domain.clone(),
+                                        path.clone(),
+                                    ));
+                                }
+                                let o = JobOutcome::PluginInstalled { plugins };
+                                let _ = event_tx.send(AppEvent::JobOutcome(job.id, o.clone()));
+                                (Ok(()), Some(o))
+                            }
+                            Err(e) => (Err(e), None),
+                        }
+                    }
                     JobKind::EmbedBatch(chapters) => {
                         let mut detail: Vec<ChapterDetail> = chapters
                             .iter()
@@ -399,19 +415,17 @@ impl JobManager {
                 self.rate_limit_secs = secs;
             }
             AppCommand::InstallPlugin(repo_url) => {
-                crate::log::log(
-                    "DEBUG",
-                    "PLUGIN",
-                    &format!("Installing plugin from: {}", repo_url),
+                let id = self.next_job_id;
+                self.next_job_id += 1;
+                let target = repo_url.clone();
+                let job = Job::new(
+                    id,
+                    JobKind::InstallPlugin(repo_url),
+                    target,
+                    JobPriority::High,
                 );
-                match crate::plugin_install::install_plugin(&repo_url) {
-                    Ok((domain, path)) => {
-                        let _ = self.event_tx.send(AppEvent::PluginInstalled(domain, path));
-                    }
-                    Err(msg) => {
-                        let _ = self.event_tx.send(AppEvent::PluginInstallFailed(msg));
-                    }
-                }
+                self.job_queue.push(job.clone());
+                let _ = self.event_tx.send(AppEvent::JobEnqueued(job));
             }
         }
     }
@@ -559,7 +573,13 @@ mod tests {
     fn test_manager() -> (JobManager, std::sync::mpsc::Receiver<AppEvent>) {
         let (_cmd_tx, cmd_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
-        let manager = JobManager::new(cmd_rx, event_tx, ScraperRegistry::new(), 4, 2);
+        let manager = JobManager::new(
+            cmd_rx,
+            event_tx,
+            Arc::new(Mutex::new(ScraperRegistry::new())),
+            4,
+            2,
+        );
         (manager, event_rx)
     }
 

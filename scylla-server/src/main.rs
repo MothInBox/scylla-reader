@@ -62,9 +62,9 @@ async fn main() {
         scylla_core::scraper::ScraperRegistry::new(),
     ));
 
-    let worker_registry = scylla_core::scraper::ScraperRegistry::new();
     let max_workers: u8 = 4;
     let rate_limit: u64 = 2;
+    let worker_registry = registry.clone();
     std::thread::spawn(move || {
         let manager = scylla_core::worker::JobManager::new(
             cmd_rx,
@@ -1581,6 +1581,33 @@ mod tests {
             }
             _ => panic!("expected EmbedBatch command"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_install_plugin_sends_command() {
+        let (app, cmd_rx) = test_app_with_cmd_rx();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs/enqueue")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"kind":"InstallPlugin","url":"https://github.com/o/r"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let cmd = cmd_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            cmd,
+            scylla_core::messenger::AppCommand::InstallPlugin(url)
+                if url == "https://github.com/o/r"
+        ));
     }
 
     #[tokio::test]

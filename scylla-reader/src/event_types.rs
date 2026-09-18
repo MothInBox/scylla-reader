@@ -99,9 +99,11 @@ pub enum ServerEvent {
         jobs: Vec<JobDto>,
         server_now_ms: u64,
     },
-    /// TUI-internal: SSE connection state.
+    /// TUI-internal: SSE connection state. `error` is Some when disconnected
+    /// (the reason the connection failed/lost), None when connected.
     ConnectionState {
         connected: bool,
+        error: Option<String>,
     },
     /// TUI-internal: AI search results delivered by the one-shot search thread.
     AiSearchResults {
@@ -183,6 +185,8 @@ impl<'de> Deserialize<'de> for ServerEvent {
             },
             ConnectionState {
                 connected: bool,
+                #[serde(default)]
+                error: Option<String>,
             },
             JobDetailChanged {
                 id: u64,
@@ -252,7 +256,9 @@ impl<'de> Deserialize<'de> for ServerEvent {
                 jobs,
                 server_now_ms,
             },
-            Wire::ConnectionState { connected } => ServerEvent::ConnectionState { connected },
+            Wire::ConnectionState { connected, error } => {
+                ServerEvent::ConnectionState { connected, error }
+            }
             Wire::JobDetailChanged { id, detail } => ServerEvent::JobDetailChanged { id, detail },
             Wire::ChapterToEmbed { id, chapter } => ServerEvent::ChapterToEmbed { id, chapter },
             Wire::ChapterEmbedded { id, url } => ServerEvent::ChapterEmbedded { id, url },
@@ -491,7 +497,27 @@ mod tests {
     fn test_connection_state() {
         let event = parse(r#"{"type":"ConnectionState","connected":true}"#);
         match event {
-            ServerEvent::ConnectionState { connected } => assert!(connected),
+            ServerEvent::ConnectionState { connected, error } => {
+                assert!(connected);
+                assert!(error.is_none());
+            }
+            _ => panic!("expected ConnectionState"),
+        }
+    }
+
+    #[test]
+    fn test_connection_state_with_error() {
+        let event = parse(
+            r#"{"type":"ConnectionState","connected":false,"error":"Failed to connect to http://mock: boom"}"#,
+        );
+        match event {
+            ServerEvent::ConnectionState { connected, error } => {
+                assert!(!connected);
+                assert_eq!(
+                    error.as_deref(),
+                    Some("Failed to connect to http://mock: boom")
+                );
+            }
             _ => panic!("expected ConnectionState"),
         }
     }

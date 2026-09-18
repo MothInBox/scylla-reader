@@ -28,12 +28,13 @@ pub enum JobKind {
     FetchChapter(String, usize),
     FetchCover(String),
     EmbedBatch(Vec<ChapterRef>),
+    InstallPlugin(String),
 }
 
 impl JobKind {
     pub fn target(&self) -> &str {
         match self {
-            JobKind::Scrape(url) | JobKind::FetchCover(url) => url,
+            JobKind::Scrape(url) | JobKind::FetchCover(url) | JobKind::InstallPlugin(url) => url,
             JobKind::FetchChapter(url, _) => url,
             JobKind::EmbedBatch(chapters) => chapters.first().map(|c| c.url.as_str()).unwrap_or(""),
         }
@@ -45,6 +46,7 @@ impl JobKind {
             JobKind::FetchChapter(_, _) => "FetchCh",
             JobKind::FetchCover(_) => "Cover",
             JobKind::EmbedBatch(_) => "EmbedBatch",
+            JobKind::InstallPlugin(_) => "InstallPlugin",
         }
     }
 
@@ -55,6 +57,7 @@ impl JobKind {
             JobKind::FetchChapter(_, _) => "FetchChapter",
             JobKind::FetchCover(_) => "FetchCover",
             JobKind::EmbedBatch(_) => "EmbedBatch",
+            JobKind::InstallPlugin(_) => "InstallPlugin",
         }
     }
 
@@ -118,6 +121,10 @@ pub enum JobOutcome {
         content_chars: usize,
     },
     CoverFetched,
+    PluginInstalled {
+        /// All (domain, path) pairs installed by the job.
+        plugins: Vec<(String, String)>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -198,12 +205,14 @@ pub struct JobDto {
 /// Serializable job outcome payload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JobOutcomeDto {
-    /// "BookScraped" | "ChapterFetched" | "CoverFetched"
+    /// "BookScraped" | "ChapterFetched" | "CoverFetched" | "PluginInstalled"
     pub kind: String,
     pub title: Option<String>,
     pub chapters: Option<usize>,
     pub cover: Option<bool>,
     pub content_chars: Option<usize>,
+    /// All (domain, path) pairs for a `PluginInstalled` outcome.
+    pub plugins: Option<Vec<(String, String)>>,
 }
 
 impl From<&Job> for JobDto {
@@ -243,6 +252,7 @@ impl From<&JobOutcome> for JobOutcomeDto {
                 chapters: Some(*chapters),
                 cover: Some(*cover),
                 content_chars: None,
+                plugins: None,
             },
             JobOutcome::ChapterFetched {
                 title,
@@ -253,6 +263,7 @@ impl From<&JobOutcome> for JobOutcomeDto {
                 chapters: None,
                 cover: None,
                 content_chars: Some(*content_chars),
+                plugins: None,
             },
             JobOutcome::CoverFetched => Self {
                 kind: "CoverFetched".to_string(),
@@ -260,6 +271,15 @@ impl From<&JobOutcome> for JobOutcomeDto {
                 chapters: None,
                 cover: None,
                 content_chars: None,
+                plugins: None,
+            },
+            JobOutcome::PluginInstalled { plugins } => Self {
+                kind: "PluginInstalled".to_string(),
+                title: None,
+                chapters: None,
+                cover: None,
+                content_chars: None,
+                plugins: Some(plugins.clone()),
             },
         }
     }
@@ -428,6 +448,14 @@ mod tests {
         assert_eq!(JobKind::FetchCover("u".into()).as_str(), "FetchCover");
         assert_eq!(JobKind::EmbedBatch(vec![]).as_str(), "EmbedBatch");
         assert_eq!(JobKind::EmbedBatch(vec![]).label(), "EmbedBatch");
+        assert_eq!(
+            JobKind::InstallPlugin("https://github.com/o/r".into()).as_str(),
+            "InstallPlugin"
+        );
+        assert_eq!(
+            JobKind::InstallPlugin("https://github.com/o/r".into()).target(),
+            "https://github.com/o/r"
+        );
         assert_eq!(JobStatus::Queued.as_str(), "Queued");
         assert_eq!(JobStatus::Running.as_str(), "Running");
         assert_eq!(JobStatus::Completed.as_str(), "Completed");

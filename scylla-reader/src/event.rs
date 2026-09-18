@@ -281,7 +281,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     &format!("Plugin install failed: {}", message),
                 );
             }
-            ServerEvent::ConnectionState { connected } => {
+            ServerEvent::ConnectionState { connected, error } => {
                 crate::settings::log(
                     crate::settings::LogLevel::Debug,
                     "UI",
@@ -291,6 +291,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     ),
                 );
                 state.jobs.connected = connected;
+                state.jobs.connection_error = if connected { None } else { error };
                 // A dropped SSE means any in-flight chapter fetch will never
                 // resolve — don't leave the reader stuck on a spinner.
                 if !connected {
@@ -970,13 +971,28 @@ mod tests {
     fn test_connection_state_sets_connected() {
         let mut state = test_state();
         assert!(!state.jobs.connected);
-        send(&mut state, ServerEvent::ConnectionState { connected: true });
-        assert!(state.jobs.connected);
+        assert!(state.jobs.connection_error.is_none());
         send(
             &mut state,
-            ServerEvent::ConnectionState { connected: false },
+            ServerEvent::ConnectionState {
+                connected: true,
+                error: None,
+            },
+        );
+        assert!(state.jobs.connected);
+        assert!(state.jobs.connection_error.is_none());
+        send(
+            &mut state,
+            ServerEvent::ConnectionState {
+                connected: false,
+                error: Some("Failed to connect to http://mock: boom".into()),
+            },
         );
         assert!(!state.jobs.connected);
+        assert_eq!(
+            state.jobs.connection_error.as_deref(),
+            Some("Failed to connect to http://mock: boom")
+        );
     }
 
     #[test]
@@ -985,12 +1001,21 @@ mod tests {
         state.reader.loading = true;
         send(
             &mut state,
-            ServerEvent::ConnectionState { connected: false },
+            ServerEvent::ConnectionState {
+                connected: false,
+                error: Some("boom".into()),
+            },
         );
         assert!(!state.reader.loading);
         // Reconnect must not clear loading (a fresh fetch may be in flight).
         state.reader.loading = true;
-        send(&mut state, ServerEvent::ConnectionState { connected: true });
+        send(
+            &mut state,
+            ServerEvent::ConnectionState {
+                connected: true,
+                error: None,
+            },
+        );
         assert!(state.reader.loading);
     }
 
