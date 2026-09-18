@@ -5,5 +5,4 @@ members = [
     "scylla-server",
     "scylla-reader",
     "scylla-plugin-api",
-    "plugin-template",
 ]

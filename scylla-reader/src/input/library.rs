@@ -43,41 +43,7 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
             true
         }
         KEY_EMBED => {
-            let book = lib
-                .library
-                .selected_book()
-                .map(|b| (b.url.clone(), b.title.clone(), b.chapters.clone()));
-            if let Some((book_url, book_title, chapters)) = book {
-                crate::settings::log(
-                    crate::settings::LogLevel::Debug,
-                    "INPUT",
-                    &format!("Opening embed-chapters for {}", book_title),
-                );
-                // Always fetch a fresh embedding status so the modal reflects
-                // chapters embedded since the last fetch; on error fall back to
-                // the cached status (or empty).
-                let base = crate::storage::client::api_base_for(&lib.manager);
-                let fetch = crate::storage::client::block_on(
-                    crate::storage::client::embedding_status(&base, &book_url),
-                );
-                let embedded_urls = resolve_embedded_urls(
-                    &mut lib.library.embedding_status_cache,
-                    &book_url,
-                    fetch,
-                );
-                // Start the cursor on the first selectable (non-embedded) row.
-                let initial_cursor =
-                    crate::input::modal::first_selectable(&chapters, &embedded_urls);
-                let selected = vec![false; chapters.len()];
-                ui.modal = Modal::EmbedChapters {
-                    book_url,
-                    chapters,
-                    selected,
-                    embedded_urls,
-                    cursor: initial_cursor,
-                    scroll_offset: 0,
-                };
-            }
+            open_embed_chapters(ui, lib);
             true
         }
         KEY_DELETE => {
@@ -161,6 +127,43 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
         }
         _ => true,
     }
+}
+
+/// Open the embed-chapters modal for the selected book. Shared by the `e` key
+/// handler and the command palette "Embed Chapters…" action.
+pub(crate) fn open_embed_chapters(ui: &mut UiState, lib: &mut LibraryState) {
+    let book = lib
+        .library
+        .selected_book()
+        .map(|b| (b.url.clone(), b.title.clone(), b.chapters.clone()));
+    let Some((book_url, book_title, chapters)) = book else {
+        return;
+    };
+    crate::settings::log(
+        crate::settings::LogLevel::Debug,
+        "INPUT",
+        &format!("Opening embed-chapters for {}", book_title),
+    );
+    // Always fetch a fresh embedding status so the modal reflects chapters
+    // embedded since the last fetch; on error fall back to the cached status
+    // (or empty).
+    let base = crate::storage::client::api_base_for(&lib.manager);
+    let fetch = crate::storage::client::block_on(crate::storage::client::embedding_status(
+        &base, &book_url,
+    ));
+    let embedded_urls =
+        resolve_embedded_urls(&mut lib.library.embedding_status_cache, &book_url, fetch);
+    // Start the cursor on the first selectable (non-embedded) row.
+    let initial_cursor = crate::input::modal::first_selectable(&chapters, &embedded_urls);
+    let selected = vec![false; chapters.len()];
+    ui.modal = Modal::EmbedChapters {
+        book_url,
+        chapters,
+        selected,
+        embedded_urls,
+        cursor: initial_cursor,
+        scroll_offset: 0,
+    };
 }
 
 /// Resolve the embedded chapter URLs for the embed modal from a fresh fetch:

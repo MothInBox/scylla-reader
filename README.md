@@ -16,7 +16,8 @@ The project contains multiple crates:
 - **`scylla-core/`**: Shared library — common types, scraper, worker, and messenger.
 - **`scylla-server/`**: REST API server backed by the SQLite database.
 - **`scylla-plugin-api/`**: Type definitions for plugin developers.
-- **`plugin-template/`**: A baseline wasm plugin to help you write new scrapers with Extism.
+
+Plugins live in the separate [scylla-plugin-base](https://github.com/MothInBox/scylla-plugin-base) repository.
 
 ## Installation
 
@@ -72,10 +73,6 @@ brew install openssl curl pkg-config
 git clone https://github.com/MothInBox/scylla-reader.git
 cd scylla-reader/scylla-reader
 cargo install --path .
-
-# Optional: build the template plugin
-cd ../plugin-template
-make
 ```
 
 ## Keybindings
@@ -98,7 +95,9 @@ make
 | `j` | Jump Chapter |
 | `u` | Update All |
 | `d` | Delete Book |
-| `f` | Cycle Filter |
+| `f` | Filter modal (name, tags, status, library, AI search) |
+| `e` | Embed Chapters (pick chapters to embed) |
+| `L` | Backends (add / rename / delete) |
 | `Space` | Cycle Status |
 | `Enter` | Session Picker |
 | `↑/↓` | Navigate |
@@ -133,6 +132,9 @@ make
 | `n` | New Session |
 | `r` | Rename Session |
 | `d` | Delete Session |
+| `Tab` | Switch filter facet / expand AI results |
+| `Space` | Toggle tag / select (filter modal) |
+| `c` | Clear filter facets |
 
 ### Jobs
 | Key | Action |
@@ -148,7 +150,7 @@ make
 
 Develop your own or find one someone else has written.
 
-See the `plugin-template/` directory for a reference implementation.
+See the [scylla-plugin-base](https://github.com/MothInBox/scylla-plugin-base) repository for the reference template and existing plugins.
 
 > [!WARNING]
 > Plugins run arbitrary wasm on your machine. Verify the plugin yourself or only use trusted sources.
@@ -161,69 +163,14 @@ Scylla fetches the latest release from GitHub, scans it for `.wasm` files named 
 
 ### How do I make a plugin repo?
 
-Create a GitHub repository with a Rust crate that targets `wasm32-unknown-unknown` and depends on `scylla-plugin-api` and `extism-pdk`:
-
-```toml
-# Cargo.toml
-[package]
-name = "my-plugin"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-scylla-plugin-api = "0.2"
-extism-pdk = "1"
-serde_json = "1"
-```
-
-Implement the three plugin exports:
-
-```rust
-#[plugin_fn]
-pub fn get_config_schema(Json(()): Json<()>) -> FnResult<Json<PluginSchema>> {
-    Ok(Json(PluginSchema {
-        fields: vec![
-            ConfigField {
-                key: "key".into(),
-                label: "Display label".into(),
-                field_type: "string".into(),
-                default: "".into(),
-            },
-        ],
-        accepts_cookies: false,
-    }))
-}
-
-#[plugin_fn]
-pub fn scrape_book(Json(input): Json<ScrapeInput>) -> FnResult<Json<ScrapeOutput>> {
-    // Use host_curl_fetch to fetch pages, parse HTML, return book metadata + chapters
-}
-
-#[plugin_fn]
-pub fn scrape_chapter(Json(input): Json<ScrapeInput>) -> FnResult<Json<ChapterOutput>> {
-    // Return chapter title + content
-}
-```
-
-Build with:
-
-```bash
-cargo build --target wasm32-unknown-unknown --release
-```
-
-Create a GitHub release and attach your `plugin-<domain>.wasm` file(s) as assets. GitHub releases are flat — every `.wasm` asset attached to the release is downloaded, regardless of directory structure in your repo. A single release can bundle multiple plugins (e.g., `plugin-site-a.com.wasm`, `plugin-site-b.org.wasm`).
-
-Users install by entering the repo URL in the Install Plugin modal.
+See the [scylla-plugin-base](https://github.com/MothInBox/scylla-plugin-base) repository — it contains the reference template, the shared plugin API, and a full guide on writing, building, and releasing plugins.
 
 ### Where is data stored?
 
 | Directory | Contents |
 |-----------|----------|
-| `~/.local/share/scylla-reader/` | `library.db` (database) |
-| `~/.config/scylla-reader/` | `settings.json`, `plugin-*.json` (config) |
+| `~/.local/share/scylla-reader/` | `library.db` (database), `server.log`, `models/` (embedding model cache) |
+| `~/.config/scylla-reader/` | `settings.json`, `libraries.json`, `plugin-*.json` (config) |
 | `~/.config/scylla-reader/plugins/` | `plugin-*.wasm` (plugin binaries) |
 
 ## Roadmap
@@ -241,9 +188,9 @@ Users install by entering the repo URL in the Install Plugin modal.
 - **HTTPS server** — `scylla-server` crate exposes a REST API for books, chapters, sessions, and settings, backed by SQLite.
 - **Scylla as server client** — the TUI runs as a client of the server API through the `StorageBackend` abstraction.
 - **AI Classification Model** — books are embedded locally (all-MiniLM-L6-v2) on chapter fetch and book creation, with genre classification and semantic search across chapters.
+- **Plugin download from GitHub** — install plugins from a GitHub repo's latest release via the command palette.
 
 ### Planned
 
 - **Plugin explore feed** — in-app browser for discovering books. Plugins expose a `search(query) -> SearchResults` function. TUI renders results, user picks one, then `scrape_book` runs. Start with search input + paginated results.
-- **Plugin download from GitHub** — `scylla plugin install <repo-url>`. Fetches wasm from releases, validates by calling `get_config_schema`, places in plugins folder. CLI command or TUI modal.
 - **Customizable file paths** — add `data_dir`, `config_dir`, `plugin_dir` to `PersistedSettings`. `config_dir()` checks these overrides before `dirs`-based defaults.

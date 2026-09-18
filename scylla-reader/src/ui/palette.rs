@@ -60,6 +60,14 @@ pub fn build_palette_actions() -> Vec<PaletteAction> {
         },
         PaletteAction {
             category: "Library",
+            label: "Embed Chapters…",
+            keys: "e", // KEY_EMBED
+            handler: |s| {
+                crate::input::library::open_embed_chapters(&mut s.ui, &mut s.lib);
+            },
+        },
+        PaletteAction {
+            category: "Library",
             label: "Update All",
             keys: "u", // KEY_UPDATE_ALL
             handler: |s| {
@@ -118,10 +126,45 @@ pub fn build_palette_actions() -> Vec<PaletteAction> {
         },
         PaletteAction {
             category: "Library",
+            label: "AI Search…",
+            keys: "",
+            handler: |s| {
+                s.ui.modal = Modal::Filter {
+                    working: s.lib.library.filter.clone(),
+                    focus: FilterRow::Ai,
+                    tag_query: String::new(),
+                    tag_cursor: 0,
+                    tag_scroll: 0,
+                    status_cursor: s.lib.library.filter.status_cursor(),
+                    lib_cursor: s
+                        .lib
+                        .library
+                        .filter
+                        .library_cursor(&s.lib.manager.backend_names()),
+                    ai_query: String::new(),
+                };
+            },
+        },
+        PaletteAction {
+            category: "Library",
             label: "Cycle Status",
             keys: "Space", // KEY_CYCLE_STATUS
             handler: |s| {
                 s.lib.library.cycle_selected_status();
+            },
+        },
+        PaletteAction {
+            category: "Library",
+            label: "Backends…",
+            keys: "L", // KEY_BACKENDS
+            handler: |s| {
+                s.ui.modal = Modal::BackendPicker {
+                    cursor: 0,
+                    scroll_offset: 0,
+                    input: None,
+                    editing_idx: None,
+                    pending_delete_idx: None,
+                };
             },
         },
         // Reader actions
@@ -316,6 +359,72 @@ mod tests {
         assert!(!actions.is_empty());
         assert!(actions.iter().any(|a| a.label == "Go to Library"));
         assert!(actions.iter().any(|a| a.label == "Add Book"));
+    }
+
+    #[test]
+    fn test_build_palette_actions_includes_new_actions() {
+        let actions = build_palette_actions();
+        assert!(actions.iter().any(|a| a.label == "Embed Chapters…"));
+        assert!(actions.iter().any(|a| a.label == "Backends…"));
+        assert!(actions.iter().any(|a| a.label == "AI Search…"));
+    }
+
+    /// Invoke the action with the given label and return the resulting state.
+    fn run_action(label: &str, state: &mut AppState) {
+        let actions = build_palette_actions();
+        let action = actions.iter().find(|a| a.label == label).unwrap();
+        (action.handler)(state);
+    }
+
+    #[test]
+    fn test_palette_embed_chapters_opens_embed_modal() {
+        // MockBackend → api_base is "http://mock" (non-resolvable), so the fresh
+        // fetch fails and the opener falls back to the cache (here: empty).
+        let mut state = crate::test_helpers::test_state_with_backend(Box::new(
+            crate::test_helpers::MockBackend::new("mock"),
+        ));
+        state.lib.library.add_book("Test".into(), "url".into());
+        state.lib.library.books[0].chapters = vec![crate::models::Chapter {
+            title: "Ch0".into(),
+            url: "u0".into(),
+            order: 0,
+        }];
+        run_action("Embed Chapters…", &mut state);
+        assert!(
+            matches!(state.ui.modal, Modal::EmbedChapters { .. }),
+            "expected EmbedChapters modal, got {:?}",
+            state.ui.modal
+        );
+    }
+
+    #[test]
+    fn test_palette_backends_opens_backend_picker() {
+        let mut state = crate::test_helpers::test_state();
+        run_action("Backends…", &mut state);
+        assert!(
+            matches!(state.ui.modal, Modal::BackendPicker { .. }),
+            "expected BackendPicker modal, got {:?}",
+            state.ui.modal
+        );
+    }
+
+    #[test]
+    fn test_palette_ai_search_opens_filter_on_ai_row() {
+        let mut state = crate::test_helpers::test_state();
+        run_action("AI Search…", &mut state);
+        if let Modal::Filter {
+            focus,
+            ai_query,
+            working,
+            ..
+        } = &state.ui.modal
+        {
+            assert_eq!(*focus, FilterRow::Ai);
+            assert!(ai_query.is_empty());
+            assert_eq!(working, &state.lib.library.filter);
+        } else {
+            panic!("Expected Filter modal");
+        }
     }
 
     #[test]
