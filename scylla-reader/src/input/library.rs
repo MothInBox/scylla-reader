@@ -14,16 +14,6 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
             };
             true
         }
-        KEY_BACKENDS => {
-            ui.modal = Modal::BackendPicker {
-                cursor: 0,
-                scroll_offset: 0,
-                input: None,
-                editing_idx: None,
-                pending_delete_idx: None,
-            };
-            true
-        }
         KEY_JUMP_CHAPTER => {
             if let Some(book) = lib.library.selected_book() {
                 crate::settings::log(

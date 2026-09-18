@@ -21,9 +21,6 @@ pub const KEY_EMBED: KeyCode = KeyCode::Char('e');
 pub const KEY_NAV_UP: KeyCode = KeyCode::Up;
 pub const KEY_NAV_DOWN: KeyCode = KeyCode::Down;
 
-// ── Library Management ──
-pub const KEY_BACKENDS: KeyCode = KeyCode::Char('L');
-
 // ── Reader Page ──
 pub const KEY_NEXT_CHAPTER: KeyCode = KeyCode::Char('>');
 pub const KEY_PREV_CHAPTER: KeyCode = KeyCode::Char('<');

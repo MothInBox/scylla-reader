@@ -97,7 +97,6 @@ cargo install --path .
 | `d` | Delete Book |
 | `f` | Filter modal (name, tags, status, library, AI search) |
 | `e` | Embed Chapters (pick chapters to embed) |
-| `L` | Backends (add / rename / delete) |
 | `Space` | Cycle Status |
 | `Enter` | Session Picker |
 | `↑/↓` | Navigate |

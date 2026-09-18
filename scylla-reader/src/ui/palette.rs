@@ -156,7 +156,7 @@ pub fn build_palette_actions() -> Vec<PaletteAction> {
         PaletteAction {
             category: "Library",
             label: "Backends…",
-            keys: "L", // KEY_BACKENDS
+            keys: "",
             handler: |s| {
                 s.ui.modal = Modal::BackendPicker {
                     cursor: 0,

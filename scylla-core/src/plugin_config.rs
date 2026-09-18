@@ -299,7 +299,7 @@ impl PluginConfig {
                 let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                     continue;
                 };
-                if stem == "settings" || stem.starts_with("plugin-") {
+                if stem == "settings" || stem == "libraries" || stem.starts_with("plugin-") {
                     continue;
                 }
                 let new_path = plugin_config_path(stem);
@@ -590,5 +590,25 @@ mod tests {
         };
         assert!(config.is_pending());
         assert_eq!(config.preview(), "loading...");
+    }
+
+    #[test]
+    fn test_migrate_old_json_files_skips_libraries() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path().to_path_buf();
+        // Point the config dir at the temp dir (set once; no other test sets it).
+        let _ = crate::paths::CONFIG_DIR_OVERRIDE.set(Some(dir_path.clone()));
+
+        // A legacy plugin config (should be renamed) and the libraries config
+        // (must NOT be renamed).
+        fs::write(dir_path.join("royalroad.json"), "{}").unwrap();
+        fs::write(dir_path.join("libraries.json"), "{}").unwrap();
+
+        PluginConfig::discover_all();
+
+        assert!(dir_path.join("libraries.json").exists());
+        assert!(!dir_path.join("plugin-libraries.json").exists());
+        assert!(!dir_path.join("royalroad.json").exists());
+        assert!(dir_path.join("plugin-royalroad.json").exists());
     }
 }

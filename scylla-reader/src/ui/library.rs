@@ -42,7 +42,6 @@ pub fn draw(frame: &mut Frame, area: Rect, lib: &mut LibraryState, ui: &UiState)
                 "Actions",
                 &[
                     ("i", "Add Book"),
-                    ("L", "Backends"),
                     ("j", "Jump"),
                     ("e", "Embed"),
                     ("d", "Delete"),
