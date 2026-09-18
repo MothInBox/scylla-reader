@@ -25,6 +25,14 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent, size: Rect) -> bool {
         return handled;
     }
 
+    // While editing a settings value, route every key to the page handler so
+    // global navigation keys type into the edit buffer instead of firing.
+    if state.ui.page == Page::Settings && state.lib.settings_ui.editing {
+        let handled = input::handle_input(state, key, size);
+        sync_after_input(state, selected_before);
+        return handled;
+    }
+
     match key.code {
         KEY_LIBRARY => {
             crate::settings::log(crate::settings::LogLevel::Debug, "NAV", "Page: Library");
@@ -254,5 +262,27 @@ mod tests {
             "expected update_status call, got: {:?}",
             calls
         );
+    }
+
+    #[test]
+    fn test_settings_editing_suppresses_global_keys() {
+        let mut state = test_state();
+        state.ui.page = Page::Settings;
+        state.lib.settings_ui.editing = true;
+        state.lib.settings_ui.edit_buffer = "5".to_string();
+
+        handle_key(&mut state, key_event(KEY_LIBRARY), rect());
+        assert_eq!(state.ui.page, Page::Settings);
+        assert_eq!(state.lib.settings_ui.edit_buffer, "51");
+    }
+
+    #[test]
+    fn test_settings_not_editing_global_key_navigates() {
+        let mut state = test_state();
+        state.ui.page = Page::Settings;
+        state.lib.settings_ui.editing = false;
+
+        handle_key(&mut state, key_event(KEY_LIBRARY), rect());
+        assert_eq!(state.ui.page, Page::Library);
     }
 }

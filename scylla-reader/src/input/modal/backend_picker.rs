@@ -319,21 +319,6 @@ mod tests {
     };
     use crossterm::event::KeyCode;
 
-    /// Redirect config writes to a temp dir so tests never touch the
-    /// developer's real `libraries.json`.
-    fn redirect_config_dir() {
-        let tmp = std::env::temp_dir().join(format!("scylla-test-config-{}", std::process::id()));
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &tmp);
-        }
-    }
-
-    fn restore_config_dir() {
-        unsafe {
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
-    }
-
     fn mock(name: &str) -> Box<dyn StorageBackend> {
         Box::new(MockBackend::new(name))
     }
@@ -487,7 +472,9 @@ mod tests {
 
     #[test]
     fn test_deleting_active_filter_backend_clears_filter_library() {
-        redirect_config_dir();
+        crate::storage::config::set_config_dir_override(
+            std::env::temp_dir().join(format!("scylla-test-config-{}", std::process::id())),
+        );
         let mut state = test_state_with_backends(vec![mock("a"), mock("b")]);
         state.lib.library.filter.library = Some("a".into());
         state.lib.library.selected_index = 3;
@@ -499,7 +486,6 @@ mod tests {
             pending_delete_idx: None,
         };
         handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION));
-        restore_config_dir();
 
         assert_eq!(state.lib.library.filter.library, None);
         assert_eq!(state.lib.library.selected_index, 0);
@@ -508,7 +494,9 @@ mod tests {
 
     #[test]
     fn test_deleting_last_active_filter_backend_clears_filter_library() {
-        redirect_config_dir();
+        crate::storage::config::set_config_dir_override(
+            std::env::temp_dir().join(format!("scylla-test-config-{}", std::process::id())),
+        );
         let mut state = test_state_with_backend(mock("only"));
         state.lib.library.filter.library = Some("only".into());
         state.lib.library.selected_index = 2;
@@ -522,7 +510,6 @@ mod tests {
         // First press arms the confirmation, second confirms the deletion.
         handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION));
         handle_backend_picker(&mut state, key_event(KEY_DELETE_SESSION));
-        restore_config_dir();
 
         assert_eq!(state.lib.library.filter.library, None);
         assert_eq!(state.lib.library.selected_index, 0);

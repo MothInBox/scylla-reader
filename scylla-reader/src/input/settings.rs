@@ -91,6 +91,10 @@ pub fn handle_settings_main(lib: &mut LibraryState, key: KeyEvent) -> bool {
             }
             true
         }
+        KEY_ESCAPE if lib.settings_ui.editing => {
+            lib.settings_ui.editing = false;
+            true
+        }
         KeyCode::Char(c) if lib.settings_ui.editing => {
             lib.settings_ui.edit_buffer.push(c);
             true
@@ -394,6 +398,18 @@ mod tests {
 
         handle_settings_main(&mut state.lib, key_event(KEY_BACKSPACE));
         assert_eq!(state.lib.settings_ui.edit_buffer, "2");
+    }
+
+    #[test]
+    fn test_handle_settings_main_escape_cancels_edit() {
+        let mut state = test_state();
+        state.lib.settings_ui.selected_field = 0;
+        state.lib.settings_ui.editing = true;
+        state.lib.settings_ui.edit_buffer = "5".to_string();
+
+        let result = handle_settings_main(&mut state.lib, key_event(KEY_ESCAPE));
+        assert!(result);
+        assert!(!state.lib.settings_ui.editing);
     }
 
     #[test]

@@ -6,6 +6,9 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use std::net::TcpStream;
 use std::time::Duration;
 
+/// Cursor shown after the edit buffer while editing a field value.
+const EDIT_CURSOR: &str = "\u{2588}"; // █
+
 /// Extract the `SocketAddr` from a backend URL like `http://127.0.0.1:8080`.
 fn socket_addr_from_url(url: &str) -> Option<std::net::SocketAddr> {
     let without_scheme = url
@@ -38,7 +41,9 @@ fn draw_main(frame: &mut Frame, area: Rect, lib: &LibraryState, ui: &UiState) {
     let items: Vec<ListItem> = fields
         .iter()
         .map(|f| {
-            let value = if *f == SettingsField::AutoEmbed {
+            let value = if *f == SettingsField::RateLimit && lib.settings_ui.editing {
+                format!("{}{}", lib.settings_ui.edit_buffer, EDIT_CURSOR)
+            } else if *f == SettingsField::AutoEmbed {
                 if lib.server_settings.autoembed {
                     "ON".to_string()
                 } else {
@@ -405,5 +410,34 @@ mod tests {
             content
         );
         assert!(content.contains(": ON"), "content: {}", content);
+    }
+
+    #[test]
+    fn test_settings_draw_shows_edit_buffer_while_editing_rate_limit() {
+        let mut state = make_state();
+        state.lib.settings_ui.selected_field = 0; // SettingsField::RateLimit
+        state.lib.settings_ui.editing = true;
+        state.lib.settings_ui.edit_buffer = "5".to_string();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, f.area(), &state.lib, &state.ui);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            content.contains("Rate Limit (seconds between requests): 5\u{2588}"),
+            "content: {}",
+            content
+        );
+        assert!(
+            !content.contains("Rate Limit (seconds between requests): 2"),
+            "content: {}",
+            content
+        );
     }
 }

@@ -193,3 +193,6 @@ See the [scylla-plugin-base](https://github.com/MothInBox/scylla-plugin-base) re
 
 - **Plugin explore feed** — in-app browser for discovering books. Plugins expose a `search(query) -> SearchResults` function. TUI renders results, user picks one, then `scrape_book` runs. Start with search input + paginated results.
 - **Customizable file paths** — add `data_dir`, `config_dir`, `plugin_dir` to `PersistedSettings`. `config_dir()` checks these overrides before `dirs`-based defaults.
+- **Generic modals for data entry & prompts** — a shared modal system for future text entry and prompts 
+- **Code simplification and architectural analysis** — a review and refactor pass to simplify and improve the codebase/architecture.
+- **Per-plugin scraping delay** — move the scraping rate limit from a single global setting to a per-plugin (per-domain) delay, adjustable via settings.
