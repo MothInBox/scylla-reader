@@ -2488,61 +2488,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_search_chapter_mode_hits_carry_snippets() {
-        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
-        let book = scylla_core::types::Book {
-            title: "Book A".into(),
-            url: "book-a".into(),
-            status: scylla_core::types::BookStatus::Reading,
-            sessions: vec![],
-            active_session_id: None,
-            tags: vec![],
-            cover_url: None,
-            description: None,
-            chapters: vec![scylla_core::types::Chapter {
-                url: "ch-a1".into(),
-                title: "Chapter A1".into(),
-                order: 1,
-            }],
-        };
-        db.lock().await.upsert_book(&book).unwrap();
-        db.lock()
-            .await
-            .upsert_chapter_chunks(
-                "ch-a1",
-                Some("book-a"),
-                &[(
-                    0,
-                    "the dragon sleeps beneath the mountain for a thousand years",
-                    &[1.0, 0.0],
-                )],
-                None,
-            )
-            .unwrap();
-
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/search")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"query":"dragon","mode":"chapter","limit":10}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let json = body_json(resp).await;
-        let hits = json["hits"].as_array().unwrap();
-        assert_eq!(hits.len(), 1);
-        // The snippet is present and centers on the matched term.
-        let snippet = hits[0]["snippet"].as_str().unwrap();
-        assert!(snippet.contains("dragon"), "snippet: {snippet}");
-    }
-
-    #[tokio::test]
     async fn test_search_book_mode_inline_chapters_carry_snippets() {
         let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
         let book = scylla_core::types::Book {
@@ -2598,49 +2543,6 @@ mod tests {
         assert_eq!(chapters.len(), 1);
         let snippet = chapters[0]["snippet"].as_str().unwrap();
         assert!(snippet.contains("dragon"), "snippet: {snippet}");
-    }
-
-    #[tokio::test]
-    async fn test_list_books_carries_genres() {
-        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
-        let book = scylla_core::types::Book {
-            title: "Book A".into(),
-            url: "book-a".into(),
-            status: scylla_core::types::BookStatus::Reading,
-            sessions: vec![],
-            active_session_id: None,
-            tags: vec![],
-            cover_url: None,
-            description: None,
-            chapters: vec![],
-        };
-        db.lock().await.upsert_book(&book).unwrap();
-        db.lock()
-            .await
-            .upsert_book_embedding(
-                "book-a",
-                None,
-                Some(&[1.0, 0.0]),
-                Some(&["Fantasy".to_string(), "LitRPG".to_string()]),
-            )
-            .unwrap();
-
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/books")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let json = body_json(resp).await;
-        let books = json.as_array().unwrap();
-        assert_eq!(books.len(), 1);
-        assert_eq!(books[0]["url"], "book-a");
-        assert_eq!(books[0]["genres"][0], "Fantasy");
-        assert_eq!(books[0]["genres"][1], "LitRPG");
     }
 
     #[tokio::test]

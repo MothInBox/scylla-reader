@@ -28,7 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hybrid search: BM25 keyword lane fused with the semantic lane via Reciprocal Rank Fusion, then refined by a cross-encoder reranker (ms-marco-MiniLM-L-6-v2)
 - Embedding model upgraded to bge-small-en-v1.5 with a query/passage instruction split; a model change clears stored embeddings and re-embeds explicitly (never silent)
 - AI search chapter hits and book-mode inline chapters carry a ~120-char snippet centered on the best-matching span (BM25-matched term or the start of the best chunk)
-- The library listing (`GET /api/books`) exposes each book's genres (from `book_embeddings`) for genre filtering
 
 ### Changed
 
