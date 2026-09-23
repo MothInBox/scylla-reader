@@ -123,6 +123,11 @@ impl JobsState {
             .collect()
     }
 
+    /// Recompute `active_count` from the current job list (running jobs).
+    pub fn refresh_active_count(&mut self) {
+        self.active_count = self.jobs.iter().filter(|j| j.status == "Running").count() as u8;
+    }
+
     pub fn selected_job(&self) -> Option<&JobDto> {
         let indices = self.filtered_jobs();
         indices.get(self.selected).map(|&i| &self.jobs[i])

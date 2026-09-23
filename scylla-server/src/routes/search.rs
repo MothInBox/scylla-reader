@@ -112,16 +112,10 @@ async fn search_chapters(
             )
         })?,
     };
-    let embedded = db.embedded_chapter_count().map_err(|_| {
+    let (embedded, total) = db.coverage_counts().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": "failed to count chapter embeddings" })),
-        )
-    })?;
-    let total = db.chapter_count().map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "failed to count chapters" })),
         )
     })?;
     drop(db);
@@ -191,16 +185,10 @@ async fn search_books(
             Json(json!({ "error": "failed to load chapter embeddings" })),
         )
     })?;
-    let embedded = db.embedded_chapter_count().map_err(|_| {
+    let (embedded, total) = db.coverage_counts().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": "failed to count chapter embeddings" })),
-        )
-    })?;
-    let total = db.chapter_count().map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "failed to count chapters" })),
         )
     })?;
     drop(db);

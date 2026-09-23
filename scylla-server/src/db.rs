@@ -660,23 +660,17 @@ impl ServerDb {
         rows.collect()
     }
 
-    /// Total number of chapters in the library (for the no-embeddings hint).
-    pub fn chapter_count(&self) -> Result<usize> {
-        let n: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM chapters", [], |row| row.get(0))?;
-        Ok(n as usize)
-    }
-
-    /// Number of chapters with at least one embedded chunk (search coverage
-    /// reporting). Counts DISTINCT chapters, not chunks.
-    pub fn embedded_chapter_count(&self) -> Result<usize> {
-        let n: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT chapter_url) FROM chapter_embeddings",
+    /// `(embedded_chapters, total_chapters)` in one query — the search coverage
+    /// pair both search modes report. Counts DISTINCT chapters, not chunks.
+    pub fn coverage_counts(&self) -> Result<(usize, usize)> {
+        let (embedded, total): (i64, i64) = self.conn.query_row(
+            "SELECT
+                (SELECT COUNT(DISTINCT chapter_url) FROM chapter_embeddings),
+                (SELECT COUNT(*) FROM chapters)",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        Ok(n as usize)
+        Ok((embedded as usize, total as usize))
     }
 
     /// All book aggregate embeddings as (book_url, aggregate, genres) — for

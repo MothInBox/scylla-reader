@@ -17,12 +17,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                 );
                 state.jobs.jobs = jobs;
                 state.jobs.server_now_ms = server_now_ms;
-                state.jobs.active_count = state
-                    .jobs
-                    .jobs
-                    .iter()
-                    .filter(|j| j.status == "Running")
-                    .count() as u8;
+                state.jobs.refresh_active_count();
                 // Clamp selection/detail to the new list so a shrinking
                 // snapshot never leaves a dangling index.
                 let filtered_len = state.jobs.filtered_jobs().len();
@@ -66,12 +61,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     started_at_ms,
                     completed_at_ms,
                 );
-                state.jobs.active_count = state
-                    .jobs
-                    .jobs
-                    .iter()
-                    .filter(|j| j.status == "Running")
-                    .count() as u8;
+                state.jobs.refresh_active_count();
             }
             ServerEvent::JobOutcome { id, outcome } => {
                 crate::settings::log(
