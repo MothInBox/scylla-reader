@@ -13,11 +13,21 @@ Multiple reading modes:
 The project contains multiple crates:
 
 - **`scylla-reader/`**: The TUI application.
-- **`scylla-core/`**: Shared library — common types, scraper, worker, and messenger.
-- **`scylla-server/`**: REST API server backed by the SQLite database.
+- **`scylla-core/`**: Shared library — common types, job worker, and messenger.
+- **`scylla-server/`**: REST API server backed by the SQLite database — owns all jobs (scraping, chapter fetch, covers, embedding) and AI search, streaming events to the TUI over SSE.
 - **`scylla-plugin-api/`**: Type definitions for plugin developers.
 
 Plugins live in the separate [scylla-plugin-base](https://github.com/MothInBox/scylla-plugin-base) repository.
+
+## AI Search
+
+Press `f` in the library and enter a query to run an AI search. Books are ranked semantically using bge-small-en-v1.5 embeddings (chunked chapter indexing), cross-encoder reranking, and a BM25 hybrid — with a per-book diversity cap and 0–100 scores.
+
+- `Enter` on a ranked book drills into its top chapters instantly (no round-trip); `a` fetches the full per-book ranking
+- `g` toggles between ranked books and grouped chapters
+- `.` / `,` cycle the genre facet; `Esc` clears the AI ranking
+- The filter bar shows the active query, result count, and embedding coverage
+- The first search downloads the models (~224MB) and may take a moment; a fresh library shows a hint instead of an error
 
 ## Installation
 
@@ -97,8 +107,10 @@ cargo install --path .
 | `d` | Delete Book |
 | `f` | Filter modal (name, tags, status, library, AI search) |
 | `e` | Embed Chapters (pick chapters to embed) |
+| `g` | Toggle AI book/grouped mode |
+| `.` / `,` | Cycle AI genre facet |
 | `Space` | Cycle Status |
-| `Enter` | Session Picker |
+| `Enter` | Session Picker / AI drill-down |
 | `↑/↓` | Navigate |
 
 ### Reader
@@ -134,6 +146,7 @@ cargo install --path .
 | `Tab` | Switch filter facet / expand AI results |
 | `Space` | Toggle tag / select (filter modal) |
 | `c` | Clear filter facets |
+| `a` | Fetch all chapters (AI drill-down modal) |
 
 ### Jobs
 | Key | Action |
@@ -186,13 +199,15 @@ See the [scylla-plugin-base](https://github.com/MothInBox/scylla-plugin-base) re
 - Test setup deduplicated across 10 modules
 - **HTTPS server** — `scylla-server` crate exposes a REST API for books, chapters, sessions, and settings, backed by SQLite.
 - **Scylla as server client** — the TUI runs as a client of the server API through the `StorageBackend` abstraction.
-- **AI Classification Model** — books are embedded locally (all-MiniLM-L6-v2) on chapter fetch and book creation, with genre classification and semantic search across chapters.
+- **Server-owned jobs** — the server owns scraping, chapter fetch, covers, embedding, and plugins; the TUI is a thin client fed by SSE.
+- **AI search** — semantic search across books and chapters with bge-small-en-v1.5 embeddings, chunked chapter indexing, cross-encoder reranking, and BM25 hybrid retrieval.
+- **Book-mode AI search** — AI-ranked library with a visible indicator, instant per-book drill-down, genre facet, and result snippets.
 - **Plugin download from GitHub** — install plugins from a GitHub repo's latest release via the command palette.
+- **Customizable file paths** — `data_dir`, `config_dir`, `plugin_dir` overrides in settings.
+- **Code simplification pass** — deduplicated test helpers, job command handling, and loaders; linear-time AI ranking and grouping.
 
 ### Planned
 
 - **Plugin explore feed** — in-app browser for discovering books. Plugins expose a `search(query) -> SearchResults` function. TUI renders results, user picks one, then `scrape_book` runs. Start with search input + paginated results.
-- **Customizable file paths** — add `data_dir`, `config_dir`, `plugin_dir` to `PersistedSettings`. `config_dir()` checks these overrides before `dirs`-based defaults.
 - **Generic modals for data entry & prompts** — a shared modal system for future text entry and prompts 
-- **Code simplification and architectural analysis** — a review and refactor pass to simplify and improve the codebase/architecture.
 - **Per-plugin scraping delay** — move the scraping rate limit from a single global setting to a per-plugin (per-domain) delay, adjustable via settings.
