@@ -2,7 +2,7 @@
 //! calls from synchronous code, plus small HTTP helpers for the server-owned
 //! job API.
 
-use crate::event_types::ChapterHit;
+use crate::event_types::{ChapterHit, SearchOutcome};
 use crate::state::AppState;
 use crate::storage::manager::LibraryManager;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
@@ -115,7 +115,8 @@ pub async fn job_command(base: &str, path: &str, body: serde_json::Value) -> Res
     post_json(&format!("{}/api/jobs/{}", base, path), &body).await
 }
 
-/// POST /api/search — chapter-mode AI search. Returns the flat chapter hits.
+/// POST /api/search — chapter-mode AI search. Returns the flat chapter hits or
+/// a distinct "no embeddings yet" signal (empty corpus).
 ///
 /// The TUI only uses chapter mode; book mode is rejected up front. The client
 /// uses a generous 60s timeout because the first search legitimately includes
@@ -125,7 +126,7 @@ pub async fn search(
     query: &str,
     mode: &str,
     limit: usize,
-) -> Result<Vec<ChapterHit>, String> {
+) -> Result<SearchOutcome, String> {
     if mode != "chapter" {
         return Err("book mode not supported by the TUI client".to_string());
     }
@@ -143,7 +144,7 @@ pub async fn search(
         return Err(format!("HTTP {}", resp.status()));
     }
     let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(parse_search_response(&json))
+    Ok(parse_search_outcome(&json))
 }
 
 /// Embedding progress for a book, from `GET /api/books/:url/embedding-status`.
@@ -176,6 +177,16 @@ pub async fn embedding_status(base: &str, book_url: &str) -> Result<EmbeddingSta
         return Err(format!("HTTP {}", resp.status()));
     }
     resp.json().await.map_err(|e| e.to_string())
+}
+
+/// Parse a search response: a distinct `no_embeddings` body (empty corpus) or
+/// the flat `results` array.
+fn parse_search_outcome(json: &serde_json::Value) -> SearchOutcome {
+    if json.get("error").and_then(|e| e.as_str()) == Some("no_embeddings") {
+        let total = json.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        return SearchOutcome::NoEmbeddings { total };
+    }
+    SearchOutcome::Hits(parse_search_response(json))
 }
 
 /// Parse the `results` array of a search response into `ChapterHit`s, logging
@@ -273,6 +284,32 @@ mod tests {
         let hits = parse_search_response(&json);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].book_title, "B1");
+    }
+
+    #[test]
+    fn test_parse_search_outcome_no_embeddings() {
+        let json = serde_json::json!({ "error": "no_embeddings", "embedded": 0, "total": 12 });
+        assert_eq!(
+            parse_search_outcome(&json),
+            SearchOutcome::NoEmbeddings { total: 12 }
+        );
+    }
+
+    #[test]
+    fn test_parse_search_outcome_hits() {
+        let json = serde_json::json!({
+            "mode": "chapter",
+            "results": [
+                {"book_url":"u1","book_title":"B1","chapter_url":"c1","chapter_idx":0,"chapter_title":"C1","score":87.0}
+            ]
+        });
+        match parse_search_outcome(&json) {
+            SearchOutcome::Hits(hits) => {
+                assert_eq!(hits.len(), 1);
+                assert_eq!(hits[0].score, 87.0);
+            }
+            _ => panic!("expected Hits"),
+        }
     }
 
     #[test]

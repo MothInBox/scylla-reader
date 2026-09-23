@@ -1,4 +1,4 @@
-use crate::event_types::{ChapterGroup, ChapterHit, ServerEvent};
+use crate::event_types::{ChapterGroup, ChapterHit, SearchOutcome, ServerEvent};
 use crate::state::AppState;
 use crate::state::modal::{Modal, SearchStatus};
 use std::sync::mpsc;
@@ -314,7 +314,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     continue;
                 }
                 match result {
-                    Ok(hits) => {
+                    Ok(SearchOutcome::Hits(hits)) => {
                         let groups = build_groups(hits);
                         let status = if groups.is_empty() {
                             SearchStatus::Empty
@@ -334,6 +334,28 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                             *cursor = 0;
                             *scroll_offset = 0;
                             *s = status;
+                            *expanded = None;
+                        }
+                    }
+                    Ok(SearchOutcome::NoEmbeddings { total }) => {
+                        crate::settings::log(
+                            crate::settings::LogLevel::Debug,
+                            "AI",
+                            &format!("No embeddings yet — {} chapters in the library", total),
+                        );
+                        if let Modal::ChapterResults {
+                            groups: g,
+                            cursor,
+                            scroll_offset,
+                            status: s,
+                            expanded,
+                            ..
+                        } = &mut state.ui.modal
+                        {
+                            *g = Vec::new();
+                            *cursor = 0;
+                            *scroll_offset = 0;
+                            *s = SearchStatus::NoEmbeddings;
                             *expanded = None;
                         }
                     }
@@ -1112,7 +1134,7 @@ mod tests {
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "dragon".into(),
-                result: Ok(hits),
+                result: Ok(SearchOutcome::Hits(hits)),
             },
         );
         match &state.ui.modal {
@@ -1146,7 +1168,7 @@ mod tests {
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "dragon".into(),
-                result: Ok(vec![]),
+                result: Ok(SearchOutcome::Hits(vec![])),
             },
         );
         match &state.ui.modal {
@@ -1174,13 +1196,34 @@ mod tests {
     }
 
     #[test]
+    fn test_ai_search_results_no_embeddings_sets_hint_status() {
+        let mut state = chapter_results_state("dragon");
+        send(
+            &mut state,
+            ServerEvent::AiSearchResults {
+                query: "dragon".into(),
+                result: Ok(SearchOutcome::NoEmbeddings { total: 12 }),
+            },
+        );
+        match &state.ui.modal {
+            Modal::ChapterResults { status, groups, .. } => {
+                assert_eq!(*status, SearchStatus::NoEmbeddings);
+                assert!(groups.is_empty());
+            }
+            _ => panic!("expected ChapterResults"),
+        }
+    }
+
+    #[test]
     fn test_ai_search_results_stale_query_is_dropped() {
         let mut state = chapter_results_state("dragon");
         send(
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "other".into(),
-                result: Ok(vec![sample_hit("u1", "Book A", 0, 0.9)]),
+                result: Ok(SearchOutcome::Hits(vec![sample_hit(
+                    "u1", "Book A", 0, 0.9,
+                )])),
             },
         );
         match &state.ui.modal {
@@ -1199,7 +1242,9 @@ mod tests {
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "dragon".into(),
-                result: Ok(vec![sample_hit("u1", "Book A", 0, 0.9)]),
+                result: Ok(SearchOutcome::Hits(vec![sample_hit(
+                    "u1", "Book A", 0, 0.9,
+                )])),
             },
         );
         assert_eq!(state.ui.modal, Modal::None);

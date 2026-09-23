@@ -9,7 +9,7 @@ use crate::ui::palette::draw_palette;
 use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut LibraryState) {
     if matches!(ui.modal, Modal::CommandPalette { .. }) {
@@ -476,6 +476,14 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                     .alignment(Alignment::Center);
                     frame.render_widget(para, inner);
                 }
+                SearchStatus::NoEmbeddings => {
+                    let para = Paragraph::new(
+                        "No chapters embedded yet — run EmbedBatch from the Jobs page\n(or enable auto-embed in Settings).\n\nf refine · Esc close",
+                    )
+                    .wrap(Wrap { trim: true })
+                    .alignment(Alignment::Center);
+                    frame.render_widget(para, inner);
+                }
                 SearchStatus::Error(msg) => {
                     let para =
                         Paragraph::new(format!("Search failed: {}\n\nf retry · Esc close", msg))
@@ -641,14 +649,14 @@ fn header_item(group: &ChapterGroup) -> ListItem<'_> {
         ),
         Span::styled(genres, Style::default().fg(Color::DarkGray)),
         Span::styled(
-            format!("{:>8}", format!("{:.2}", group.best_score)),
+            format!("{:>8.0}", group.best_score),
             Style::default().fg(Color::DarkGray),
         ),
     ]))
 }
 
 fn chapter_item(hit: &ChapterHit) -> ListItem<'_> {
-    let score = format!("{:>5.2}", hit.score);
+    let score = format!("{:>5.0}", hit.score);
     ListItem::new(Line::from(vec![
         Span::raw(format!("  {}", hit.chapter_title)),
         Span::styled(format!("  {}", score), Style::default().fg(Color::DarkGray)),
@@ -994,10 +1002,10 @@ mod tests {
                     chapter_url: "c1".into(),
                     chapter_idx: 0,
                     chapter_title: "Ch1".into(),
-                    score: 0.9,
+                    score: 87.0,
                     genres: vec![],
                 }],
-                best_score: 0.9,
+                best_score: 87.0,
             }],
             _ => vec![],
         };
@@ -1046,11 +1054,35 @@ mod tests {
     }
 
     #[test]
+    fn test_draw_modal_chapter_results_no_embeddings_hint() {
+        let content = draw_chapter_results(SearchStatus::NoEmbeddings);
+        // The hint wraps across lines in the popup, so check the fragments.
+        assert!(
+            content.contains("No chapters embedded yet"),
+            "content: {}",
+            content
+        );
+        assert!(
+            content.contains("run EmbedBatch from the"),
+            "content: {}",
+            content
+        );
+        assert!(content.contains("Jobs page"), "content: {}", content);
+        assert!(
+            content.contains("enable auto-embed in Settings"),
+            "content: {}",
+            content
+        );
+        // Not an error toast — no "Search failed".
+        assert!(!content.contains("Search failed"), "content: {}", content);
+    }
+
+    #[test]
     fn test_draw_modal_chapter_results_ready_collapsed() {
         let content = draw_chapter_results(SearchStatus::Ready);
         assert!(content.contains("Book A"), "content: {}", content);
         assert!(content.contains("Fantasy"), "content: {}", content);
-        assert!(content.contains("0.90"), "content: {}", content);
+        assert!(content.contains("87"), "content: {}", content);
         // Collapsed: only the book headers are shown, no chapters.
         assert!(!content.contains("Ch1"), "content: {}", content);
         assert!(content.contains("↑↓ move"), "content: {}", content);
@@ -1072,10 +1104,10 @@ mod tests {
                     chapter_url: "c1".into(),
                     chapter_idx: 0,
                     chapter_title: "Ch1".into(),
-                    score: 0.9,
+                    score: 87.0,
                     genres: vec![],
                 }],
-                best_score: 0.9,
+                best_score: 87.0,
             }],
             cursor: 0,
             scroll_offset: 0,
@@ -1094,7 +1126,7 @@ mod tests {
         // Expanded: the book header AND its chapters are shown.
         assert!(content.contains("Book A"), "content: {}", content);
         assert!(content.contains("Ch1"), "content: {}", content);
-        assert!(content.contains("0.90"), "content: {}", content);
+        assert!(content.contains("87"), "content: {}", content);
     }
 
     fn draw_embed_chapters() -> String {

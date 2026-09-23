@@ -19,12 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Command palette actions for embed, backends, and AI search
 - Connection state surfacing (connected/error) with snapshot retry
 - ChapterResults collapse/expand (Tab)
+- AI search first-run hint when no chapters are embedded yet (no error toast)
+- Per-book result diversity (top-3 per book) and 0–100 normalized scores with a relevance floor in AI search
 
 ### Changed
 
 - Server is built in release mode (`just run`)
 - plugin-template moved to the separate `scylla-plugin-base` repo
 - Embeddings are cascade-deleted when a book is deleted
+- AI search chapter scores are normalized to a 0–100 display scale
 
 ### Fixed
 

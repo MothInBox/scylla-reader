@@ -4400,7 +4400,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scylla-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "curl",
@@ -4416,7 +4416,7 @@ dependencies = [
 
 [[package]]
 name = "scylla-plugin-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4448,7 +4448,7 @@ dependencies = [
 
 [[package]]
 name = "scylla-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",

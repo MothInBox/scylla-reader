@@ -499,6 +499,14 @@ impl ServerDb {
         rows.collect()
     }
 
+    /// Total number of chapters in the library (for the no-embeddings hint).
+    pub fn chapter_count(&self) -> Result<usize> {
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM chapters", [], |row| row.get(0))?;
+        Ok(n as usize)
+    }
+
     /// All book aggregate embeddings as (book_url, aggregate, genres) — for
     /// search. Rows without an aggregate embedding are excluded.
     pub fn load_all_book_embeddings(&self) -> Result<Vec<crate::embeddings::BookAggregate>> {

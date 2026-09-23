@@ -23,6 +23,14 @@ pub struct ChapterHit {
     pub genres: Vec<String>,
 }
 
+/// The server's search response: normal chapter hits, or a distinct
+/// "no embeddings yet" signal (first-run UX — the searchable corpus is empty).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SearchOutcome {
+    Hits(Vec<ChapterHit>),
+    NoEmbeddings { total: usize },
+}
+
 /// Chapters of one book, grouped for the AI results modal.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChapterGroup {
@@ -108,7 +116,7 @@ pub enum ServerEvent {
     /// TUI-internal: AI search results delivered by the one-shot search thread.
     AiSearchResults {
         query: String,
-        result: Result<Vec<ChapterHit>, String>,
+        result: Result<SearchOutcome, String>,
     },
     /// Per-chapter detail for an `EmbedBatch` job.
     JobDetailChanged {
@@ -546,7 +554,7 @@ mod tests {
     fn test_ai_search_results_event_constructed_directly() {
         let event = ServerEvent::AiSearchResults {
             query: "dragon".into(),
-            result: Ok(vec![]),
+            result: Ok(SearchOutcome::Hits(vec![])),
         };
         match event {
             ServerEvent::AiSearchResults { query, result } => {

@@ -3,6 +3,7 @@
 //! The model is downloaded from Hugging Face on first use and cached under the
 //! data dir. All embedding work is best-effort: callers log failures and skip.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -410,6 +411,11 @@ pub fn rank_books(books: &[BookAggregate], query: &[f32], limit: usize) -> Vec<R
 /// Ranks chapters by cosine similarity to the query, descending, truncated to
 /// `limit` hits. Returns a flat list (the TUI groups by book). Input is
 /// enriched `ChapterHit` tuples.
+///
+/// Diversity: at most [`MAX_PER_BOOK`] chapters per book are taken from the
+/// ranked list first; remaining slots (up to `limit`) are backfilled from the
+/// rest. Results below [`SCORE_FLOOR`] are dropped, and the surviving scores
+/// are normalized to a 0–100 display scale over the final result set.
 pub fn rank_chapters(
     chapters: &[ChapterHit],
     query: &[f32],
@@ -417,24 +423,63 @@ pub fn rank_chapters(
 ) -> Vec<RankedChapterHit> {
     let mut scored: Vec<RankedChapterHit> = chapters
         .iter()
-        .map(
+        .filter_map(
             |(book_url, book_title, chapter_url, chapter_title, chapter_idx, genres, emb)| {
                 let score = cosine_similarity(query, emb);
-                (
-                    book_url.clone(),
-                    book_title.clone(),
-                    chapter_url.clone(),
-                    chapter_title.clone(),
-                    *chapter_idx,
-                    genres.clone(),
-                    score,
-                )
+                (score >= SCORE_FLOOR).then(|| {
+                    (
+                        book_url.clone(),
+                        book_title.clone(),
+                        chapter_url.clone(),
+                        chapter_title.clone(),
+                        *chapter_idx,
+                        genres.clone(),
+                        score,
+                    )
+                })
             },
         )
         .collect();
     scored.sort_by(|a, b| b.6.partial_cmp(&a.6).unwrap_or(std::cmp::Ordering::Equal));
-    scored.truncate(limit);
-    scored
+
+    // Per-book cap: take up to MAX_PER_BOOK per book, then backfill the rest.
+    let mut per_book: HashMap<String, usize> = HashMap::new();
+    let mut capped: Vec<RankedChapterHit> = Vec::new();
+    let mut overflow: Vec<RankedChapterHit> = Vec::new();
+    for hit in scored {
+        let count = *per_book.get(&hit.0).unwrap_or(&0);
+        if count < MAX_PER_BOOK {
+            per_book.insert(hit.0.clone(), count + 1);
+            capped.push(hit);
+        } else {
+            overflow.push(hit);
+        }
+    }
+    capped.extend(overflow);
+    capped.truncate(limit);
+    normalize_scores(&mut capped);
+    capped
+}
+
+/// Cosine floor: chapters scoring below this are dropped as irrelevant.
+pub const SCORE_FLOOR: f32 = 0.25;
+
+/// Per-book cap for library-level chapter ranking (result diversity).
+pub const MAX_PER_BOOK: usize = 3;
+
+/// Normalizes cosine scores to a 0–100 display scale (min-max over the set).
+/// A degenerate set (single score or all equal) maps to 100.
+fn normalize_scores(hits: &mut [RankedChapterHit]) {
+    let min = hits.iter().map(|h| h.6).fold(f32::INFINITY, f32::min);
+    let max = hits.iter().map(|h| h.6).fold(f32::NEG_INFINITY, f32::max);
+    let range = max - min;
+    for hit in hits.iter_mut() {
+        hit.6 = if range <= f32::EPSILON {
+            100.0
+        } else {
+            ((hit.6 - min) / range) * 100.0
+        };
+    }
 }
 
 #[cfg(test)]
@@ -443,6 +488,18 @@ mod tests {
 
     fn vec_of(v: f32, len: usize) -> Vec<f32> {
         vec![v; len]
+    }
+
+    fn chapter_hit(book_url: &str, chapter_url: &str, emb: [f32; 2]) -> ChapterHit {
+        (
+            book_url.to_string(),
+            format!("Book {}", book_url),
+            chapter_url.to_string(),
+            format!("Chapter {}", chapter_url),
+            1u32,
+            None,
+            emb.to_vec(),
+        )
     }
 
     #[test]
@@ -607,83 +664,107 @@ mod tests {
     #[test]
     fn test_rank_chapters_flat_sorted_by_score() {
         let chapters = vec![
-            (
-                "book1".to_string(),
-                "Book One".to_string(),
-                "ch1".to_string(),
-                "Chapter 1".to_string(),
-                1u32,
-                Some(vec!["Fantasy".to_string()]),
-                vec![1.0, 0.0],
-            ),
-            (
-                "book2".to_string(),
-                "Book Two".to_string(),
-                "ch2".to_string(),
-                "Chapter 2".to_string(),
-                2u32,
-                None,
-                vec![0.0, 1.0],
-            ),
-            (
-                "book1".to_string(),
-                "Book One".to_string(),
-                "ch3".to_string(),
-                "Chapter 3".to_string(),
-                3u32,
-                Some(vec!["Fantasy".to_string()]),
-                vec![0.9, 0.1],
-            ),
+            chapter_hit("book1", "ch1", [1.0, 0.0]),
+            // Orthogonal to the query — dropped by the score floor.
+            chapter_hit("book2", "ch2", [0.0, 1.0]),
+            chapter_hit("book1", "ch3", [0.9, 0.1]),
         ];
         let query = vec![1.0, 0.0];
         let ranked = rank_chapters(&chapters, &query, 10);
-        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked.len(), 2);
         // Flat, sorted by score desc.
         assert_eq!(ranked[0].2, "ch1");
         assert_eq!(ranked[0].0, "book1");
-        assert_eq!(ranked[0].1, "Book One");
-        assert_eq!(ranked[0].3, "Chapter 1");
+        assert_eq!(ranked[0].1, "Book book1");
+        assert_eq!(ranked[0].3, "Chapter ch1");
         assert_eq!(ranked[0].4, 1);
-        assert_eq!(ranked[0].5, Some(vec!["Fantasy".to_string()]));
+        assert_eq!(ranked[0].5, None);
         assert_eq!(ranked[1].2, "ch3");
-        assert_eq!(ranked[2].2, "ch2");
+        // Normalized: best hit maps to 100, worst surviving hit to 0.
+        assert_eq!(ranked[0].6, 100.0);
+        assert_eq!(ranked[1].6, 0.0);
     }
 
     #[test]
     fn test_rank_chapters_limit_truncates_hits() {
         let chapters = vec![
-            (
-                "book1".to_string(),
-                "Book One".to_string(),
-                "ch1".to_string(),
-                "Chapter 1".to_string(),
-                1u32,
-                None,
-                vec![1.0, 0.0],
-            ),
-            (
-                "book1".to_string(),
-                "Book One".to_string(),
-                "ch2".to_string(),
-                "Chapter 2".to_string(),
-                2u32,
-                None,
-                vec![0.9, 0.1],
-            ),
-            (
-                "book1".to_string(),
-                "Book One".to_string(),
-                "ch3".to_string(),
-                "Chapter 3".to_string(),
-                3u32,
-                None,
-                vec![0.8, 0.2],
-            ),
+            chapter_hit("book1", "ch1", [1.0, 0.0]),
+            chapter_hit("book1", "ch2", [0.9, 0.1]),
+            chapter_hit("book1", "ch3", [0.8, 0.2]),
         ];
         let query = vec![1.0, 0.0];
         let ranked = rank_chapters(&chapters, &query, 2);
         assert_eq!(ranked.len(), 2);
         assert_eq!(ranked[0].2, "ch1");
         assert_eq!(ranked[1].2, "ch2");
+    }
+
+    #[test]
+    fn test_rank_chapters_caps_per_book_then_backfills() {
+        // book1 dominates the ranked list; book2 has one strong hit.
+        let chapters = vec![
+            chapter_hit("book1", "ch1", [1.0, 0.0]),
+            chapter_hit("book2", "ch6", [0.95, 0.05]),
+            chapter_hit("book1", "ch2", [0.9, 0.1]),
+            chapter_hit("book1", "ch3", [0.8, 0.2]),
+            chapter_hit("book1", "ch4", [0.7, 0.3]),
+            chapter_hit("book1", "ch5", [0.6, 0.4]),
+            chapter_hit("book2", "ch7", [0.5, 0.5]),
+        ];
+        let query = vec![1.0, 0.0];
+
+        // limit 4: the top-3-per-book pass fills the window — book1 capped at 3.
+        let ranked = rank_chapters(&chapters, &query, 4);
+        assert_eq!(ranked.len(), 4);
+        assert_eq!(ranked.iter().filter(|h| h.0 == "book1").count(), 3);
+        assert_eq!(ranked.iter().filter(|h| h.0 == "book2").count(), 1);
+        // book2's best chapter made the cut.
+        assert!(ranked.iter().any(|h| h.2 == "ch6"));
+
+        // limit 6: remaining slots are backfilled from the overflow. book2's
+        // second chapter (ch7) takes a capped slot, so only ch4 backfills.
+        let ranked = rank_chapters(&chapters, &query, 6);
+        assert_eq!(ranked.len(), 6);
+        assert_eq!(ranked.iter().filter(|h| h.0 == "book1").count(), 4);
+        assert_eq!(ranked.iter().filter(|h| h.0 == "book2").count(), 2);
+        assert!(ranked.iter().any(|h| h.2 == "ch4"));
+        assert!(!ranked.iter().any(|h| h.2 == "ch5"));
+    }
+
+    #[test]
+    fn test_rank_chapters_drops_below_floor() {
+        let chapters = vec![
+            chapter_hit("book1", "ch1", [1.0, 0.0]), // cos 1.0 — kept
+            chapter_hit("book1", "ch2", [0.0, 1.0]), // cos 0.0 — dropped
+            chapter_hit("book1", "ch3", [0.3, 0.7]), // cos ~0.39 — kept
+            chapter_hit("book1", "ch4", [0.2, 0.8]), // cos ~0.24 — dropped
+        ];
+        let query = vec![1.0, 0.0];
+        let ranked = rank_chapters(&chapters, &query, 10);
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].2, "ch1");
+        assert_eq!(ranked[1].2, "ch3");
+    }
+
+    #[test]
+    fn test_rank_chapters_normalizes_scores_to_0_100() {
+        let chapters = vec![
+            chapter_hit("book1", "ch1", [1.0, 0.0]), // cos 1.0
+            chapter_hit("book1", "ch2", [0.5, 0.5]), // cos ~0.707
+        ];
+        let query = vec![1.0, 0.0];
+        let ranked = rank_chapters(&chapters, &query, 10);
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].6, 100.0);
+        assert_eq!(ranked[1].6, 0.0);
+    }
+
+    #[test]
+    fn test_rank_chapters_single_hit_normalizes_to_100() {
+        let chapters = vec![chapter_hit("book1", "ch1", [0.5, 0.5])];
+        let query = vec![1.0, 0.0];
+        let ranked = rank_chapters(&chapters, &query, 10);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].6, 100.0);
     }
 }

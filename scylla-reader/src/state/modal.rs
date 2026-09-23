@@ -19,6 +19,8 @@ pub enum SearchStatus {
     Loading,
     Ready,
     Empty,
+    /// The searchable corpus is empty — first-run hint, not an error.
+    NoEmbeddings,
     Error(String),
 }
 

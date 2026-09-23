@@ -653,6 +653,29 @@ mod tests {
         build_router(state)
     }
 
+    fn test_app_with_embedder_in_cooldown_and_db() -> (Router, Arc<Mutex<db::ServerDb>>) {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
+        let (cmd_tx, _cmd_rx) = std::sync::mpsc::channel();
+        let registry = Arc::new(std::sync::Mutex::new(
+            scylla_core::scraper::ScraperRegistry::new(),
+        ));
+        let state =
+            Arc::new(AppState {
+                db: db.clone(),
+                cmd_tx,
+                registry,
+                max_workers: std::sync::Mutex::new(4),
+                rate_limit: std::sync::Mutex::new(2),
+                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
+                job_events:
+                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
+                embedder: Arc::new(embeddings::SharedEmbedder::in_cooldown()),
+                autoembed: Arc::new(std::sync::Mutex::new(false)),
+            });
+        (build_router(state), db)
+    }
+
     fn sample_book_json() -> serde_json::Value {
         serde_json::json!({
             "title": "Test Book",
@@ -1888,7 +1911,7 @@ mod tests {
             .unwrap();
         db.lock()
             .await
-            .upsert_chapter_embedding("ch-b1", Some("book-b"), &[0.0, 1.0], None)
+            .upsert_chapter_embedding("ch-b1", Some("book-b"), &[0.5, 0.5], None)
             .unwrap();
 
         let resp = app
@@ -2003,6 +2026,92 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_search_chapter_mode_no_embeddings_returns_hint() {
+        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
+        // Seed a book with chapters but no chapter embeddings.
+        let book = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![
+                scylla_core::types::Chapter {
+                    url: "ch-a1".into(),
+                    title: "Chapter A1".into(),
+                    order: 1,
+                },
+                scylla_core::types::Chapter {
+                    url: "ch-a2".into(),
+                    title: "Chapter A2".into(),
+                    order: 2,
+                },
+            ],
+        };
+        db.lock().await.upsert_book(&book).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"x","mode":"chapter","limit":10}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["error"], "no_embeddings");
+        assert_eq!(json["embedded"], 0);
+        assert_eq!(json["total"], 2);
+    }
+
+    #[tokio::test]
+    async fn test_search_chapter_mode_no_embeddings_beats_embedder_503() {
+        // Offline first run: the embedder is in cooldown, but an empty corpus
+        // must still produce the hint, not a generic 503.
+        let (app, db) = test_app_with_embedder_in_cooldown_and_db();
+        let book = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![scylla_core::types::Chapter {
+                url: "ch-a1".into(),
+                title: "Chapter A1".into(),
+                order: 1,
+            }],
+        };
+        db.lock().await.upsert_book(&book).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"x","mode":"chapter","limit":10}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["error"], "no_embeddings");
+        assert_eq!(json["embedded"], 0);
+        assert_eq!(json["total"], 1);
     }
 
     #[tokio::test]
