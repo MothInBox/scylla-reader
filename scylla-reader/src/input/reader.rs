@@ -95,7 +95,7 @@ pub fn handle_reader(state: &mut AppState, key: KeyEvent, size: Rect) -> bool {
     match state.lib.settings.reader_mode {
         ReaderMode::Paged => match key.code {
             KEY_NEXT_PAGE => {
-                state.reader.next_page(size.height);
+                state.reader.next_page(size.width, size.height);
                 true
             }
             KEY_PREV_PAGE => {

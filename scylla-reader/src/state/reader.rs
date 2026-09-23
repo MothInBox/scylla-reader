@@ -108,8 +108,8 @@ impl ReaderState {
         vlines[start..end].to_vec()
     }
 
-    pub fn next_page(&mut self, area_height: u16) {
-        if self.page + 1 < self.total_pages_for(80, area_height) {
+    pub fn next_page(&mut self, area_width: u16, area_height: u16) {
+        if self.page + 1 < self.total_pages_for(area_width, area_height) {
             self.page += 1;
         }
     }
@@ -311,6 +311,39 @@ mod tests {
     }
 
     #[test]
+    fn test_total_pages_depends_on_width() {
+        // A narrower terminal wraps more, so the same content spans more pages.
+        let mut r = ReaderState::new();
+        let content = (0..10)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        r.load("".into(), "".into(), "".into(), content, 0);
+        assert_eq!(r.total_pages_for(80, 20), 1);
+        assert!(r.total_pages_for(5, 20) > 1);
+    }
+
+    #[test]
+    fn test_next_page_uses_actual_width() {
+        // Regression: `next_page` used to hardcode width 80, so a narrow
+        // terminal could page past the last visible page (the render clamps,
+        // showing the last page repeatedly) and a wide one could never reach it.
+        let mut r = ReaderState::new();
+        let content = (0..10)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        r.load("".into(), "".into(), "".into(), content, 0);
+        // Narrow terminal: 10 lines wrap to >1 page at width 5.
+        r.next_page(5, 20);
+        assert_eq!(r.page, 1);
+        // Wide terminal: 10 lines fit one page at width 80 — next is a no-op.
+        r.page = 0;
+        r.next_page(80, 20);
+        assert_eq!(r.page, 0);
+    }
+
+    #[test]
     fn test_wrap_line_count_zero_width() {
         assert_eq!(crate::textwrap::wrap_line_count("hello world", 0), 1);
     }
@@ -421,7 +454,7 @@ mod tests {
                 .join("\n"),
             0,
         );
-        r.next_page(6);
+        r.next_page(80, 6);
         assert_eq!(r.page, 1);
     }
 
@@ -429,7 +462,7 @@ mod tests {
     fn test_next_page_clamps() {
         let mut r = ReaderState::new();
         r.load("".into(), "".into(), "".into(), "single line".into(), 0);
-        r.next_page(20);
+        r.next_page(80, 20);
         assert_eq!(r.page, 0);
     }
 

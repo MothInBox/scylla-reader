@@ -706,7 +706,6 @@ pub fn rank_books(books: &[BookAggregate], query: &[f32], limit: usize) -> Vec<R
 /// cosine scores (index 6) and the best chunk's text (index 7), in first-seen
 /// chapter order.
 pub fn best_chunks_per_chapter(chunks: &[ChunkHit], query: &[f32]) -> Vec<RankedChapterHit> {
-    let mut order: Vec<String> = Vec::new();
     let mut by_chapter: HashMap<String, usize> = HashMap::new();
     let mut best: Vec<RankedChapterHit> = Vec::new();
     for c in chunks {
@@ -720,7 +719,6 @@ pub fn best_chunks_per_chapter(chunks: &[ChunkHit], query: &[f32]) -> Vec<Ranked
             }
             None => {
                 by_chapter.insert(c.chapter_url.clone(), best.len());
-                order.push(c.chapter_url.clone());
                 best.push((
                     c.book_url.clone(),
                     c.book_title.clone(),
@@ -734,14 +732,9 @@ pub fn best_chunks_per_chapter(chunks: &[ChunkHit], query: &[f32]) -> Vec<Ranked
             }
         }
     }
-    // Reorder to first-seen chapter order (HashMap iteration is unordered).
-    let mut out = Vec::with_capacity(best.len());
-    for url in order {
-        if let Some(idx) = by_chapter.remove(&url) {
-            out.push(best[idx].clone());
-        }
-    }
-    out
+    // `best` is already in first-seen chapter order (each new chapter is
+    // pushed); the map is only used for lookups, never iterated.
+    best
 }
 
 /// Ranks chapters by cosine similarity to the query, descending, truncated to

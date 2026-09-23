@@ -616,17 +616,7 @@ impl ServerDb {
     /// All chunk embeddings enriched for search as `ChunkHit` rows. Chapters
     /// without a book_url map to empty strings / 0.
     pub fn load_all_chunk_hits(&self) -> Result<Vec<crate::embeddings::ChunkHit>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT ce.book_url, b.title, ce.chapter_url, ch.title, ch.ord, be.genres,
-                    ce.chunk_idx, ce.text, ce.embedding
-             FROM chapter_embeddings ce
-             LEFT JOIN chapters ch ON ch.book_url = ce.book_url AND ch.url = ce.chapter_url
-             LEFT JOIN books b ON b.url = ce.book_url
-             LEFT JOIN book_embeddings be ON be.book_url = ce.book_url
-             ORDER BY ce.rowid",
-        )?;
-        let rows = stmt.query_map([], chunk_hit_from_row)?;
-        rows.collect()
+        self.load_chunk_hits(None)
     }
 
     /// Chunk embeddings for one book, enriched for search (the per-book
@@ -635,17 +625,38 @@ impl ServerDb {
         &self,
         book_url: &str,
     ) -> Result<Vec<crate::embeddings::ChunkHit>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT ce.book_url, b.title, ce.chapter_url, ch.title, ch.ord, be.genres,
-                    ce.chunk_idx, ce.text, ce.embedding
-             FROM chapter_embeddings ce
-             LEFT JOIN chapters ch ON ch.book_url = ce.book_url AND ch.url = ce.chapter_url
-             LEFT JOIN books b ON b.url = ce.book_url
-             LEFT JOIN book_embeddings be ON be.book_url = ce.book_url
-             WHERE ce.book_url = ?1
-             ORDER BY ce.rowid",
-        )?;
-        let rows = stmt.query_map([book_url], chunk_hit_from_row)?;
+        self.load_chunk_hits(Some(book_url))
+    }
+
+    /// Shared chunk-hit query: the SELECT columns and row mapper are identical
+    /// for the all-chunks and per-book loaders; only the WHERE clause differs.
+    fn load_chunk_hits(&self, book_url: Option<&str>) -> Result<Vec<crate::embeddings::ChunkHit>> {
+        let sql = match book_url {
+            Some(_) => {
+                "SELECT ce.book_url, b.title, ce.chapter_url, ch.title, ch.ord, be.genres,
+                        ce.chunk_idx, ce.text, ce.embedding
+                 FROM chapter_embeddings ce
+                 LEFT JOIN chapters ch ON ch.book_url = ce.book_url AND ch.url = ce.chapter_url
+                 LEFT JOIN books b ON b.url = ce.book_url
+                 LEFT JOIN book_embeddings be ON be.book_url = ce.book_url
+                 WHERE ce.book_url = ?1
+                 ORDER BY ce.rowid"
+            }
+            None => {
+                "SELECT ce.book_url, b.title, ce.chapter_url, ch.title, ch.ord, be.genres,
+                        ce.chunk_idx, ce.text, ce.embedding
+                 FROM chapter_embeddings ce
+                 LEFT JOIN chapters ch ON ch.book_url = ce.book_url AND ch.url = ce.chapter_url
+                 LEFT JOIN books b ON b.url = ce.book_url
+                 LEFT JOIN book_embeddings be ON be.book_url = ce.book_url
+                 ORDER BY ce.rowid"
+            }
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = match book_url {
+            Some(url) => stmt.query_map([url], chunk_hit_from_row)?,
+            None => stmt.query_map([], chunk_hit_from_row)?,
+        };
         rows.collect()
     }
 

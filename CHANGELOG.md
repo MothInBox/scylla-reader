@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Embed ETA and detail clobbering
 - Settings editing visibility and global-key suppression while editing
 - Test config race corrupting `libraries.json`
+- Paged reader next-page used a hardcoded width of 80, so narrow terminals could page past the last page and wide ones could never reach it — the actual terminal width is now used
 - Snapshot retry and connection surfacing
 
 ## [0.2.0] - 2026-07-05

@@ -595,20 +595,9 @@ mod tests {
     #[test]
     fn test_rolling_pace_window_math() {
         let now = Instant::now();
-        // 3 samples over 6 seconds → 3s per completion (the window's own span).
-        let mut times = VecDeque::new();
-        times.push_back(now - std::time::Duration::from_secs(6));
-        times.push_back(now - std::time::Duration::from_secs(3));
-        times.push_back(now);
-        let pace = rolling_pace(&times).unwrap();
-        assert!((pace - 3.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_rolling_pace_uses_window_span_not_external_now() {
-        // The pace is the window's own span (newest - oldest) — there is no
-        // external `now` to advance, so it never creeps up between completions.
-        let now = Instant::now();
+        // 3 samples over 6 seconds → 3s per completion. The pace is the
+        // window's OWN span (newest - oldest) — there is no external `now` to
+        // advance, so it never creeps up between completions.
         let mut times = VecDeque::new();
         times.push_back(now - std::time::Duration::from_secs(6));
         times.push_back(now - std::time::Duration::from_secs(3));
