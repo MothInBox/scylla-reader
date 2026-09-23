@@ -6,6 +6,7 @@ use crate::models::{BookStatus, Session};
 use crate::state::modal::{FilterRow, Modal, SearchStatus};
 use crate::state::{LibraryState, UiState};
 use crate::ui::palette::draw_palette;
+use crate::ui::truncate_snippet;
 use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::style::{Modifier, Style};
@@ -680,17 +681,6 @@ fn chapter_item(hit: &ChapterHit, width: usize) -> ListItem<'_> {
         )));
     }
     ListItem::new(lines)
-}
-
-/// Truncate a snippet to `width` visible characters, appending an ellipsis
-/// when it was cut. Multi-byte safe (counts chars, not bytes).
-fn truncate_snippet(s: &str, width: usize) -> String {
-    if width == 0 || s.chars().count() <= width {
-        return s.to_string();
-    }
-    let mut out: String = s.chars().take(width.saturating_sub(1)).collect();
-    out.push('…');
-    out
 }
 
 fn status_summary(filter: &BookFilter) -> String {

@@ -8,6 +8,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui_image::StatefulImage;
 
+use crate::ui::truncate_snippet;
 use crate::ui::widgets::hint_line;
 
 pub fn draw(frame: &mut Frame, area: Rect, lib: &mut LibraryState, ui: &UiState) {
@@ -350,17 +351,6 @@ fn draw_side_panel(frame: &mut Frame, area: Rect, lib: &mut LibraryState) {
         Paragraph::new(details).wrap(Wrap { trim: false }),
         side_chunks[1],
     );
-}
-
-/// Truncate a snippet to `width` visible characters, appending an ellipsis when
-/// it was cut. Multi-byte safe (counts chars, not bytes).
-fn truncate_snippet(s: &str, width: usize) -> String {
-    if width == 0 || s.chars().count() <= width {
-        return s.to_string();
-    }
-    let mut out: String = s.chars().take(width.saturating_sub(1)).collect();
-    out.push('…');
-    out
 }
 
 #[cfg(test)]

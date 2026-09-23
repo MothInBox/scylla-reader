@@ -17,15 +17,18 @@ pub fn snippet(text: &str, center: Option<&str>, max_len: usize) -> String {
     if total <= max_len {
         return text.to_string();
     }
-    // Byte offset of the center (first case-insensitive match), else start.
-    let center_byte = center
+    // Char offset of the center (first case-insensitive match), else start.
+    // Counted in the LOWERCASED string: lowercasing can expand byte length
+    // (e.g. "İ" → "i̇"), so byte offsets into `lower` must never slice `text`.
+    let center_char = center
         .filter(|c| !c.is_empty())
         .and_then(|c| {
             let lower = text.to_lowercase();
-            lower.find(&c.to_lowercase())
+            lower
+                .find(&c.to_lowercase())
+                .map(|byte| lower[..byte].chars().count())
         })
         .unwrap_or(0);
-    let center_char = text[..center_byte].chars().count();
     let half = max_len / 2;
     let mut start = center_char.saturating_sub(half);
     let mut end = (start + max_len).min(total);
@@ -123,5 +126,16 @@ mod tests {
             "snippet too long: {}",
             s.chars().count()
         );
+    }
+
+    #[test]
+    fn test_no_panic_on_lowercase_expanding_chars() {
+        // "İ" (U+0130) lowercases to "i̇" (3 bytes) — byte offsets into the
+        // lowercased string exceed the original's byte length. Slicing `text`
+        // with those offsets used to panic; the center must be counted in
+        // lowercase space instead.
+        let text = format!("{} dragon", "İ".repeat(100));
+        let s = snippet(&text, Some("dragon"), 40);
+        assert!(s.contains("dragon"), "snippet: {s}");
     }
 }
