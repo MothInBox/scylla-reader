@@ -120,8 +120,8 @@ pub async fn job_command(base: &str, path: &str, body: serde_json::Value) -> Res
 /// chapter-mode search to a single book (deeper drill-down). Returns the parsed
 /// outcome or a distinct "no embeddings yet" signal (empty corpus).
 ///
-/// The client uses a generous 60s timeout because the first search legitimately
-/// includes the ~91MB embedding-model download.
+/// The client uses a generous 300s timeout because the first search legitimately
+/// includes the ~224MB two-model download (bge-small-en-v1.5 + cross-encoder).
 pub async fn search(
     base: &str,
     query: &str,
@@ -130,7 +130,7 @@ pub async fn search(
     limit: usize,
 ) -> Result<SearchOutcome, String> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(300))
         .build()
         .expect("failed to build http client");
     let mut body = serde_json::json!({ "query": query, "mode": mode, "limit": limit });

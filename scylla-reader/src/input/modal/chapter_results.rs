@@ -291,6 +291,11 @@ mod tests {
 
     fn results_state() -> AppState {
         let mut state = test_state();
+        set_results_modal(&mut state);
+        state
+    }
+
+    fn set_results_modal(state: &mut AppState) {
         state.ui.modal = Modal::ChapterResults {
             query: "dragon".into(),
             groups: vec![
@@ -314,7 +319,6 @@ mod tests {
             status: SearchStatus::Ready,
             expanded: None,
         };
-        state
     }
 
     fn modal_state(state: &AppState) -> (usize, Option<usize>) {
@@ -598,7 +602,15 @@ mod tests {
     fn test_a_fetches_full_drill_down() {
         let (tx, rx) = std::sync::mpsc::channel();
         crate::event_types::set_event_tx(tx);
-        let mut state = results_state();
+        // Point the manager at a guaranteed-closed port so the search thread
+        // gets connection-refused regardless of whether a real server is
+        // running (the app's server listens on 127.0.0.1:8080).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let backend = MockBackend::with_url("closed", &format!("http://127.0.0.1:{port}"));
+        let mut state = test_state_with_backend(Box::new(backend));
+        set_results_modal(&mut state);
         handle_chapter_results(&mut state, key_event(KEY_DRILLDOWN_ALL));
         // Modal shows Loading while the fetch is in flight.
         if let Modal::ChapterResults { status, .. } = &state.ui.modal {
@@ -607,8 +619,8 @@ mod tests {
             panic!("expected ChapterResults");
         }
         // The search thread delivers a DrillDownResults event for the focused
-        // book (u1); it fails fast in the test environment (no server) but the
-        // event still arrives.
+        // book (u1); it fails fast (connection refused on the closed port) but
+        // the event still arrives.
         let event = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
         match event {
             ServerEvent::DrillDownResults { book_url, result } => {
