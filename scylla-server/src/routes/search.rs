@@ -313,6 +313,14 @@ fn rerank_chapters(
     let texts: Vec<&str> = ranked.iter().map(|h| h.7.as_str()).collect();
     match rerank(query, &texts) {
         Ok(scores) => {
+            if scores.len() != ranked.len() {
+                eprintln!(
+                    "RERANK: score count mismatch ({} vs {}); keeping bi-encoder order",
+                    scores.len(),
+                    ranked.len()
+                );
+                return ranked;
+            }
             let mut scored: Vec<(f32, RankedChapterHit)> = ranked
                 .into_iter()
                 .zip(scores)
@@ -336,6 +344,13 @@ fn rerank_chapters(
 /// The fused hits are mapped back through the *unfiltered* best-chunk list so
 /// BM25-only chapters below the semantic score floor still participate; their
 /// raw cosine scores are normalized to the display scale before reranking.
+///
+/// The per-book diversity cap is applied *post-fusion* (before the rerank): the
+/// semantic lane is already capped, but the BM25 lane is not, so a dominant
+/// book with many keyword-matching chapters could otherwise flood the fused
+/// top-50. Capping before the rerank also means the expensive cross-encoder
+/// scores a diverse candidate set. The cap is a no-op for the single-book
+/// drill-down window (all hits backfill), so `book_url` searches stay uncapped.
 fn fuse_and_rerank(
     state: &AppState,
     query: &str,
@@ -346,12 +361,14 @@ fn fuse_and_rerank(
     let semantic = crate::embeddings::rank_chapters(chapters, query_vec, RERANK_CANDIDATES);
     let semantic_urls: Vec<String> = semantic.iter().map(|h| h.2.clone()).collect();
 
-    // Keyword lane: BM25 top-50 over the same corpus.
+    // Keyword lane: BM25 top-50 over the same corpus. The returned best-chunk
+    // text is the reranker passage for below-floor chapters.
     let bm25 = crate::bm25::Bm25Index::build(chapters);
-    let bm25_urls: Vec<String> = bm25
-        .search(query, RERANK_CANDIDATES)
+    let bm25_hits = bm25.search(query, RERANK_CANDIDATES);
+    let bm25_urls: Vec<String> = bm25_hits.iter().map(|(_, url, _)| url.clone()).collect();
+    let bm25_best_text: HashMap<String, String> = bm25_hits
         .into_iter()
-        .map(|(_, url)| url)
+        .map(|(_, url, text)| (url, text))
         .collect();
 
     // Fuse, then map URLs back to hits via the unfiltered best-chunk list.
@@ -361,18 +378,37 @@ fn fuse_and_rerank(
         all_best.into_iter().map(|h| (h.2.clone(), h)).collect();
     let mut fused_hits: Vec<RankedChapterHit> = fused
         .into_iter()
-        .filter_map(|url| by_url.get(&url).cloned())
+        .filter_map(|url| {
+            let mut hit = by_url.get(&url)?.clone();
+            // For a below-floor chapter surfaced by BM25, the highest-cosine
+            // chunk may be unrelated to the matched keyword — use the
+            // BM25-best chunk as the reranker passage instead.
+            if hit.6 < crate::embeddings::SCORE_FLOOR
+                && let Some(text) = bm25_best_text.get(&url)
+            {
+                hit.7 = text.clone();
+            }
+            Some(hit)
+        })
         .collect();
     for hit in &mut fused_hits {
         hit.6 = crate::embeddings::normalize_score(hit.6);
     }
 
+    // Per-book cap post-fusion (see the doc comment above), then restore
+    // descending score order before the rerank.
+    fused_hits = crate::embeddings::cap_per_book(fused_hits, crate::embeddings::MAX_PER_BOOK);
+    fused_hits.truncate(RERANK_CANDIDATES);
+    fused_hits.sort_by(|a, b| b.6.partial_cmp(&a.6).unwrap_or(std::cmp::Ordering::Equal));
+
     rerank_chapters(state, query, fused_hits)
 }
 
 /// Cross-encoder rerank for books: each book's candidate text is its best
-/// chapter's best chunk ("" when the book has no chapter hits). Falls back to
-/// the bi-encoder order when the reranker isn't loaded or fails.
+/// chapter's best chunk. Books with no chapter hits have no reranker passage —
+/// they are excluded from reranking and kept at the end in their original
+/// order, rather than scoring empty text and getting arbitrary logits. Falls
+/// back to the bi-encoder order when the reranker isn't loaded or fails.
 fn rerank_books(
     state: &AppState,
     query: &str,
@@ -382,14 +418,17 @@ fn rerank_books(
     let Some(rerank) = state.reranker.get() else {
         return ranked_books;
     };
+    let has_passage: Vec<bool> = ranked_books
+        .iter()
+        .map(|(url, _, _)| by_book.get(url).and_then(|g| g.first()).is_some())
+        .collect();
     let texts: Vec<&str> = ranked_books
         .iter()
-        .map(|(url, _, _)| {
+        .filter_map(|(url, _, _)| {
             by_book
                 .get(url)
                 .and_then(|g| g.first())
                 .map(|h| h.7.as_str())
-                .unwrap_or("")
         })
         .collect();
     let scores = match rerank(query, &texts) {
@@ -399,11 +438,30 @@ fn rerank_books(
             return ranked_books;
         }
     };
-    let mut scored: Vec<(f32, RankedBook)> = ranked_books
-        .into_iter()
-        .zip(scores)
-        .map(|(b, s)| (s, b))
-        .collect();
+    if scores.len() != texts.len() {
+        eprintln!(
+            "RERANK: score count mismatch ({} vs {}); keeping bi-encoder order",
+            scores.len(),
+            texts.len()
+        );
+        return ranked_books;
+    }
+    let mut scored: Vec<(f32, RankedBook)> = Vec::new();
+    let mut no_passage: Vec<RankedBook> = Vec::new();
+    let mut score_iter = scores.into_iter();
+    for (book, has) in ranked_books.into_iter().zip(has_passage) {
+        if has {
+            if let Some(s) = score_iter.next() {
+                scored.push((s, book));
+            } else {
+                no_passage.push(book);
+            }
+        } else {
+            no_passage.push(book);
+        }
+    }
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    scored.into_iter().map(|(_, b)| b).collect()
+    let mut out: Vec<RankedBook> = scored.into_iter().map(|(_, b)| b).collect();
+    out.extend(no_passage);
+    out
 }

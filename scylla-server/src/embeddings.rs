@@ -304,30 +304,6 @@ impl Embedder {
         }
     }
 
-    /// Embeds `text` into a 384-dim L2-normalized vector.
-    ///
-    /// Single-text convenience wrapper around [`Self::batch_embed`]; the
-    /// embedding pipeline uses the batched path.
-    #[allow(dead_code)]
-    pub fn embed(&self, text: &str, mode: EmbedMode) -> Result<Vec<f32>> {
-        let text = prefix(text, mode);
-        let encoding = self
-            .tokenizer
-            .encode(&*text, true)
-            .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
-        let token_ids = Tensor::new(encoding.get_ids(), &self.device)?.unsqueeze(0)?;
-        let token_type_ids = Tensor::new(encoding.get_type_ids(), &self.device)?.unsqueeze(0)?;
-        let attention_mask =
-            Tensor::new(encoding.get_attention_mask(), &self.device)?.unsqueeze(0)?;
-
-        let out = self
-            .model
-            .forward(&token_ids, &token_type_ids, Some(&attention_mask))?;
-        let pooled = self.pool(&out, &attention_mask)?;
-
-        Ok(pooled.get(0)?.to_vec1()?)
-    }
-
     /// Embeds a batch of texts in a single forward pass. Each text is truncated
     /// to 512 tokens; shorter sequences are padded to the batch's max length
     /// with the pad token id 0 (masked out of the pooling). Returns one
@@ -783,20 +759,7 @@ pub fn rank_chapters(chunks: &[ChunkHit], query: &[f32], limit: usize) -> Vec<Ra
     scored.retain(|h| h.6 >= SCORE_FLOOR);
     scored.sort_by(|a, b| b.6.partial_cmp(&a.6).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Per-book cap: take up to MAX_PER_BOOK per book, then backfill the rest.
-    let mut per_book: HashMap<String, usize> = HashMap::new();
-    let mut capped: Vec<RankedChapterHit> = Vec::new();
-    let mut overflow: Vec<RankedChapterHit> = Vec::new();
-    for hit in scored {
-        let count = *per_book.get(&hit.0).unwrap_or(&0);
-        if count < MAX_PER_BOOK {
-            per_book.insert(hit.0.clone(), count + 1);
-            capped.push(hit);
-        } else {
-            overflow.push(hit);
-        }
-    }
-    capped.extend(overflow);
+    let mut capped = cap_per_book(scored, MAX_PER_BOOK);
     capped.truncate(limit);
     // Backfill can interleave books, so restore descending order before the
     // display mapping.
@@ -804,6 +767,28 @@ pub fn rank_chapters(chunks: &[ChunkHit], query: &[f32], limit: usize) -> Vec<Ra
     for hit in &mut capped {
         hit.6 = normalize_score(hit.6);
     }
+    capped
+}
+
+/// Applies the per-book diversity cap: keeps up to `per_book` hits per book
+/// from the (already sorted) list, then backfills the rest. A no-op for
+/// single-book inputs (all hits backfill) — the per-book drill-down relies on
+/// this. Used both by [`rank_chapters`] (semantic lane) and post-fusion so the
+/// hybrid list gets the same diversity guarantee as the semantic lane.
+pub fn cap_per_book(hits: Vec<RankedChapterHit>, per_book: usize) -> Vec<RankedChapterHit> {
+    let mut per_book_count: HashMap<String, usize> = HashMap::new();
+    let mut capped: Vec<RankedChapterHit> = Vec::new();
+    let mut overflow: Vec<RankedChapterHit> = Vec::new();
+    for hit in hits {
+        let count = *per_book_count.get(&hit.0).unwrap_or(&0);
+        if count < per_book {
+            per_book_count.insert(hit.0.clone(), count + 1);
+            capped.push(hit);
+        } else {
+            overflow.push(hit);
+        }
+    }
+    capped.extend(overflow);
     capped
 }
 
@@ -1105,6 +1090,37 @@ mod tests {
         assert_eq!(ranked.iter().filter(|h| h.0 == "book2").count(), 2);
         assert!(ranked.iter().any(|h| h.2 == "ch4"));
         assert!(!ranked.iter().any(|h| h.2 == "ch5"));
+    }
+
+    #[test]
+    fn test_cap_per_book_reserves_top_slots_then_backfills() {
+        // The post-fusion cap: a dominant book's hits are capped at `per_book`
+        // in the leading positions, then the rest backfill. Single-book inputs
+        // are a no-op (everything backfills).
+        let hits = vec![
+            ranked_chunk_hit("book1", "ch1", 100.0),
+            ranked_chunk_hit("book1", "ch2", 90.0),
+            ranked_chunk_hit("book1", "ch3", 80.0),
+            ranked_chunk_hit("book1", "ch4", 70.0),
+            ranked_chunk_hit("book2", "ch6", 95.0),
+        ];
+        let capped = cap_per_book(hits, 3);
+        // book1's first 3 are capped, then book2's hit, then book1's overflow.
+        assert_eq!(capped[0].2, "ch1");
+        assert_eq!(capped[1].2, "ch2");
+        assert_eq!(capped[2].2, "ch3");
+        assert_eq!(capped[3].2, "ch6");
+        assert_eq!(capped[4].2, "ch4");
+
+        // Single-book input: the cap is a no-op (all hits backfill).
+        let hits = vec![
+            ranked_chunk_hit("book1", "ch1", 100.0),
+            ranked_chunk_hit("book1", "ch2", 90.0),
+            ranked_chunk_hit("book1", "ch3", 80.0),
+            ranked_chunk_hit("book1", "ch4", 70.0),
+        ];
+        let capped = cap_per_book(hits, 3);
+        assert_eq!(capped.len(), 4);
     }
 
     #[test]

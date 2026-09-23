@@ -452,6 +452,11 @@ impl ServerDb {
         chunks: &[(usize, &str, &[f32])],
         content_hash: Option<&str>,
     ) -> Result<()> {
+        // `unchecked_transaction` (not `transaction`) because `ServerDb` methods
+        // take `&self` — the single `Connection` is behind a mutex (tokio Mutex
+        // in AppState, blocking_lock in the embed thread), so there is never
+        // concurrent access to it and the borrow-checker friction of
+        // `transaction()`'s `&mut self` is unnecessary.
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "DELETE FROM chapter_embeddings WHERE chapter_url = ?",
@@ -914,6 +919,37 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stored, crate::embeddings::MODEL_VERSION);
+    }
+
+    #[test]
+    fn test_migrate_drops_legacy_single_row_chapter_embeddings() {
+        // A pre-chunking database: the legacy single-row `chapter_embeddings`
+        // (source_url PK, no chunk_idx/text). Opening it must DROP the legacy
+        // table and create the per-chunk schema, discarding the old rows (they
+        // lack chunk text and were produced by the old model).
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE chapter_embeddings (
+                source_url   TEXT PRIMARY KEY,
+                book_url     TEXT,
+                embedding    BLOB NOT NULL,
+                embedded_at  INTEGER NOT NULL,
+                content_hash TEXT
+            );
+            INSERT INTO chapter_embeddings (source_url, book_url, embedding, embedded_at)
+            VALUES ('ch1', 'book1', x'010203', 123);",
+        )
+        .unwrap();
+
+        let db = ServerDb::open_conn(conn).unwrap();
+        assert!(db.table_exists("chapter_embeddings").unwrap());
+        assert!(db.column_exists("chapter_embeddings", "chunk_idx").unwrap());
+        assert!(
+            !db.column_exists("chapter_embeddings", "source_url")
+                .unwrap()
+        );
+        // Old rows are gone; the per-chunk table starts empty.
+        assert!(db.load_all_chunk_hits().unwrap().is_empty());
     }
 
     #[test]

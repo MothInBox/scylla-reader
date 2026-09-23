@@ -2243,6 +2243,164 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_search_chapter_mode_bm25_surfaces_below_floor_chapters() {
+        // The stub embedder embeds the query as [1.0, 0.0]. One chapter is
+        // semantically relevant (cosine 1.0); the other is orthogonal to the
+        // query (cosine 0.0 — below the floor, so the semantic lane drops it)
+        // but its text matches the query via BM25. The BM25 lane must surface it.
+        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
+        let book = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![
+                scylla_core::types::Chapter {
+                    url: "ch-a1".into(),
+                    title: "Chapter A1".into(),
+                    order: 1,
+                },
+                scylla_core::types::Chapter {
+                    url: "ch-b1".into(),
+                    title: "Chapter B1".into(),
+                    order: 2,
+                },
+            ],
+        };
+        db.lock().await.upsert_book(&book).unwrap();
+        db.lock()
+            .await
+            .upsert_chapter_chunks(
+                "ch-a1",
+                Some("book-a"),
+                &[(0, "unrelated filler text", &[1.0, 0.0])],
+                None,
+            )
+            .unwrap();
+        db.lock()
+            .await
+            .upsert_chapter_chunks(
+                "ch-b1",
+                Some("book-a"),
+                &[(0, "the dragon sleeps in the cave", &[0.0, 1.0])],
+                None,
+            )
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"dragon","mode":"chapter","limit":10}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        let hits = json["hits"].as_array().unwrap();
+        let urls: Vec<&str> = hits.iter().map(|h| h["url"].as_str().unwrap()).collect();
+        // ch-b1 appears despite cosine 0.0 (below floor) — the BM25 lane.
+        assert!(urls.contains(&"ch-b1"), "hits: {urls:?}");
+        // ch-a1 (semantic hit) is present too.
+        assert!(urls.contains(&"ch-a1"), "hits: {urls:?}");
+    }
+
+    #[tokio::test]
+    async fn test_search_chapter_mode_caps_dominant_book_post_fusion() {
+        // Book A has 4 above-floor chapters whose text all matches the query;
+        // Book B has 1 above-floor chapter that does not. Without the post-fusion
+        // cap, book A's 4 chapters would occupy the top-4. With it, book B's
+        // chapter takes a top slot and book A's 4th chapter is pushed down.
+        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
+        let book_a = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: (1..=4)
+                .map(|i| scylla_core::types::Chapter {
+                    url: format!("ch-a{}", i),
+                    title: format!("Chapter A{}", i),
+                    order: i,
+                })
+                .collect(),
+        };
+        let book_b = scylla_core::types::Book {
+            title: "Book B".into(),
+            url: "book-b".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![scylla_core::types::Chapter {
+                url: "ch-b1".into(),
+                title: "Chapter B1".into(),
+                order: 1,
+            }],
+        };
+        db.lock().await.upsert_book(&book_a).unwrap();
+        db.lock().await.upsert_book(&book_b).unwrap();
+        for (emb, url) in [
+            ([1.0, 0.0], "ch-a1"),
+            ([0.9, 0.1], "ch-a2"),
+            ([0.8, 0.2], "ch-a3"),
+            ([0.7, 0.3], "ch-a4"),
+        ] {
+            db.lock()
+                .await
+                .upsert_chapter_chunks(url, Some("book-a"), &[(0, "dragon", &emb)], None)
+                .unwrap();
+        }
+        db.lock()
+            .await
+            .upsert_chapter_chunks(
+                "ch-b1",
+                Some("book-b"),
+                &[(0, "unrelated", &[1.0, 0.0])],
+                None,
+            )
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"dragon","mode":"chapter","limit":4}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        let hits = json["hits"].as_array().unwrap();
+        assert_eq!(hits.len(), 4);
+        // Book B's chapter is in the top-4 (the cap reserved a slot for it),
+        // and book A's 4th chapter (ch-a4) is pushed out of the top-4.
+        let urls: Vec<&str> = hits.iter().map(|h| h["url"].as_str().unwrap()).collect();
+        assert!(urls.contains(&"ch-b1"), "hits: {urls:?}");
+        assert!(!urls.contains(&"ch-a4"), "hits: {urls:?}");
+    }
+
+    #[tokio::test]
     async fn test_search_chapter_mode_book_url_filters_and_no_cap() {
         let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
         // Book A with 5 chapters (all above the floor), Book B with 1.

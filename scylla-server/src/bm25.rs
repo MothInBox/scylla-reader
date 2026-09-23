@@ -11,24 +11,35 @@
 //! with Reciprocal Rank Fusion (see [`rrf_fuse`]).
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use crate::embeddings::ChunkHit;
 
+/// The `\w+` tokenizer regex, compiled once (compiling per call at 24K chunks
+/// would be 24K compilations per search).
+fn token_regex() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"\w+").expect("static regex is valid"))
+}
+
 /// Lowercases `text` and splits it into `\w+` tokens.
 pub fn tokenize(text: &str) -> Vec<String> {
-    let re = regex::Regex::new(r"\w+").expect("static regex is valid");
-    re.find_iter(&text.to_lowercase())
+    token_regex()
+        .find_iter(&text.to_lowercase())
         .map(|m| m.as_str().to_string())
         .collect()
 }
 
-/// One indexed document: a chapter's concatenated chunk text.
+/// One indexed document: a single chunk (not a whole chapter), so the
+/// best-matching chunk's text is available as the reranker passage for
+/// BM25-only chapters.
 struct Bm25Doc {
     chapter_url: String,
+    text: String,
     tokens: Vec<String>,
 }
 
-/// In-memory BM25 index over chapters.
+/// In-memory BM25 index over chunks.
 pub struct Bm25Index {
     docs: Vec<Bm25Doc>,
     /// term → (doc_idx, term_frequency) postings.
@@ -39,25 +50,16 @@ pub struct Bm25Index {
 }
 
 impl Bm25Index {
-    /// Builds the index from chunk hits, grouping chunks per chapter (a
-    /// chapter's document is its chunks' text joined with spaces).
+    /// Builds the index from chunk hits, one document per chunk.
     pub fn build(chunks: &[ChunkHit]) -> Self {
-        let mut by_chapter: HashMap<String, Vec<&ChunkHit>> = HashMap::new();
-        for c in chunks {
-            by_chapter.entry(c.chapter_url.clone()).or_default().push(c);
-        }
-        let mut docs: Vec<Bm25Doc> = Vec::with_capacity(by_chapter.len());
-        for (url, hits) in by_chapter {
-            let text = hits
-                .iter()
-                .map(|h| h.text.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
-            docs.push(Bm25Doc {
-                chapter_url: url,
-                tokens: tokenize(&text),
-            });
-        }
+        let docs: Vec<Bm25Doc> = chunks
+            .iter()
+            .map(|c| Bm25Doc {
+                chapter_url: c.chapter_url.clone(),
+                text: c.text.clone(),
+                tokens: tokenize(&c.text),
+            })
+            .collect();
         let n_docs = docs.len();
         let mut postings: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
         let mut doc_lens = Vec::with_capacity(n_docs);
@@ -85,17 +87,21 @@ impl Bm25Index {
         }
     }
 
-    /// Scores every chapter against `query` and returns the top `top_k` as
-    /// `(score, chapter_url)` in descending score order. Chapters with no
-    /// matching terms are omitted.
-    pub fn search(&self, query: &str, top_k: usize) -> Vec<(f64, String)> {
+    /// Scores every chunk against `query` and returns the top `top_k` chapters
+    /// as `(score, chapter_url, best_chunk_text)` in descending score order. A
+    /// chapter's score is its best-matching chunk's BM25 score, and
+    /// `best_chunk_text` is that chunk's text — the passage the cross-encoder
+    /// should score for a BM25-only chapter (the highest-cosine chunk may be
+    /// unrelated to the matched keyword). Chapters with no matching terms are
+    /// omitted.
+    pub fn search(&self, query: &str, top_k: usize) -> Vec<(f64, String, String)> {
         const K1: f64 = 1.5;
         const B: f64 = 0.75;
         let q_terms = tokenize(query);
         if q_terms.is_empty() || self.n_docs == 0 {
             return Vec::new();
         }
-        let mut scores = vec![0.0f64; self.n_docs];
+        let mut chunk_scores = vec![0.0f64; self.n_docs];
         for term in q_terms {
             let Some(postings) = self.postings.get(&term) else {
                 continue;
@@ -105,14 +111,27 @@ impl Bm25Index {
             for &(doc_idx, tf) in postings {
                 let dl = self.doc_lens[doc_idx] as f64;
                 let denom = tf as f64 + K1 * (1.0 - B + B * dl / self.avg_dl);
-                scores[doc_idx] += idf * (tf as f64 * (K1 + 1.0)) / denom;
+                chunk_scores[doc_idx] += idf * (tf as f64 * (K1 + 1.0)) / denom;
             }
         }
-        let mut ranked: Vec<(f64, String)> = scores
+        // Aggregate per chapter: max over its chunks, tracking the best chunk's
+        // text for the reranker passage.
+        let mut by_chapter: HashMap<String, (f64, String)> = HashMap::new();
+        for (i, score) in chunk_scores.into_iter().enumerate() {
+            if score <= 0.0 {
+                continue;
+            }
+            let doc = &self.docs[i];
+            let entry = by_chapter
+                .entry(doc.chapter_url.clone())
+                .or_insert((0.0, String::new()));
+            if score > entry.0 {
+                *entry = (score, doc.text.clone());
+            }
+        }
+        let mut ranked: Vec<(f64, String, String)> = by_chapter
             .into_iter()
-            .enumerate()
-            .filter(|(_, s)| *s > 0.0)
-            .map(|(i, s)| (s, self.docs[i].chapter_url.clone()))
+            .map(|(url, (score, text))| (score, url, text))
             .collect();
         ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         ranked.truncate(top_k);
@@ -188,6 +207,21 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].1, "ch-many");
         assert!(hits[0].0 > hits[1].0);
+    }
+
+    #[test]
+    fn test_bm25_best_chunk_text_is_the_matching_chunk() {
+        // A chapter with two chunks: the first is unrelated, the second matches
+        // the query. The returned passage must be the matching chunk's text.
+        let chunks = vec![
+            chunk("b1", "ch1", "unrelated filler text"),
+            chunk("b1", "ch1", "the dragon sleeps here"),
+        ];
+        let index = Bm25Index::build(&chunks);
+        let hits = index.search("dragon", 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].1, "ch1");
+        assert_eq!(hits[0].2, "the dragon sleeps here");
     }
 
     #[test]
