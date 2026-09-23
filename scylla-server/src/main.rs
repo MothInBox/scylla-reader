@@ -625,34 +625,20 @@ mod tests {
 
     const BOOK_PATH: &str = "/api/books/http%3A%2F%2Fexample.com%2Fbook";
 
-    fn test_app() -> Router {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
-        let (cmd_tx, _cmd_rx) = std::sync::mpsc::channel();
-        let registry = Arc::new(std::sync::Mutex::new(
-            scylla_core::scraper::ScraperRegistry::new(),
-        ));
-        let state =
-            Arc::new(AppState {
-                db,
-                cmd_tx,
-                registry,
-                max_workers: std::sync::Mutex::new(4),
-                rate_limit: std::sync::Mutex::new(2),
-                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
-                job_events:
-                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
-                embedder: Arc::new(embeddings::SharedEmbedder::new()),
-                reranker: Arc::new(embeddings::SharedCrossEncoder::in_cooldown()),
-                autoembed: Arc::new(std::sync::Mutex::new(false)),
-            });
-        build_router(state)
+    /// A test router plus the handles tests need to seed/assert state.
+    struct TestApp {
+        router: Router,
+        db: Arc<Mutex<db::ServerDb>>,
+        cmd_rx: std::sync::mpsc::Receiver<scylla_core::messenger::AppCommand>,
     }
 
-    fn test_app_with_cmd_rx() -> (
-        Router,
-        std::sync::mpsc::Receiver<scylla_core::messenger::AppCommand>,
-    ) {
+    /// Core test-app builder: in-memory DB, fresh command channel, and the
+    /// given embedder/reranker stubs. All `test_app_with_*` helpers are thin
+    /// wrappers over this.
+    fn test_app_core(
+        embedder: embeddings::SharedEmbedder,
+        reranker: embeddings::SharedCrossEncoder,
+    ) -> TestApp {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
@@ -661,32 +647,6 @@ mod tests {
         ));
         let state =
             Arc::new(AppState {
-                db,
-                cmd_tx,
-                registry,
-                max_workers: std::sync::Mutex::new(4),
-                rate_limit: std::sync::Mutex::new(2),
-                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
-                job_events:
-                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
-                embedder: Arc::new(embeddings::SharedEmbedder::new()),
-                reranker: Arc::new(embeddings::SharedCrossEncoder::in_cooldown()),
-                autoembed: Arc::new(std::sync::Mutex::new(false)),
-            });
-        (build_router(state), cmd_rx)
-    }
-
-    fn test_app_with_embed_and_db(
-        embed: embeddings::EmbedFn,
-    ) -> (Router, Arc<Mutex<db::ServerDb>>) {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
-        let (cmd_tx, _cmd_rx) = std::sync::mpsc::channel();
-        let registry = Arc::new(std::sync::Mutex::new(
-            scylla_core::scraper::ScraperRegistry::new(),
-        ));
-        let state =
-            Arc::new(AppState {
                 db: db.clone(),
                 cmd_tx,
                 registry,
@@ -695,86 +655,71 @@ mod tests {
                 jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
                 job_events:
                     tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
-                embedder: Arc::new(embeddings::SharedEmbedder::with_embed(embed)),
-                reranker: Arc::new(embeddings::SharedCrossEncoder::in_cooldown()),
+                embedder: Arc::new(embedder),
+                reranker: Arc::new(reranker),
                 autoembed: Arc::new(std::sync::Mutex::new(false)),
             });
-        (build_router(state), db)
+        TestApp {
+            router: build_router(state),
+            db,
+            cmd_rx,
+        }
+    }
+
+    fn test_app() -> Router {
+        test_app_core(
+            embeddings::SharedEmbedder::new(),
+            embeddings::SharedCrossEncoder::in_cooldown(),
+        )
+        .router
+    }
+
+    fn test_app_with_cmd_rx() -> (
+        Router,
+        std::sync::mpsc::Receiver<scylla_core::messenger::AppCommand>,
+    ) {
+        let app = test_app_core(
+            embeddings::SharedEmbedder::new(),
+            embeddings::SharedCrossEncoder::in_cooldown(),
+        );
+        (app.router, app.cmd_rx)
+    }
+
+    fn test_app_with_embed_and_db(
+        embed: embeddings::EmbedFn,
+    ) -> (Router, Arc<Mutex<db::ServerDb>>) {
+        let app = test_app_core(
+            embeddings::SharedEmbedder::with_embed(embed),
+            embeddings::SharedCrossEncoder::in_cooldown(),
+        );
+        (app.router, app.db)
     }
 
     fn test_app_with_embed_rerank_and_db(
         embed: embeddings::EmbedFn,
         rerank: embeddings::RerankFn,
     ) -> (Router, Arc<Mutex<db::ServerDb>>) {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
-        let (cmd_tx, _cmd_rx) = std::sync::mpsc::channel();
-        let registry = Arc::new(std::sync::Mutex::new(
-            scylla_core::scraper::ScraperRegistry::new(),
-        ));
-        let state =
-            Arc::new(AppState {
-                db: db.clone(),
-                cmd_tx,
-                registry,
-                max_workers: std::sync::Mutex::new(4),
-                rate_limit: std::sync::Mutex::new(2),
-                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
-                job_events:
-                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
-                embedder: Arc::new(embeddings::SharedEmbedder::with_embed(embed)),
-                reranker: Arc::new(embeddings::SharedCrossEncoder::with_rerank(rerank)),
-                autoembed: Arc::new(std::sync::Mutex::new(false)),
-            });
-        (build_router(state), db)
+        let app = test_app_core(
+            embeddings::SharedEmbedder::with_embed(embed),
+            embeddings::SharedCrossEncoder::with_rerank(rerank),
+        );
+        (app.router, app.db)
     }
 
     fn test_app_with_embedder_in_cooldown() -> Router {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
-        let (cmd_tx, _cmd_rx) = std::sync::mpsc::channel();
-        let registry = Arc::new(std::sync::Mutex::new(
-            scylla_core::scraper::ScraperRegistry::new(),
-        ));
-        let state =
-            Arc::new(AppState {
-                db,
-                cmd_tx,
-                registry,
-                max_workers: std::sync::Mutex::new(4),
-                rate_limit: std::sync::Mutex::new(2),
-                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
-                job_events:
-                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
-                embedder: Arc::new(embeddings::SharedEmbedder::in_cooldown()),
-                reranker: Arc::new(embeddings::SharedCrossEncoder::in_cooldown()),
-                autoembed: Arc::new(std::sync::Mutex::new(false)),
-            });
-        build_router(state)
+        test_app_core(
+            embeddings::SharedEmbedder::in_cooldown(),
+            embeddings::SharedCrossEncoder::in_cooldown(),
+        )
+        .router
     }
 
     fn test_app_with_embedder_in_cooldown_and_db() -> (Router, Arc<Mutex<db::ServerDb>>) {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let db = Arc::new(Mutex::new(db::ServerDb::open_conn(conn).unwrap()));
-        let (cmd_tx, _cmd_rx) = std::sync::mpsc::channel();
-        let registry = Arc::new(std::sync::Mutex::new(
-            scylla_core::scraper::ScraperRegistry::new(),
-        ));
-        let state =
-            Arc::new(AppState {
-                db: db.clone(),
-                cmd_tx,
-                registry,
-                max_workers: std::sync::Mutex::new(4),
-                rate_limit: std::sync::Mutex::new(2),
-                jobs: Arc::new(std::sync::Mutex::new(Vec::new())),
-                job_events:
-                    tokio::sync::broadcast::channel::<Arc<scylla_core::messenger::AppEvent>>(256).0,
-                embedder: Arc::new(embeddings::SharedEmbedder::in_cooldown()),
-                reranker: Arc::new(embeddings::SharedCrossEncoder::in_cooldown()),
-                autoembed: Arc::new(std::sync::Mutex::new(false)),
-            });
-        (build_router(state), db)
+        let app = test_app_core(
+            embeddings::SharedEmbedder::in_cooldown(),
+            embeddings::SharedCrossEncoder::in_cooldown(),
+        );
+        (app.router, app.db)
     }
 
     fn sample_book_json() -> serde_json::Value {

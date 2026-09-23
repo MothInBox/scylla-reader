@@ -10,6 +10,19 @@ use crate::state::AppState;
 /// Search route error: an HTTP status plus a JSON error body.
 type SearchError = (StatusCode, Json<serde_json::Value>);
 
+/// Runs CPU-bound search work (embed + rank + rerank) on the blocking pool so
+/// the tokio worker never stalls. A panicked task becomes a 500.
+async fn run_blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, SearchError> + Send + 'static,
+) -> Result<T, SearchError> {
+    tokio::task::spawn_blocking(f).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("search task failed: {e}") })),
+        )
+    })?
+}
+
 /// How many candidates the bi-encoder returns before the cross-encoder rerank
 /// (and before truncation to the requested `limit`).
 const RERANK_CANDIDATES: usize = 50;
@@ -125,17 +138,11 @@ async fn search_chapters(
     // the blocking pool so the tokio worker never stalls.
     let query = query.to_string();
     let query_for_snippet = query.clone();
-    let ranked = tokio::task::spawn_blocking(move || {
+    let ranked = run_blocking(move || {
         let query_vec = embed_query(&state, &query)?;
         Ok::<_, SearchError>(fuse_and_rerank(&state, &query, &chapters, &query_vec))
     })
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("search task failed: {e}") })),
-        )
-    })??;
+    .await?;
 
     let hits: Vec<serde_json::Value> = ranked
         .into_iter()
@@ -216,7 +223,7 @@ async fn search_books(
         .iter()
         .map(|(url, title, _, _)| (url.clone(), title.clone()))
         .collect();
-    let (ranked_books, by_book) = tokio::task::spawn_blocking(move || {
+    let (ranked_books, by_book) = run_blocking(move || {
         let query_vec = embed_query(&state, &query)?;
 
         // Rank books by aggregate embedding (top-50 candidates for rerank).
@@ -235,13 +242,7 @@ async fn search_books(
         let ranked_books = rerank_books(&state, &query, ranked_books, &by_book);
         Ok::<_, SearchError>((ranked_books, by_book))
     })
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("search task failed: {e}") })),
-        )
-    })??;
+    .await?;
 
     let hits: Vec<serde_json::Value> = ranked_books
         .into_iter()
