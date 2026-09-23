@@ -379,8 +379,13 @@ fn fuse_and_rerank(
     chapters: &[crate::embeddings::ChunkHit],
     query_vec: &[f32],
 ) -> Vec<RankedChapterHit> {
+    // The best-chunk-per-chapter list (cosine over every chunk) is computed
+    // ONCE and shared by the semantic lane and the by_url map — `rank_chapters`
+    // would recompute it internally.
+    let all_best = crate::embeddings::best_chunks_per_chapter(chapters, query_vec);
+
     // Semantic lane: top-50 (floored, per-book capped, normalized).
-    let semantic = crate::embeddings::rank_chapters(chapters, query_vec, RERANK_CANDIDATES);
+    let semantic = crate::embeddings::rank_best_chunks(all_best.clone(), RERANK_CANDIDATES);
     let semantic_urls: Vec<String> = semantic.iter().map(|h| h.2.clone()).collect();
 
     // Keyword lane: BM25 top-50 over the same corpus. The returned best-chunk
@@ -395,7 +400,6 @@ fn fuse_and_rerank(
 
     // Fuse, then map URLs back to hits via the unfiltered best-chunk list.
     let fused = crate::bm25::rrf_fuse(&[semantic_urls, bm25_urls], RERANK_CANDIDATES);
-    let all_best = crate::embeddings::best_chunks_per_chapter(chapters, query_vec);
     let by_url: HashMap<String, RankedChapterHit> =
         all_best.into_iter().map(|h| (h.2.clone(), h)).collect();
     let mut fused_hits: Vec<RankedChapterHit> = fused

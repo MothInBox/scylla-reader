@@ -2493,6 +2493,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_search_chapter_mode_book_url_with_no_embeddings_returns_empty() {
+        // A drill-down into a book with no embedded chapters is not the
+        // library-level `no_embeddings` hint (that's checked only when no
+        // `book_url` narrows the search) — it's an empty hit list.
+        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
+        let book = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![scylla_core::types::Chapter {
+                url: "ch-a1".into(),
+                title: "Chapter A1".into(),
+                order: 1,
+            }],
+        };
+        db.lock().await.upsert_book(&book).unwrap();
+        // No chapter embeddings seeded for this book.
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"x","mode":"chapter","limit":10,"book_url":"book-a"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["mode"], "chapter");
+        // Empty hits, not the no_embeddings hint.
+        assert!(json.get("error").is_none(), "unexpected error: {json}");
+        assert_eq!(json["hits"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
     async fn test_search_book_mode_inline_chapters() {
         let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
         // Book A (4 chapters) and Book B (3 chapters), all above the floor.

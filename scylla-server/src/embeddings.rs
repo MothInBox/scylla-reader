@@ -747,8 +747,11 @@ pub fn best_chunks_per_chapter(chunks: &[ChunkHit], query: &[f32]) -> Vec<Ranked
 /// backfill) — Phase 2's per-book drill-down relies on this. Results below
 /// [`SCORE_FLOOR`] are dropped, and the surviving scores are mapped to a 0–100
 /// display scale via a fixed mapping (see [`normalize_score`]).
-pub fn rank_chapters(chunks: &[ChunkHit], query: &[f32], limit: usize) -> Vec<RankedChapterHit> {
-    let mut scored = best_chunks_per_chapter(chunks, query);
+/// Ranks a precomputed best-chunk-per-chapter list: drops below-floor hits,
+/// applies the per-book cap, truncates to `limit`, and maps scores to the
+/// 0–100 display scale. Shared by the semantic lane and the post-fusion path so
+/// the cosine pass over all chunks happens exactly once per search.
+pub fn rank_best_chunks(mut scored: Vec<RankedChapterHit>, limit: usize) -> Vec<RankedChapterHit> {
     scored.retain(|h| h.6 >= SCORE_FLOOR);
     scored.sort_by(|a, b| b.6.partial_cmp(&a.6).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -1020,7 +1023,7 @@ mod tests {
             chunk_hit("book2", "ch4", [0.5, 0.5]),
         ];
         let query = vec![1.0, 0.0];
-        let ranked = rank_chapters(&chapters, &query, 10);
+        let ranked = rank_best_chunks(best_chunks_per_chapter(&chapters, &query), 10);
         assert_eq!(ranked.len(), 3);
         // Flat, sorted by score desc.
         assert_eq!(ranked[0].2, "ch1");
@@ -1047,7 +1050,7 @@ mod tests {
             chunk_hit("book1", "ch3", [0.8, 0.2]),
         ];
         let query = vec![1.0, 0.0];
-        let ranked = rank_chapters(&chapters, &query, 2);
+        let ranked = rank_best_chunks(best_chunks_per_chapter(&chapters, &query), 2);
         assert_eq!(ranked.len(), 2);
         assert_eq!(ranked[0].2, "ch1");
         assert_eq!(ranked[1].2, "ch2");
@@ -1068,7 +1071,7 @@ mod tests {
         let query = vec![1.0, 0.0];
 
         // limit 4: the top-3-per-book pass fills the window — book1 capped at 3.
-        let ranked = rank_chapters(&chapters, &query, 4);
+        let ranked = rank_best_chunks(best_chunks_per_chapter(&chapters, &query), 4);
         assert_eq!(ranked.len(), 4);
         assert_eq!(ranked.iter().filter(|h| h.0 == "book1").count(), 3);
         assert_eq!(ranked.iter().filter(|h| h.0 == "book2").count(), 1);
@@ -1077,7 +1080,7 @@ mod tests {
 
         // limit 6: remaining slots are backfilled from the overflow. book2's
         // second chapter (ch7) takes a capped slot, so only ch4 backfills.
-        let ranked = rank_chapters(&chapters, &query, 6);
+        let ranked = rank_best_chunks(best_chunks_per_chapter(&chapters, &query), 6);
         assert_eq!(ranked.len(), 6);
         assert_eq!(ranked.iter().filter(|h| h.0 == "book1").count(), 4);
         assert_eq!(ranked.iter().filter(|h| h.0 == "book2").count(), 2);
@@ -1125,7 +1128,7 @@ mod tests {
             chunk_hit("book1", "ch4", [0.2, 0.8]), // cos ~0.24 — dropped
         ];
         let query = vec![1.0, 0.0];
-        let ranked = rank_chapters(&chapters, &query, 10);
+        let ranked = rank_best_chunks(best_chunks_per_chapter(&chapters, &query), 10);
         assert_eq!(ranked.len(), 2);
         assert_eq!(ranked[0].2, "ch1");
         assert_eq!(ranked[1].2, "ch3");
@@ -1138,7 +1141,7 @@ mod tests {
             chunk_hit("book1", "ch2", [0.5, 0.5]), // cos ~0.707
         ];
         let query = vec![1.0, 0.0];
-        let ranked = rank_chapters(&chapters, &query, 10);
+        let ranked = rank_best_chunks(best_chunks_per_chapter(&chapters, &query), 10);
         assert_eq!(ranked.len(), 2);
         assert_eq!(ranked[0].6, 100.0);
         assert!((ranked[1].6 - 60.95).abs() < 0.01);
@@ -1148,7 +1151,7 @@ mod tests {
     fn test_rank_chapters_single_hit_fixed_mapping() {
         let chapters = vec![chunk_hit("book1", "ch1", [0.5, 0.5])];
         let query = vec![1.0, 0.0];
-        let ranked = rank_chapters(&chapters, &query, 10);
+        let ranked = rank_best_chunks(best_chunks_per_chapter(&chapters, &query), 10);
         assert_eq!(ranked.len(), 1);
         // Fixed mapping, not min-max: a lone ~0.707 cosine maps to ~61, not 100.
         assert!((ranked[0].6 - 60.95).abs() < 0.01);
