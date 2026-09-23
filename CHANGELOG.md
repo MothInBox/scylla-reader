@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ChapterResults collapse/expand (Tab)
 - AI search first-run hint when no chapters are embedded yet (no error toast)
 - Per-book result diversity (top-3 per book) and 0–100 normalized scores with a relevance floor in AI search
+- Book-mode AI search: the library re-ranks with an explicit AI indicator (filter-bar segment, "AI ranked" title, mode-aware footer hints) and per-row scores
+- AI drill-down: Enter on a ranked book opens its inline chapters (local, no network); `g` toggles book-mode ↔ grouped-chapter mode; Esc clears the AI ranking
+- AI state is explicit and survives filter commits and deletes — clearing is always intentional (Esc)
 
 ### Changed
 

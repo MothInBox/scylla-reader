@@ -2,7 +2,7 @@
 //! calls from synchronous code, plus small HTTP helpers for the server-owned
 //! job API.
 
-use crate::event_types::{ChapterHit, SearchOutcome};
+use crate::event_types::{AiBook, AiChapter, SearchOutcome};
 use crate::state::AppState;
 use crate::storage::manager::LibraryManager;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
@@ -115,28 +115,31 @@ pub async fn job_command(base: &str, path: &str, body: serde_json::Value) -> Res
     post_json(&format!("{}/api/jobs/{}", base, path), &body).await
 }
 
-/// POST /api/search — chapter-mode AI search. Returns the flat chapter hits or
-/// a distinct "no embeddings yet" signal (empty corpus).
+/// POST /api/search — AI search. `mode` is "book" (books with inline top-3
+/// chapters) or "chapter" (flat chapter hits). `book_url` optionally narrows a
+/// chapter-mode search to a single book (deeper drill-down). Returns the parsed
+/// outcome or a distinct "no embeddings yet" signal (empty corpus).
 ///
-/// The TUI only uses chapter mode; book mode is rejected up front. The client
-/// uses a generous 60s timeout because the first search legitimately includes
-/// the ~91MB embedding-model download.
+/// The client uses a generous 60s timeout because the first search legitimately
+/// includes the ~91MB embedding-model download.
 pub async fn search(
     base: &str,
     query: &str,
     mode: &str,
+    book_url: Option<&str>,
     limit: usize,
 ) -> Result<SearchOutcome, String> {
-    if mode != "chapter" {
-        return Err("book mode not supported by the TUI client".to_string());
-    }
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .expect("failed to build http client");
+    let mut body = serde_json::json!({ "query": query, "mode": mode, "limit": limit });
+    if let Some(book_url) = book_url {
+        body["book_url"] = serde_json::json!(book_url);
+    }
     let resp = client
         .post(format!("{}/api/search", base))
-        .json(&serde_json::json!({ "query": query, "mode": mode, "limit": limit }))
+        .json(&body)
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -180,7 +183,7 @@ pub async fn embedding_status(base: &str, book_url: &str) -> Result<EmbeddingSta
 }
 
 /// Parse a search response: a distinct `no_embeddings` body (empty corpus) or
-/// the flat `results` array plus library-level coverage counts.
+/// the mode-specific `hits` array plus library-level coverage counts.
 fn parse_search_outcome(json: &serde_json::Value) -> SearchOutcome {
     if json.get("error").and_then(|e| e.as_str()) == Some("no_embeddings") {
         let total = json.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
@@ -188,23 +191,45 @@ fn parse_search_outcome(json: &serde_json::Value) -> SearchOutcome {
     }
     let embedded = json.get("embedded").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let total = json.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    SearchOutcome::Hits {
-        hits: parse_search_response(json),
-        embedded,
-        total,
+    let mode = json
+        .get("mode")
+        .and_then(|m| m.as_str())
+        .unwrap_or("chapter");
+    match mode {
+        "book" => SearchOutcome::BookMode {
+            hits: parse_book_hits(json),
+            embedded,
+            total,
+        },
+        _ => SearchOutcome::ChapterMode {
+            hits: parse_chapter_hits(json),
+            embedded,
+            total,
+        },
     }
 }
 
-/// Parse the `results` array of a search response into `ChapterHit`s, logging
-/// any malformed entries.
-fn parse_search_response(json: &serde_json::Value) -> Vec<ChapterHit> {
-    let Some(results) = json.get("results").and_then(|r| r.as_array()) else {
-        return Vec::new();
-    };
+/// Parse the `hits` array of a search response, logging any malformed entries.
+fn parse_hits(json: &serde_json::Value) -> Vec<serde_json::Value> {
+    json.get("hits")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn parse_chapter_hits(json: &serde_json::Value) -> Vec<AiChapter> {
+    parse_typed_hits(json)
+}
+
+fn parse_book_hits(json: &serde_json::Value) -> Vec<AiBook> {
+    parse_typed_hits(json)
+}
+
+fn parse_typed_hits<T: serde::de::DeserializeOwned>(json: &serde_json::Value) -> Vec<T> {
     let mut dropped = 0;
-    let hits: Vec<ChapterHit> = results
-        .iter()
-        .filter_map(|v| match serde_json::from_value(v.clone()) {
+    let hits: Vec<T> = parse_hits(json)
+        .into_iter()
+        .filter_map(|v| match serde_json::from_value(v) {
             Ok(hit) => Some(hit),
             Err(_) => {
                 dropped += 1;
@@ -257,39 +282,87 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_search_response_flat_hits() {
+    fn test_parse_chapter_mode_hits() {
         let json = serde_json::json!({
             "mode": "chapter",
-            "results": [
-                {"book_url":"u1","book_title":"B1","chapter_url":"c1","chapter_idx":0,"chapter_title":"C1","score":90.0,"genres":["Fantasy"]},
-                {"book_url":"u2","book_title":"B2","chapter_url":"c2","chapter_idx":1,"chapter_title":"C2","score":50.0}
+            "embedded": 12,
+            "total": 15,
+            "hits": [
+                {"url":"c1","chapter_idx":0,"title":"C1","score":90.0},
+                {"url":"c2","chapter_idx":1,"title":"C2","score":50.0}
             ]
         });
-        let hits = parse_search_response(&json);
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].book_title, "B1");
-        assert_eq!(hits[0].score, 90.0);
-        assert_eq!(hits[0].genres, vec!["Fantasy"]);
-        assert!(hits[1].genres.is_empty());
+        match parse_search_outcome(&json) {
+            SearchOutcome::ChapterMode {
+                hits,
+                embedded,
+                total,
+            } => {
+                assert_eq!(hits.len(), 2);
+                assert_eq!(hits[0].chapter_title, "C1");
+                assert_eq!(hits[0].chapter_url, "c1");
+                assert_eq!(hits[0].score, 90.0);
+                assert_eq!(embedded, 12);
+                assert_eq!(total, 15);
+            }
+            _ => panic!("expected ChapterMode"),
+        }
     }
 
     #[test]
-    fn test_parse_search_response_missing_results_is_empty() {
-        let json = serde_json::json!({ "mode": "chapter" });
-        assert!(parse_search_response(&json).is_empty());
-    }
-
-    #[test]
-    fn test_parse_search_response_drops_malformed() {
+    fn test_parse_book_mode_hits_with_inline_chapters() {
         let json = serde_json::json!({
-            "results": [
-                {"book_url":"u1","book_title":"B1","chapter_url":"c1","chapter_idx":0,"chapter_title":"C1","score":90.0},
-                {"book_url":"u2"}  // missing required fields
+            "mode": "book",
+            "embedded": 12,
+            "total": 15,
+            "hits": [
+                {"book_url":"u1","title":"B1","score":90.0,"chapters":[{"url":"c1","chapter_idx":0,"title":"C1","score":90.0}]},
+                {"book_url":"u2","title":"B2","score":50.0,"chapters":[]}
             ]
         });
-        let hits = parse_search_response(&json);
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].book_title, "B1");
+        match parse_search_outcome(&json) {
+            SearchOutcome::BookMode {
+                hits,
+                embedded,
+                total,
+            } => {
+                assert_eq!(hits.len(), 2);
+                assert_eq!(hits[0].book_title, "B1");
+                assert_eq!(hits[0].book_url, "u1");
+                assert_eq!(hits[0].chapters[0].chapter_title, "C1");
+                assert!(hits[1].chapters.is_empty());
+                assert_eq!(embedded, 12);
+                assert_eq!(total, 15);
+            }
+            _ => panic!("expected BookMode"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_missing_hits_is_empty() {
+        let json = serde_json::json!({ "mode": "chapter", "embedded": 0, "total": 0 });
+        match parse_search_outcome(&json) {
+            SearchOutcome::ChapterMode { hits, .. } => assert!(hits.is_empty()),
+            _ => panic!("expected ChapterMode"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_drops_malformed() {
+        let json = serde_json::json!({
+            "mode": "chapter",
+            "hits": [
+                {"url":"c1","chapter_idx":0,"title":"C1","score":90.0},
+                {"url":"c2"}  // missing required fields
+            ]
+        });
+        match parse_search_outcome(&json) {
+            SearchOutcome::ChapterMode { hits, .. } => {
+                assert_eq!(hits.len(), 1);
+                assert_eq!(hits[0].chapter_title, "C1");
+            }
+            _ => panic!("expected ChapterMode"),
+        }
     }
 
     #[test]
@@ -302,17 +375,17 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_search_outcome_hits() {
+    fn test_parse_search_outcome_book_mode_hits() {
         let json = serde_json::json!({
-            "mode": "chapter",
+            "mode": "book",
             "embedded": 12,
             "total": 15,
-            "results": [
-                {"book_url":"u1","book_title":"B1","chapter_url":"c1","chapter_idx":0,"chapter_title":"C1","score":87.0}
+            "hits": [
+                {"book_url":"u1","title":"B1","score":87.0,"chapters":[{"url":"c1","chapter_idx":0,"title":"C1","score":87.0}]}
             ]
         });
         match parse_search_outcome(&json) {
-            SearchOutcome::Hits {
+            SearchOutcome::BookMode {
                 hits,
                 embedded,
                 total,
@@ -322,17 +395,19 @@ mod tests {
                 assert_eq!(embedded, 12);
                 assert_eq!(total, 15);
             }
-            _ => panic!("expected Hits"),
+            _ => panic!("expected BookMode"),
         }
     }
 
     #[test]
-    fn test_search_rejects_book_mode() {
-        // The guard returns before any HTTP request is made.
-        let result = block_on(search("http://127.0.0.1:1", "q", "book", 10));
-        assert_eq!(
-            result.err().as_deref(),
-            Some("book mode not supported by the TUI client")
+    fn test_search_sends_book_mode() {
+        // The guard was removed — book mode is now a normal request. The mock
+        // base is non-resolvable, so the HTTP request fails fast; we assert the
+        // client no longer rejects book mode up front.
+        let result = block_on(search("http://127.0.0.1:1", "q", "book", None, 10));
+        assert!(
+            result.is_err(),
+            "expected a transport error, not a mode guard"
         );
     }
 

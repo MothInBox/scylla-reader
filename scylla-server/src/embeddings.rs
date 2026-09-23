@@ -51,6 +51,9 @@ pub type EmbedFn = Arc<dyn Fn(&[&str]) -> anyhow::Result<Vec<Vec<f32>>> + Send +
 /// A book aggregate row: (book_url, aggregate_embedding, genres).
 pub type BookAggregate = (String, Vec<f32>, Option<Vec<String>>);
 
+/// A book aggregate row with its title: (book_url, title, aggregate_embedding, genres).
+pub type BookAggregateWithTitle = (String, String, Vec<f32>, Option<Vec<String>>);
+
 /// A ranked book result: (book_url, score, genres).
 pub type RankedBook = (String, f32, Option<Vec<String>>);
 
@@ -477,8 +480,25 @@ pub const MAX_PER_BOOK: usize = 3;
 /// Maps a cosine score to the 0–100 display scale with a fixed mapping from
 /// the [`SCORE_FLOOR`]..=1.0 range, clamped to [0, 100]. Unlike min-max, the
 /// result is comparable across result sets.
-fn normalize_score(cos: f32) -> f32 {
+pub(crate) fn normalize_score(cos: f32) -> f32 {
     ((cos - SCORE_FLOOR) / (1.0 - SCORE_FLOOR) * 100.0).clamp(0.0, 100.0)
+}
+
+/// Groups ranked chapter hits by book, keeping the top `per_book` per book.
+/// The input must be sorted by score descending (as `rank_chapters` returns),
+/// so the first `per_book` hits seen per book are its best.
+pub fn top_chapters_per_book(
+    ranked: Vec<RankedChapterHit>,
+    per_book: usize,
+) -> HashMap<String, Vec<RankedChapterHit>> {
+    let mut by_book: HashMap<String, Vec<RankedChapterHit>> = HashMap::new();
+    for hit in ranked {
+        let group = by_book.entry(hit.0.clone()).or_default();
+        if group.len() < per_book {
+            group.push(hit);
+        }
+    }
+    by_book
 }
 
 #[cfg(test)]
@@ -498,6 +518,18 @@ mod tests {
             1u32,
             None,
             emb.to_vec(),
+        )
+    }
+
+    fn ranked_chapter_hit(book_url: &str, chapter_url: &str, score: f32) -> RankedChapterHit {
+        (
+            book_url.to_string(),
+            format!("Book {}", book_url),
+            chapter_url.to_string(),
+            format!("Chapter {}", chapter_url),
+            1u32,
+            None,
+            score,
         )
     }
 
@@ -771,5 +803,32 @@ mod tests {
         assert_eq!(ranked.len(), 1);
         // Fixed mapping, not min-max: a lone ~0.707 cosine maps to ~61, not 100.
         assert!((ranked[0].6 - 60.95).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_top_chapters_per_book_keeps_best_per_book() {
+        // Input is score-descending (as rank_chapters returns it).
+        let ranked = vec![
+            ranked_chapter_hit("book1", "ch1", 100.0),
+            ranked_chapter_hit("book2", "ch6", 99.5),
+            ranked_chapter_hit("book1", "ch2", 99.0),
+            ranked_chapter_hit("book1", "ch3", 96.0),
+            ranked_chapter_hit("book1", "ch4", 89.0),
+            ranked_chapter_hit("book2", "ch7", 61.0),
+        ];
+        let by_book = top_chapters_per_book(ranked, 3);
+        let book1 = by_book.get("book1").unwrap();
+        let book2 = by_book.get("book2").unwrap();
+        // Top-3 per book, in input (score-descending) order.
+        assert_eq!(
+            book1.iter().map(|h| h.2.as_str()).collect::<Vec<_>>(),
+            vec!["ch1", "ch2", "ch3"]
+        );
+        assert_eq!(
+            book2.iter().map(|h| h.2.as_str()).collect::<Vec<_>>(),
+            vec!["ch6", "ch7"]
+        );
+        // A book with fewer than `per_book` hits keeps all of them.
+        assert_eq!(book2.len(), 2);
     }
 }

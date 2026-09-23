@@ -477,25 +477,26 @@ impl ServerDb {
              LEFT JOIN book_embeddings be ON be.book_url = ce.book_url
              ORDER BY ce.rowid",
         )?;
-        let rows = stmt.query_map([], |row| {
-            let book_url: Option<String> = row.get(0)?;
-            let book_title: Option<String> = row.get(1)?;
-            let source_url: String = row.get(2)?;
-            let chapter_title: Option<String> = row.get(3)?;
-            let chapter_idx: Option<i64> = row.get(4)?;
-            let genres: Option<String> = row.get(5)?;
-            let blob: Vec<u8> = row.get(6)?;
-            let genres = genres.and_then(|g| serde_json::from_str(&g).ok());
-            Ok((
-                book_url.unwrap_or_default(),
-                book_title.unwrap_or_default(),
-                source_url,
-                chapter_title.unwrap_or_default(),
-                chapter_idx.unwrap_or(0) as u32,
-                genres,
-                decode_f32s(&blob),
-            ))
-        })?;
+        let rows = stmt.query_map([], chapter_hit_from_row)?;
+        rows.collect()
+    }
+
+    /// Chapter embeddings for one book, enriched for search (the per-book
+    /// drill-down window).
+    pub fn load_chapter_hits_for_book(
+        &self,
+        book_url: &str,
+    ) -> Result<Vec<crate::embeddings::ChapterHit>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ce.book_url, b.title, ce.source_url, ch.title, ch.ord, be.genres, ce.embedding
+             FROM chapter_embeddings ce
+             LEFT JOIN chapters ch ON ch.book_url = ce.book_url AND ch.url = ce.source_url
+             LEFT JOIN books b ON b.url = ce.book_url
+             LEFT JOIN book_embeddings be ON be.book_url = ce.book_url
+             WHERE ce.book_url = ?1
+             ORDER BY ce.rowid",
+        )?;
+        let rows = stmt.query_map([book_url], chapter_hit_from_row)?;
         rows.collect()
     }
 
@@ -533,6 +534,35 @@ impl ServerDb {
             let genres: Option<String> = row.get(2)?;
             let genres = genres.and_then(|g| serde_json::from_str(&g).ok());
             Ok((book_url, decode_f32s(&agg), genres))
+        })?;
+        rows.collect()
+    }
+
+    /// All book aggregate embeddings with their titles, as
+    /// (book_url, title, aggregate_embedding, genres) — for book-mode search
+    /// hits that carry inline chapter data. Rows without an aggregate
+    /// embedding are excluded; a missing books row maps the title to "".
+    pub fn load_all_book_embeddings_with_titles(
+        &self,
+    ) -> Result<Vec<crate::embeddings::BookAggregateWithTitle>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT be.book_url, b.title, be.aggregate_embedding, be.genres
+             FROM book_embeddings be
+             LEFT JOIN books b ON b.url = be.book_url
+             WHERE be.aggregate_embedding IS NOT NULL ORDER BY be.rowid",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let book_url: String = row.get(0)?;
+            let title: Option<String> = row.get(1)?;
+            let agg: Vec<u8> = row.get(2)?;
+            let genres: Option<String> = row.get(3)?;
+            let genres = genres.and_then(|g| serde_json::from_str(&g).ok());
+            Ok((
+                book_url,
+                title.unwrap_or_default(),
+                decode_f32s(&agg),
+                genres,
+            ))
         })?;
         rows.collect()
     }
@@ -594,6 +624,31 @@ fn status_str(s: &BookStatus) -> &'static str {
         BookStatus::Dropped => "Dropped",
         BookStatus::Completed => "Completed",
     }
+}
+
+/// Maps a chapter-embeddings search row (book_url, book_title, source_url,
+/// chapter_title, chapter_idx, genres, embedding) into a `ChapterHit` tuple.
+/// Shared by the all-chapters and per-book loaders.
+fn chapter_hit_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<crate::embeddings::ChapterHit> {
+    let book_url: Option<String> = row.get(0)?;
+    let book_title: Option<String> = row.get(1)?;
+    let source_url: String = row.get(2)?;
+    let chapter_title: Option<String> = row.get(3)?;
+    let chapter_idx: Option<i64> = row.get(4)?;
+    let genres: Option<String> = row.get(5)?;
+    let blob: Vec<u8> = row.get(6)?;
+    let genres = genres.and_then(|g| serde_json::from_str(&g).ok());
+    Ok((
+        book_url.unwrap_or_default(),
+        book_title.unwrap_or_default(),
+        source_url,
+        chapter_title.unwrap_or_default(),
+        chapter_idx.unwrap_or(0) as u32,
+        genres,
+        decode_f32s(&blob),
+    ))
 }
 
 /// Encodes an `f32` vector as raw little-endian bytes (BLOB storage).

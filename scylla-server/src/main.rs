@@ -1812,7 +1812,31 @@ mod tests {
     #[tokio::test]
     async fn test_search_book_mode_ranks_by_similarity() {
         let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
-        // Seed book A (agg [1,0,0]) and book B (agg [0,1,0]).
+        // Seed books so titles resolve, and aggregates for ranking.
+        let book_a = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![],
+        };
+        let book_b = scylla_core::types::Book {
+            title: "Book B".into(),
+            url: "book-b".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![],
+        };
+        db.lock().await.upsert_book(&book_a).unwrap();
+        db.lock().await.upsert_book(&book_b).unwrap();
         db.lock()
             .await
             .upsert_book_embedding(
@@ -1841,12 +1865,15 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["mode"], "book");
-        let results = json["results"].as_array().unwrap();
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0]["book_url"], "book-a");
-        assert_eq!(results[1]["book_url"], "book-b");
-        assert!(results[0]["score"].as_f64().unwrap() > results[1]["score"].as_f64().unwrap());
-        assert_eq!(results[0]["genres"][0], "Fantasy");
+        let hits = json["hits"].as_array().unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0]["book_url"], "book-a");
+        assert_eq!(hits[0]["title"], "Book A");
+        assert_eq!(hits[1]["book_url"], "book-b");
+        assert_eq!(hits[1]["title"], "Book B");
+        assert!(hits[0]["score"].as_f64().unwrap() > hits[1]["score"].as_f64().unwrap());
+        // No chapters seeded — inline chapter arrays are empty.
+        assert_eq!(hits[0]["chapters"].as_array().unwrap().len(), 0);
         // Coverage fields: no chapters in the library, so 0 of 0 embedded.
         assert_eq!(json["embedded"], 0);
         assert_eq!(json["total"], 0);
@@ -1949,6 +1976,202 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_search_chapter_mode_book_url_filters_and_no_cap() {
+        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
+        // Book A with 5 chapters (all above the floor), Book B with 1.
+        let book_a = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: (1..=5)
+                .map(|i| scylla_core::types::Chapter {
+                    url: format!("ch-a{}", i),
+                    title: format!("Chapter A{}", i),
+                    order: i,
+                })
+                .collect(),
+        };
+        let book_b = scylla_core::types::Book {
+            title: "Book B".into(),
+            url: "book-b".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: vec![scylla_core::types::Chapter {
+                url: "ch-b1".into(),
+                title: "Chapter B1".into(),
+                order: 1,
+            }],
+        };
+        db.lock().await.upsert_book(&book_a).unwrap();
+        db.lock().await.upsert_book(&book_b).unwrap();
+        for emb in [
+            ([1.0, 0.0], "ch-a1"),
+            ([0.9, 0.1], "ch-a2"),
+            ([0.8, 0.2], "ch-a3"),
+            ([0.7, 0.3], "ch-a4"),
+            ([0.6, 0.4], "ch-a5"),
+        ] {
+            db.lock()
+                .await
+                .upsert_chapter_embedding(emb.1, Some("book-a"), &emb.0, None)
+                .unwrap();
+        }
+        db.lock()
+            .await
+            .upsert_chapter_embedding("ch-b1", Some("book-b"), &[0.5, 0.5], None)
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"x","mode":"chapter","limit":50,"book_url":"book-a"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["mode"], "chapter");
+        let results = json["results"].as_array().unwrap();
+        // All 5 of book A's chapters come back — the per-book diversity cap is
+        // a no-op for the single-book drill-down window.
+        assert_eq!(results.len(), 5);
+        for r in results {
+            assert_eq!(r["book_url"], "book-a");
+        }
+        // Sorted by score desc.
+        assert_eq!(results[0]["chapter_url"], "ch-a1");
+        assert_eq!(results[4]["chapter_url"], "ch-a5");
+        // Coverage stays library-level.
+        assert_eq!(json["embedded"], 6);
+        assert_eq!(json["total"], 6);
+    }
+
+    #[tokio::test]
+    async fn test_search_book_mode_inline_chapters() {
+        let (app, db) = test_app_with_embed_and_db(stub_embed(vec![1.0, 0.0]));
+        // Book A (4 chapters) and Book B (3 chapters), all above the floor.
+        let book_a = scylla_core::types::Book {
+            title: "Book A".into(),
+            url: "book-a".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: (1..=4)
+                .map(|i| scylla_core::types::Chapter {
+                    url: format!("ch-a{}", i),
+                    title: format!("Chapter A{}", i),
+                    order: i,
+                })
+                .collect(),
+        };
+        let book_b = scylla_core::types::Book {
+            title: "Book B".into(),
+            url: "book-b".into(),
+            status: scylla_core::types::BookStatus::Reading,
+            sessions: vec![],
+            active_session_id: None,
+            tags: vec![],
+            cover_url: None,
+            description: None,
+            chapters: (1..=3)
+                .map(|i| scylla_core::types::Chapter {
+                    url: format!("ch-b{}", i),
+                    title: format!("Chapter B{}", i),
+                    order: i,
+                })
+                .collect(),
+        };
+        db.lock().await.upsert_book(&book_a).unwrap();
+        db.lock().await.upsert_book(&book_b).unwrap();
+        db.lock()
+            .await
+            .upsert_book_embedding("book-a", None, Some(&[1.0, 0.0]), None)
+            .unwrap();
+        db.lock()
+            .await
+            .upsert_book_embedding("book-b", None, Some(&[0.5, 0.5]), None)
+            .unwrap();
+        for emb in [
+            ([1.0, 0.0], "ch-a1"),
+            ([0.9, 0.1], "ch-a2"),
+            ([0.8, 0.2], "ch-a3"),
+            ([0.7, 0.3], "ch-a4"),
+        ] {
+            db.lock()
+                .await
+                .upsert_chapter_embedding(emb.1, Some("book-a"), &emb.0, None)
+                .unwrap();
+        }
+        for emb in [
+            ([0.5, 0.5], "ch-b1"),
+            ([0.4, 0.6], "ch-b2"),
+            ([0.3, 0.7], "ch-b3"),
+        ] {
+            db.lock()
+                .await
+                .upsert_chapter_embedding(emb.1, Some("book-b"), &emb.0, None)
+                .unwrap();
+        }
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"x","mode":"book","limit":10}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["mode"], "book");
+        let hits = json["hits"].as_array().unwrap();
+        assert_eq!(hits.len(), 2);
+        // Book A first (higher aggregate score), with its top-3 inline.
+        assert_eq!(hits[0]["book_url"], "book-a");
+        assert_eq!(hits[0]["title"], "Book A");
+        assert_eq!(hits[0]["score"].as_f64().unwrap(), 100.0);
+        let a_chapters = hits[0]["chapters"].as_array().unwrap();
+        assert_eq!(a_chapters.len(), 3); // top-3, not all 4
+        assert_eq!(a_chapters[0]["url"], "ch-a1");
+        assert_eq!(a_chapters[0]["chapter_idx"], 1);
+        assert_eq!(a_chapters[0]["title"], "Chapter A1");
+        assert_eq!(a_chapters[0]["score"].as_f64().unwrap(), 100.0);
+        assert_eq!(a_chapters[1]["url"], "ch-a2");
+        assert_eq!(a_chapters[2]["url"], "ch-a3");
+        // Book B second, with its top-3.
+        assert_eq!(hits[1]["book_url"], "book-b");
+        assert_eq!(hits[1]["title"], "Book B");
+        let b_chapters = hits[1]["chapters"].as_array().unwrap();
+        assert_eq!(b_chapters.len(), 3);
+        assert_eq!(b_chapters[0]["url"], "ch-b1");
+        assert_eq!(b_chapters[2]["url"], "ch-b3");
+        // Coverage: all 7 chapters embedded.
+        assert_eq!(json["embedded"], 7);
+        assert_eq!(json["total"], 7);
+    }
+
+    #[tokio::test]
     async fn test_search_empty_query_returns_400() {
         let app = test_app();
         let resp = app
@@ -2013,7 +2236,7 @@ mod tests {
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
             let json = body_json(resp).await;
-            assert_eq!(json["results"].as_array().unwrap().len(), expected);
+            assert_eq!(json["hits"].as_array().unwrap().len(), expected);
         }
     }
 

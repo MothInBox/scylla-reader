@@ -5,7 +5,7 @@ use crate::event_types::ServerEvent;
 use crate::input::keybinds::*;
 use crate::library::{BookFilter, filter_tags, known_tags};
 use crate::models::BookStatus;
-use crate::state::modal::{FilterRow, SearchStatus};
+use crate::state::modal::FilterRow;
 use crate::state::{AppState, Modal};
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -54,8 +54,9 @@ pub fn handle_filter(state: &mut AppState, key: KeyEvent) -> bool {
     true
 }
 
-/// Enter on the AI row: spawn a one-shot search thread and switch to the
-/// chapter-results modal. Empty queries are a no-op (stay in the modal).
+/// Enter on the AI row: spawn a one-shot search thread (book mode — books with
+/// inline top-3 chapters for instant drill-down) and activate the library AI
+/// session. Empty queries are a no-op (stay in the modal).
 fn run_ai_search(state: &mut AppState) {
     let query = if let Modal::Filter { ai_query, .. } = &state.ui.modal {
         ai_query.trim().to_string()
@@ -73,7 +74,7 @@ fn run_ai_search(state: &mut AppState) {
     crate::settings::log(
         crate::settings::LogLevel::Debug,
         "AI",
-        &format!("Searching chapters for: {}", query),
+        &format!("Searching for: {}", query),
     );
     let base = crate::storage::client::api_base(state);
     let Some(tx) = crate::event_types::event_tx() else {
@@ -89,7 +90,8 @@ fn run_ai_search(state: &mut AppState) {
         let result = crate::storage::client::block_on(crate::storage::client::search(
             &base,
             &thread_query,
-            "chapter",
+            "book",
+            None,
             50,
         ));
         let _ = tx.send(ServerEvent::AiSearchResults {
@@ -97,14 +99,10 @@ fn run_ai_search(state: &mut AppState) {
             result,
         });
     });
-    state.ui.modal = Modal::ChapterResults {
-        query,
-        groups: vec![],
-        cursor: 0,
-        scroll_offset: 0,
-        status: SearchStatus::Loading,
-        expanded: None,
-    };
+    // Activate the library AI session (Loading); results arrive via the event
+    // channel. Close the filter modal so the re-ranked library is visible.
+    state.lib.library.set_ai_searching(query);
+    state.ui.modal = Modal::None;
 }
 
 fn cycle_focus(state: &mut AppState, dir: i32) {
@@ -723,24 +721,17 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_filter_enter_on_ai_opens_chapter_results_loading() {
+    fn test_handle_filter_enter_on_ai_activates_library_ai() {
         let (tx, rx) = std::sync::mpsc::channel();
         crate::event_types::set_event_tx(tx);
         let mut state = ai_focus_state("dragon");
         handle_filter(&mut state, key_event(KEY_ENTER));
-        match &state.ui.modal {
-            Modal::ChapterResults {
-                query,
-                status,
-                groups,
-                ..
-            } => {
-                assert_eq!(query, "dragon");
-                assert_eq!(*status, SearchStatus::Loading);
-                assert!(groups.is_empty());
-            }
-            _ => panic!("Expected ChapterResults modal"),
-        }
+        // The filter modal closes and the library AI session is Loading.
+        assert_eq!(state.ui.modal, Modal::None);
+        let ai = state.lib.library.ai.as_ref().expect("AI session active");
+        assert_eq!(ai.query, "dragon");
+        assert_eq!(ai.status, crate::state::modal::SearchStatus::Loading);
+        assert!(ai.book_mode);
         // The search thread delivers an AiSearchResults event (fails fast in
         // the test environment — no server — but the event still arrives).
         let event = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();

@@ -23,13 +23,53 @@ pub struct ChapterHit {
     pub genres: Vec<String>,
 }
 
-/// The server's search response: normal chapter hits, or a distinct
+/// A chapter hit in an AI search result. Matches the wire shape
+/// `{"url","chapter_idx","title","score"}` (book-mode inline chapters and
+/// chapter-mode hits share this shape). `score` is a display-only 0–100 value.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AiChapter {
+    #[serde(rename = "url")]
+    pub chapter_url: String,
+    pub chapter_idx: usize,
+    #[serde(rename = "title")]
+    pub chapter_title: String,
+    pub score: f32,
+}
+
+/// A book hit in book-mode. Matches the wire shape
+/// `{"book_url","title","score","chapters"}` with top-3 inline chapters.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AiBook {
+    pub book_url: String,
+    #[serde(rename = "title")]
+    pub book_title: String,
+    pub score: f32,
+    pub chapters: Vec<AiChapter>,
+}
+
+/// Normalized AI search results for the library: ranked books (each with its
+/// inline chapter hits) plus library-level embedding coverage. `books` is empty
+/// while the search is in flight or when it found nothing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AiSearchResults {
+    pub embedded: usize,
+    pub total: usize,
+    pub books: Vec<AiBook>,
+}
+
+/// The server's search response: book-mode hits (books with inline top-3
+/// chapters), chapter-mode hits (flat chapter hits), or a distinct
 /// "no embeddings yet" signal (first-run UX — the searchable corpus is empty).
 /// `embedded`/`total` are library-level chapter-embedding coverage counts.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchOutcome {
-    Hits {
-        hits: Vec<ChapterHit>,
+    ChapterMode {
+        hits: Vec<AiChapter>,
+        embedded: usize,
+        total: usize,
+    },
+    BookMode {
+        hits: Vec<AiBook>,
         embedded: usize,
         total: usize,
     },
@@ -561,7 +601,7 @@ mod tests {
     fn test_ai_search_results_event_constructed_directly() {
         let event = ServerEvent::AiSearchResults {
             query: "dragon".into(),
-            result: Ok(SearchOutcome::Hits {
+            result: Ok(SearchOutcome::BookMode {
                 hits: vec![],
                 embedded: 0,
                 total: 0,
@@ -574,6 +614,29 @@ mod tests {
             }
             _ => panic!("expected AiSearchResults"),
         }
+    }
+
+    #[test]
+    fn test_ai_chapter_deserializes_from_wire() {
+        let json =
+            r#"{"url":"http://example.com/book/ch3","chapter_idx":3,"title":"Ch3","score":87.0}"#;
+        let hit: AiChapter = serde_json::from_str(json).unwrap();
+        assert_eq!(hit.chapter_url, "http://example.com/book/ch3");
+        assert_eq!(hit.chapter_idx, 3);
+        assert_eq!(hit.chapter_title, "Ch3");
+        assert!((hit.score - 87.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_ai_book_deserializes_from_wire_with_inline_chapters() {
+        let json = r#"{"book_url":"http://example.com/book","title":"Book","score":90.0,"chapters":[{"url":"http://example.com/book/ch1","chapter_idx":1,"title":"Ch1","score":90.0},{"url":"http://example.com/book/ch2","chapter_idx":2,"title":"Ch2","score":80.0}]}"#;
+        let hit: AiBook = serde_json::from_str(json).unwrap();
+        assert_eq!(hit.book_url, "http://example.com/book");
+        assert_eq!(hit.book_title, "Book");
+        assert!((hit.score - 90.0).abs() < 1e-6);
+        assert_eq!(hit.chapters.len(), 2);
+        assert_eq!(hit.chapters[1].chapter_title, "Ch2");
+        assert!((hit.chapters[1].score - 80.0).abs() < 1e-6);
     }
 
     #[test]

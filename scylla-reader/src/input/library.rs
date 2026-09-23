@@ -1,6 +1,9 @@
 //! Library page input handler — navigation, filter, add/delete, jump.
 
+use crate::event_types::{ChapterGroup, ChapterHit};
 use crate::input::keybinds::*;
+use crate::library::AiRow;
+use crate::state::modal::{FilterRow, SearchStatus};
 use crate::state::{LibraryState, Modal, UiState};
 use crossterm::event::KeyEvent;
 
@@ -45,9 +48,23 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
             true
         }
         KEY_FILTER => {
+            // `f` while AI-ranked opens the filter modal seeded with the AI
+            // query and focused on the AI row (refine). Otherwise the normal
+            // filter modal.
+            let ai_active = lib.library.ai.is_some();
+            let ai_query = lib
+                .library
+                .ai
+                .as_ref()
+                .map(|ai| ai.query.clone())
+                .unwrap_or_default();
             ui.modal = Modal::Filter {
                 working: lib.library.filter.clone(),
-                focus: crate::state::modal::FilterRow::Search,
+                focus: if ai_active {
+                    FilterRow::Ai
+                } else {
+                    FilterRow::Search
+                },
                 tag_query: String::new(),
                 tag_cursor: 0,
                 tag_scroll: 0,
@@ -56,12 +73,14 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
                     .library
                     .filter
                     .library_cursor(&lib.manager.backend_names()),
-                ai_query: String::new(),
+                ai_query,
             };
             true
         }
         KEY_SESSIONS => {
-            if let Some(book) = lib.library.selected_book() {
+            if lib.library.ai.is_some() {
+                open_ai_drilldown(ui, lib);
+            } else if let Some(book) = lib.library.selected_book() {
                 ui.modal = Modal::SessionPicker {
                     book_url: book.url.clone(),
                     cursor: 0,
@@ -70,6 +89,21 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
                     editing_id: None,
                     pending_delete_url: None,
                 };
+            }
+            true
+        }
+        KEY_ESCAPE => {
+            // Esc with an active AI session clears it and restores normal
+            // ranking. Without AI, Esc is a no-op (unchanged).
+            if lib.library.ai.is_some() {
+                lib.library.clear_ai();
+            }
+            true
+        }
+        KEY_AI_TOGGLE => {
+            // `g` toggles book-mode ↔ grouped-chapter mode (AI only).
+            if lib.library.ai.is_some() {
+                lib.library.toggle_ai_mode();
             }
             true
         }
@@ -103,19 +137,86 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
             true
         }
         KEY_NAV_DOWN => {
-            let visible_len = lib.library.visible_indices().len();
-            if visible_len > 0 {
-                lib.library.selected_index = (lib.library.selected_index + 1).min(visible_len - 1);
+            if lib.library.ai.is_some() {
+                lib.library.ai_nav(1);
+            } else {
+                let visible_len = lib.library.visible_indices().len();
+                if visible_len > 0 {
+                    lib.library.selected_index =
+                        (lib.library.selected_index + 1).min(visible_len - 1);
+                }
             }
             true
         }
         KEY_NAV_UP => {
-            if !lib.library.visible_indices().is_empty() {
+            if lib.library.ai.is_some() {
+                lib.library.ai_nav(-1);
+            } else if !lib.library.visible_indices().is_empty() {
                 lib.library.selected_index = lib.library.selected_index.saturating_sub(1);
             }
             true
         }
         _ => true,
+    }
+}
+
+/// Enter on an AI row: drill into the selected book's inline chapters via the
+/// chapter-results modal (a local filter of already-received data — no network,
+/// no spinner). The modal's Enter opens a chapter.
+fn open_ai_drilldown(ui: &mut UiState, lib: &mut LibraryState) {
+    let Some(ai) = &lib.library.ai else {
+        return;
+    };
+    let rows = ai.rows();
+    let Some(row) = rows.get(ai.cursor) else {
+        return;
+    };
+    let (book_index, chapter_index) = match row {
+        AiRow::Book { book_index } => (*book_index, 0),
+        AiRow::Chapter {
+            book_index,
+            chapter_index,
+        } => (*book_index, *chapter_index),
+    };
+    let Some(book) = ai.results.books.get(book_index) else {
+        return;
+    };
+    let group = ai_book_to_group(book);
+    let query = ai.query.clone();
+    // Show the book's chapters expanded; the cursor lands on the selected
+    // chapter (or the first), so one more Enter opens it.
+    let cursor = chapter_index.min(group.chapters.len().saturating_sub(1));
+    ui.modal = Modal::ChapterResults {
+        query,
+        groups: vec![group],
+        cursor,
+        scroll_offset: 0,
+        status: SearchStatus::Ready,
+        expanded: Some(0),
+    };
+}
+
+/// Convert an AI book (with inline chapters) into the modal's chapter group.
+fn ai_book_to_group(book: &crate::event_types::AiBook) -> ChapterGroup {
+    let chapters: Vec<ChapterHit> = book
+        .chapters
+        .iter()
+        .map(|c| ChapterHit {
+            book_url: book.book_url.clone(),
+            book_title: book.book_title.clone(),
+            chapter_url: c.chapter_url.clone(),
+            chapter_idx: c.chapter_idx,
+            chapter_title: c.chapter_title.clone(),
+            score: c.score,
+            genres: vec![],
+        })
+        .collect();
+    ChapterGroup {
+        book_url: book.book_url.clone(),
+        book_title: book.book_title.clone(),
+        genres: vec![],
+        chapters,
+        best_score: book.score,
     }
 }
 
@@ -188,6 +289,7 @@ mod tests {
     use super::*;
     use crate::models::Chapter;
     use crate::models::book::BookStatus;
+    use crate::state::AppState;
     use crate::state::Page;
     use crate::test_helpers::*;
     use crossterm::event::KeyCode;
@@ -462,5 +564,149 @@ mod tests {
         let mut cache = std::collections::HashMap::new();
         let urls = resolve_embedded_urls(&mut cache, "url", Err("boom".into()));
         assert!(urls.is_empty());
+    }
+
+    // ── AI session input ────────────────────────────────────────────────────
+
+    /// A state with two library books and an active book-mode AI session.
+    fn ai_state() -> AppState {
+        let mut state = test_state();
+        state.lib.library.add_book("Book A".into(), "u1".into());
+        state.lib.library.add_book("Book B".into(), "u2".into());
+        state.lib.library.apply_ai_results(
+            "dragon heart".into(),
+            crate::event_types::SearchOutcome::BookMode {
+                embedded: 2,
+                total: 2,
+                hits: vec![
+                    crate::event_types::AiBook {
+                        book_url: "u2".into(),
+                        book_title: "Book B".into(),
+                        score: 90.0,
+                        chapters: vec![crate::event_types::AiChapter {
+                            chapter_url: "u2/ch0".into(),
+                            chapter_idx: 0,
+                            chapter_title: "Scene 1".into(),
+                            score: 90.0,
+                        }],
+                    },
+                    crate::event_types::AiBook {
+                        book_url: "u1".into(),
+                        book_title: "Book A".into(),
+                        score: 70.0,
+                        chapters: vec![],
+                    },
+                ],
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn test_enter_with_ai_opens_drilldown_modal() {
+        let mut state = ai_state();
+        // Cursor on Book B (index 0) → drill into its chapters.
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_SESSIONS));
+        assert!(result);
+        match &state.ui.modal {
+            Modal::ChapterResults {
+                query,
+                groups,
+                expanded,
+                status,
+                ..
+            } => {
+                assert_eq!(query, "dragon heart");
+                assert_eq!(*expanded, Some(0));
+                assert_eq!(*status, SearchStatus::Ready);
+                assert_eq!(groups.len(), 1);
+                assert_eq!(groups[0].book_title, "Book B");
+                assert_eq!(groups[0].chapters[0].chapter_title, "Scene 1");
+            }
+            _ => panic!("expected ChapterResults drill-down"),
+        }
+        // The AI session is preserved (drill-down is a local view).
+        assert!(state.lib.library.ai.is_some());
+    }
+
+    #[test]
+    fn test_enter_with_ai_on_chapter_lands_cursor_on_chapter() {
+        let mut state = ai_state();
+        state.lib.library.toggle_ai_mode(); // grouped-chapter
+        // Cursor: Book B header (0), its chapter (1).
+        state.lib.library.ai_nav(1);
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_SESSIONS));
+        assert!(result);
+        if let Modal::ChapterResults {
+            cursor, expanded, ..
+        } = &state.ui.modal
+        {
+            assert_eq!(*cursor, 0);
+            assert_eq!(*expanded, Some(0));
+        } else {
+            panic!("expected ChapterResults drill-down");
+        }
+    }
+
+    #[test]
+    fn test_esc_with_ai_clears_ai() {
+        let mut state = ai_state();
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_ESCAPE));
+        assert!(result);
+        assert!(state.lib.library.ai.is_none());
+        assert_eq!(state.lib.library.visible_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn test_esc_without_ai_is_noop() {
+        let mut state = test_state();
+        state.lib.library.add_book("A".into(), "u".into());
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_ESCAPE));
+        assert!(result);
+        assert!(state.lib.library.ai.is_none());
+        assert_eq!(state.ui.page, crate::state::Page::Library);
+    }
+
+    #[test]
+    fn test_g_toggles_ai_mode() {
+        let mut state = ai_state();
+        assert!(state.lib.library.ai.as_ref().unwrap().book_mode);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_AI_TOGGLE));
+        assert!(!state.lib.library.ai.as_ref().unwrap().book_mode);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_AI_TOGGLE));
+        assert!(state.lib.library.ai.as_ref().unwrap().book_mode);
+    }
+
+    #[test]
+    fn test_g_without_ai_is_noop() {
+        let mut state = test_state();
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_AI_TOGGLE));
+        assert!(result);
+        assert!(state.lib.library.ai.is_none());
+    }
+
+    #[test]
+    fn test_f_with_ai_seeds_ai_query_and_focus() {
+        let mut state = ai_state();
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_FILTER));
+        match &state.ui.modal {
+            Modal::Filter {
+                focus, ai_query, ..
+            } => {
+                assert_eq!(*focus, FilterRow::Ai);
+                assert_eq!(ai_query, "dragon heart");
+            }
+            _ => panic!("expected Filter modal"),
+        }
+    }
+
+    #[test]
+    fn test_ai_navigation_moves_cursor() {
+        let mut state = ai_state();
+        assert_eq!(state.lib.library.ai.as_ref().unwrap().cursor, 0);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_NAV_DOWN));
+        assert_eq!(state.lib.library.ai.as_ref().unwrap().cursor, 1);
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_NAV_UP));
+        assert_eq!(state.lib.library.ai.as_ref().unwrap().cursor, 0);
     }
 }

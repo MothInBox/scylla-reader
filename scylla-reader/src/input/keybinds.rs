@@ -20,6 +20,8 @@ pub const KEY_SESSIONS: KeyCode = KeyCode::Enter;
 pub const KEY_EMBED: KeyCode = KeyCode::Char('e');
 pub const KEY_NAV_UP: KeyCode = KeyCode::Up;
 pub const KEY_NAV_DOWN: KeyCode = KeyCode::Down;
+/// Toggle the AI results between book mode and grouped-chapter mode.
+pub const KEY_AI_TOGGLE: KeyCode = KeyCode::Char('g');
 
 // ── Reader Page ──
 pub const KEY_NEXT_CHAPTER: KeyCode = KeyCode::Char('>');
