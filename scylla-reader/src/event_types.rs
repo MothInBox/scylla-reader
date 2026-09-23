@@ -21,13 +21,17 @@ pub struct ChapterHit {
     pub score: f32,
     #[serde(default)]
     pub genres: Vec<String>,
+    /// ~120 chars around the best-matching span (Phase 4). Empty when a server
+    /// predates snippets or the span wasn't found.
+    #[serde(default)]
+    pub snippet: String,
 }
 
 /// A chapter hit in an AI search result. Matches the wire shape
-/// `{"url","chapter_idx","title","score"}` (book-mode inline chapters and
-/// chapter-mode hits share this shape). `score` is a display-only 0–100 value.
-/// All fields default so future wire additions (e.g. Phase 4's `snippet`)
-/// degrade gracefully instead of dropping hits.
+/// `{"url","chapter_idx","title","score","snippet"}` (book-mode inline chapters
+/// and chapter-mode hits share this shape). `score` is a display-only 0–100
+/// value. All fields default so future wire additions degrade gracefully
+/// instead of dropping hits.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct AiChapter {
     #[serde(rename = "url", default)]
@@ -38,6 +42,10 @@ pub struct AiChapter {
     pub chapter_title: String,
     #[serde(default)]
     pub score: f32,
+    /// ~120 chars around the best-matching span (Phase 4). Empty when a server
+    /// predates snippets or the span wasn't found.
+    #[serde(default)]
+    pub snippet: String,
 }
 
 /// A book hit in book-mode. Matches the wire shape
@@ -641,6 +649,29 @@ mod tests {
         assert_eq!(hit.chapter_idx, 3);
         assert_eq!(hit.chapter_title, "Ch3");
         assert!((hit.score - 87.0).abs() < 1e-6);
+        // Snippet is absent → defaults to empty (old server / no span).
+        assert!(hit.snippet.is_empty());
+    }
+
+    #[test]
+    fn test_ai_chapter_deserializes_snippet_from_wire() {
+        let json = r#"{"url":"u","chapter_idx":0,"title":"Ch","score":87.0,"snippet":"the dragon circled the spire"}"#;
+        let hit: AiChapter = serde_json::from_str(json).unwrap();
+        assert_eq!(hit.snippet, "the dragon circled the spire");
+    }
+
+    #[test]
+    fn test_chapter_hit_deserializes_snippet_from_wire() {
+        let json = r#"{"book_url":"u","book_title":"B","chapter_url":"c","chapter_idx":0,"chapter_title":"C","score":87.0,"snippet":"a matching fragment"}"#;
+        let hit: ChapterHit = serde_json::from_str(json).unwrap();
+        assert_eq!(hit.snippet, "a matching fragment");
+    }
+
+    #[test]
+    fn test_chapter_hit_snippet_defaults_when_missing() {
+        let json = r#"{"book_url":"u","book_title":"B","chapter_url":"c","chapter_idx":0,"chapter_title":"C","score":50.0}"#;
+        let hit: ChapterHit = serde_json::from_str(json).unwrap();
+        assert!(hit.snippet.is_empty());
     }
 
     #[test]

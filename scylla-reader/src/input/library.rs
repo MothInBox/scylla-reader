@@ -107,6 +107,20 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
             }
             true
         }
+        KEY_AI_GENRE_NEXT => {
+            // `.` cycles the genre facet forward (AI only, local filter).
+            if lib.library.ai.is_some() {
+                lib.library.cycle_ai_genre(1);
+            }
+            true
+        }
+        KEY_AI_GENRE_PREV => {
+            // `,` cycles the genre facet backward (AI only, local filter).
+            if lib.library.ai.is_some() {
+                lib.library.cycle_ai_genre(-1);
+            }
+            true
+        }
         KEY_UPDATE_ALL => {
             let urls: Vec<String> = lib
                 .library
@@ -215,6 +229,7 @@ fn ai_book_to_group(book: &crate::event_types::AiBook) -> ChapterGroup {
             chapter_title: c.chapter_title.clone(),
             score: c.score,
             genres: book.genres.clone(),
+            snippet: c.snippet.clone(),
         })
         .collect();
     ChapterGroup {
@@ -595,6 +610,7 @@ mod tests {
                             chapter_idx: 0,
                             chapter_title: "Scene 1".into(),
                             score: 90.0,
+                            snippet: String::new(),
                         }],
                     },
                     crate::event_types::AiBook {
@@ -689,6 +705,39 @@ mod tests {
     fn test_g_without_ai_is_noop() {
         let mut state = test_state();
         let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_AI_TOGGLE));
+        assert!(result);
+        assert!(state.lib.library.ai.is_none());
+    }
+
+    #[test]
+    fn test_genre_keys_cycle_ai_genre() {
+        let mut state = ai_state();
+        // Seed genres on the ranked books so the cycle has a set to move through.
+        if let Some(ai) = &mut state.lib.library.ai {
+            ai.results.books[0].genres = vec!["Fantasy".into()];
+            ai.results.books[1].genres = vec!["Sci-Fi".into()];
+        }
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_AI_GENRE_NEXT));
+        assert_eq!(
+            state.lib.library.ai.as_ref().unwrap().genre.as_deref(),
+            Some("Fantasy")
+        );
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_AI_GENRE_NEXT));
+        assert_eq!(
+            state.lib.library.ai.as_ref().unwrap().genre.as_deref(),
+            Some("Sci-Fi")
+        );
+        handle_library(&mut state.ui, &mut state.lib, key_event(KEY_AI_GENRE_PREV));
+        assert_eq!(
+            state.lib.library.ai.as_ref().unwrap().genre.as_deref(),
+            Some("Fantasy")
+        );
+    }
+
+    #[test]
+    fn test_genre_keys_without_ai_are_noop() {
+        let mut state = test_state();
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_AI_GENRE_NEXT));
         assert!(result);
         assert!(state.lib.library.ai.is_none());
     }

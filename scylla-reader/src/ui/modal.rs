@@ -499,7 +499,8 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                     frame.render_widget(para, inner);
                 }
                 SearchStatus::Ready => {
-                    let (items, selected) = build_chapter_rows(groups, *expanded, *cursor);
+                    let (items, selected) =
+                        build_chapter_rows(groups, *expanded, *cursor, inner.width as usize);
                     let visible_height = inner.height.saturating_sub(2) as usize;
                     if *cursor < *scroll_offset {
                         *scroll_offset = *cursor;
@@ -617,6 +618,7 @@ fn build_chapter_rows(
     groups: &[ChapterGroup],
     expanded: Option<usize>,
     cursor: usize,
+    width: usize,
 ) -> (Vec<ListItem<'_>>, Option<usize>) {
     let mut items: Vec<ListItem> = Vec::new();
     let mut selected: Option<usize> = None;
@@ -627,7 +629,7 @@ fn build_chapter_rows(
         if is_expanded {
             for (ci, hit) in group.chapters.iter().enumerate() {
                 let visual = items.len();
-                items.push(chapter_item(hit));
+                items.push(chapter_item(hit, width));
                 if ci == cursor {
                     selected = Some(visual);
                 }
@@ -663,12 +665,32 @@ fn header_item(group: &ChapterGroup) -> ListItem<'_> {
     ]))
 }
 
-fn chapter_item(hit: &ChapterHit) -> ListItem<'_> {
+fn chapter_item(hit: &ChapterHit, width: usize) -> ListItem<'_> {
     let score = format!("{:>5.0}", hit.score);
-    ListItem::new(Line::from(vec![
+    let mut lines = vec![Line::from(vec![
         Span::raw(format!("  {}", hit.chapter_title)),
         Span::styled(format!("  {}", score), Style::default().fg(Color::DarkGray)),
-    ]))
+    ])];
+    // Phase 4 snippet: a dimmed line under the title when a matching span is
+    // present (old servers / missing span → no extra line).
+    if !hit.snippet.trim().is_empty() {
+        lines.push(Line::from(Span::styled(
+            truncate_snippet(hit.snippet.trim(), width.saturating_sub(4)),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    ListItem::new(lines)
+}
+
+/// Truncate a snippet to `width` visible characters, appending an ellipsis
+/// when it was cut. Multi-byte safe (counts chars, not bytes).
+fn truncate_snippet(s: &str, width: usize) -> String {
+    if width == 0 || s.chars().count() <= width {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(width.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 fn status_summary(filter: &BookFilter) -> String {
@@ -1012,6 +1034,7 @@ mod tests {
                     chapter_title: "Ch1".into(),
                     score: 87.0,
                     genres: vec![],
+                    snippet: String::new(),
                 }],
                 best_score: 87.0,
             }],
@@ -1124,6 +1147,7 @@ mod tests {
                     chapter_title: "Ch1".into(),
                     score: 87.0,
                     genres: vec![],
+                    snippet: String::new(),
                 }],
                 best_score: 87.0,
             }],
@@ -1209,5 +1233,69 @@ mod tests {
         assert!(content.contains("Ch 13"), "content: {}", content);
         assert!(content.contains("Space toggle"), "content: {}", content);
         assert!(content.contains("Enter embed"), "content: {}", content);
+    }
+
+    /// Render an expanded chapter-results modal with the given chapter snippet.
+    fn draw_expanded_chapter_results(snippet: &str) -> String {
+        let mut state = make_state();
+        state.ui.modal = Modal::ChapterResults {
+            query: "dragon".into(),
+            groups: vec![ChapterGroup {
+                book_url: "u1".into(),
+                book_title: "Book A".into(),
+                genres: vec!["Fantasy".into()],
+                chapters: vec![crate::event_types::ChapterHit {
+                    book_url: "u1".into(),
+                    book_title: "Book A".into(),
+                    chapter_url: "c1".into(),
+                    chapter_idx: 0,
+                    chapter_title: "Ch1".into(),
+                    score: 87.0,
+                    genres: vec![],
+                    snippet: snippet.into(),
+                }],
+                best_score: 87.0,
+            }],
+            cursor: 0,
+            scroll_offset: 0,
+            status: SearchStatus::Ready,
+            expanded: Some(0),
+        };
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_modal(f, f.area(), &mut state.ui, &mut state.lib);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        buf.content().iter().map(|c| c.symbol()).collect()
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_shows_snippet() {
+        let content = draw_expanded_chapter_results("the dragon circled the spire");
+        assert!(
+            content.contains("the dragon circled the spire"),
+            "content: {}",
+            content
+        );
+        assert!(content.contains("Ch1"), "content: {}", content);
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_omits_empty_snippet_line() {
+        let content = draw_expanded_chapter_results("");
+        assert!(content.contains("Ch1"), "content: {}", content);
+        assert!(!content.contains("…"), "content: {}", content);
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_truncates_long_snippet() {
+        let long = "x".repeat(500);
+        let content = draw_expanded_chapter_results(&long);
+        // The snippet is truncated to the popup width with an ellipsis.
+        assert!(content.contains('…'), "content: {}", content);
+        assert!(content.matches('x').count() < 500, "content: {}", content);
     }
 }

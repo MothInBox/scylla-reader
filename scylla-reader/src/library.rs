@@ -106,7 +106,9 @@ pub enum AiRow {
 
 /// Explicit AI search session. `book_mode` toggles between book rows (ranked
 /// books) and grouped-chapter rows (book headers + their chapters); `cursor`
-/// navigates the flattened [`AiRow`] list.
+/// navigates the flattened [`AiRow`] list. `genre` is an optional local facet
+/// (Phase 4) that narrows the ranked books to those carrying the genre — the
+/// genres already travel in the response, so it needs no network round-trip.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AiSession {
     pub query: String,
@@ -114,19 +116,25 @@ pub struct AiSession {
     pub results: AiSearchResults,
     pub book_mode: bool,
     pub cursor: usize,
+    pub genre: Option<String>,
 }
 
 impl AiSession {
     /// The flattened display rows for the current mode:
     /// - book mode: one book row per ranked book.
     /// - grouped-chapter mode: each book's header row followed by its chapters.
+    ///
+    /// Rows are limited to books matching the active `genre` facet (when set).
     pub fn rows(&self) -> Vec<AiRow> {
+        let books = self.visible_book_indices();
         if self.book_mode {
-            (0..self.results.books.len())
-                .map(|i| AiRow::Book { book_index: i })
+            books
+                .into_iter()
+                .map(|bi| AiRow::Book { book_index: bi })
                 .collect()
         } else {
-            (0..self.results.books.len())
+            books
+                .into_iter()
                 .flat_map(|bi| {
                     let n = self.results.books[bi].chapters.len();
                     std::iter::once(AiRow::Book { book_index: bi }).chain((0..n).map(move |ci| {
@@ -138,6 +146,72 @@ impl AiSession {
                 })
                 .collect()
         }
+    }
+
+    /// Indices (into `self.results.books`) of the books passing the active
+    /// `genre` facet. `None` genre → all books.
+    pub fn visible_book_indices(&self) -> Vec<usize> {
+        match &self.genre {
+            None => (0..self.results.books.len()).collect(),
+            Some(genre) => self
+                .results
+                .books
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.genres.iter().any(|g| g == genre))
+                .map(|(i, _)| i)
+                .collect(),
+        }
+    }
+
+    /// Number of books visible under the active genre facet (for the chip's
+    /// result count).
+    pub fn visible_book_count(&self) -> usize {
+        self.visible_book_indices().len()
+    }
+
+    /// The distinct genres across all ranked books, sorted (the cycle set for
+    /// the genre chip). Empty when no book carries genres.
+    pub fn available_genres(&self) -> Vec<String> {
+        let mut genres: Vec<String> = Vec::new();
+        for book in &self.results.books {
+            for genre in &book.genres {
+                if !genres.contains(genre) {
+                    genres.push(genre.clone());
+                }
+            }
+        }
+        genres.sort();
+        genres
+    }
+
+    /// Advance the genre facet to the next position in the cycle
+    /// `none → g1 → g2 → … → gN → none` (wrapping in `dir`'s direction). No-op
+    /// when no ranked book carries a genre. Resets the cursor so the selection
+    /// lands on a visible row.
+    pub fn cycle_genre(&mut self, dir: i32) {
+        let genres = self.available_genres();
+        if genres.is_empty() {
+            self.genre = None;
+            return;
+        }
+        // Position 0 is "no genre"; positions 1..=n map to `genres[i - 1]`.
+        let current = match &self.genre {
+            None => 0,
+            Some(g) => genres
+                .iter()
+                .position(|x| x == g)
+                .map(|i| i + 1)
+                .unwrap_or(0),
+        };
+        let total = (genres.len() + 1) as i32;
+        let next = (current as i32 + dir).rem_euclid(total) as usize;
+        self.genre = if next == 0 {
+            None
+        } else {
+            Some(genres[next - 1].clone())
+        };
+        self.cursor = 0;
     }
 }
 
@@ -170,14 +244,18 @@ impl Library {
 
     /// The AI-derived book order: ranked book indices into `self.books` (by
     /// `book_url`), in AI rank order. Returns `None` when no AI session is
-    /// active. Books not present in the library are skipped.
+    /// active. Books not present in the library are skipped. Honors the active
+    /// `genre` facet (only books carrying that genre are ranked).
     pub fn ai_search_order(&self) -> Option<Vec<usize>> {
         let ai = self.ai.as_ref()?;
         Some(
-            ai.results
-                .books
-                .iter()
-                .filter_map(|b| self.books.iter().position(|lb| lb.url == b.book_url))
+            ai.visible_book_indices()
+                .into_iter()
+                .filter_map(|bi| {
+                    self.books
+                        .iter()
+                        .position(|lb| lb.url == ai.results.books[bi].book_url)
+                })
                 .collect(),
         )
     }
@@ -334,6 +412,7 @@ impl Library {
             },
             book_mode: true,
             cursor: 0,
+            genre: None,
         });
         self.selected_index = 0;
     }
@@ -398,6 +477,7 @@ impl Library {
             results,
             book_mode,
             cursor: 0,
+            genre: None,
         });
         self.selected_index = 0;
     }
@@ -423,6 +503,14 @@ impl Library {
         if let Some(ai) = &mut self.ai {
             ai.book_mode = !ai.book_mode;
             ai.cursor = 0;
+        }
+    }
+
+    /// Cycle the genre facet through the ranked books' distinct genres
+    /// (`dir` > 0 advances, < 0 retreats), wrapping back to none.
+    pub fn cycle_ai_genre(&mut self, dir: i32) {
+        if let Some(ai) = &mut self.ai {
+            ai.cycle_genre(dir);
         }
     }
 
@@ -459,6 +547,7 @@ impl Library {
                 chapter_idx: hit.chapter_idx,
                 chapter_title: hit.chapter_title.clone(),
                 score: hit.score,
+                snippet: hit.snippet.clone(),
             };
             if let Some(existing) = books.iter_mut().find(|b| b.book_url == book_url) {
                 existing.chapters.push(chapter);
@@ -1001,6 +1090,7 @@ mod tests {
                             chapter_idx: 0,
                             chapter_title: "Ch0".into(),
                             score: 90.0,
+                            snippet: String::new(),
                         }],
                     },
                     AiBook {
@@ -1117,12 +1207,14 @@ mod tests {
                         chapter_idx: 1,
                         chapter_title: "c1".into(),
                         score: 80.0,
+                        snippet: String::new(),
                     },
                     AiChapter {
                         chapter_url: "url-0/ch0".into(),
                         chapter_idx: 0,
                         chapter_title: "c0".into(),
                         score: 90.0,
+                        snippet: String::new(),
                     },
                 ],
             },
@@ -1274,5 +1366,136 @@ mod tests {
             },
         );
         assert!(!lib.ai.as_ref().unwrap().book_mode);
+    }
+
+    /// A library whose AI book-mode results carry genres across two books.
+    fn genre_ranked_library() -> Library {
+        let mut lib = lib_with_n(3);
+        lib.apply_ai_results(
+            "dragon".into(),
+            SearchOutcome::BookMode {
+                embedded: 3,
+                total: 3,
+                hits: vec![
+                    AiBook {
+                        book_url: "url-2".into(),
+                        book_title: "Book 2".into(),
+                        score: 90.0,
+                        genres: vec!["Fantasy".into(), "LitRPG".into()],
+                        chapters: vec![],
+                    },
+                    AiBook {
+                        book_url: "url-1".into(),
+                        book_title: "Book 1".into(),
+                        score: 70.0,
+                        genres: vec!["Fantasy".into()],
+                        chapters: vec![],
+                    },
+                    AiBook {
+                        book_url: "url-0".into(),
+                        book_title: "Book 0".into(),
+                        score: 50.0,
+                        genres: vec!["Sci-Fi".into()],
+                        chapters: vec![],
+                    },
+                ],
+            },
+        );
+        lib
+    }
+
+    #[test]
+    fn test_new_ai_session_starts_with_no_genre() {
+        let lib = genre_ranked_library();
+        assert!(lib.ai.as_ref().unwrap().genre.is_none());
+    }
+
+    #[test]
+    fn test_cycle_ai_genre_advances_and_wraps_to_none() {
+        let mut lib = genre_ranked_library();
+        // None → Fantasy (sorted: Fantasy, LitRPG, Sci-Fi).
+        lib.cycle_ai_genre(1);
+        assert_eq!(lib.ai.as_ref().unwrap().genre.as_deref(), Some("Fantasy"));
+        lib.cycle_ai_genre(1);
+        assert_eq!(lib.ai.as_ref().unwrap().genre.as_deref(), Some("LitRPG"));
+        lib.cycle_ai_genre(1);
+        assert_eq!(lib.ai.as_ref().unwrap().genre.as_deref(), Some("Sci-Fi"));
+        // Wraps back to none.
+        lib.cycle_ai_genre(1);
+        assert!(lib.ai.as_ref().unwrap().genre.is_none());
+    }
+
+    #[test]
+    fn test_cycle_ai_genre_retreats_and_wraps() {
+        let mut lib = genre_ranked_library();
+        // None → Sci-Fi (retreat wraps to the last genre).
+        lib.cycle_ai_genre(-1);
+        assert_eq!(lib.ai.as_ref().unwrap().genre.as_deref(), Some("Sci-Fi"));
+        lib.cycle_ai_genre(-1);
+        assert_eq!(lib.ai.as_ref().unwrap().genre.as_deref(), Some("LitRPG"));
+    }
+
+    #[test]
+    fn test_cycle_ai_genre_filters_derived_order() {
+        let mut lib = genre_ranked_library();
+        lib.cycle_ai_genre(1); // Fantasy → books 2 and 1 (url-2, url-1).
+        assert_eq!(lib.visible_indices(), vec![2, 1]);
+        lib.cycle_ai_genre(1); // LitRPG → only book 2.
+        assert_eq!(lib.visible_indices(), vec![2]);
+        lib.cycle_ai_genre(1); // Sci-Fi → only book 0.
+        assert_eq!(lib.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn test_cycle_ai_genre_no_genres_is_noop() {
+        let mut lib = ai_ranked_library(); // all books carry empty genres
+        lib.cycle_ai_genre(1);
+        assert!(lib.ai.as_ref().unwrap().genre.is_none());
+        assert_eq!(lib.visible_indices(), vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn test_cycle_ai_genre_resets_cursor() {
+        let mut lib = genre_ranked_library();
+        lib.ai_nav(1);
+        lib.ai_nav(1); // cursor moves off the first row
+        assert_eq!(lib.ai.as_ref().unwrap().cursor, 2);
+        lib.cycle_ai_genre(1);
+        assert_eq!(lib.ai.as_ref().unwrap().cursor, 0);
+    }
+
+    #[test]
+    fn test_new_search_resets_genre() {
+        let mut lib = genre_ranked_library();
+        lib.cycle_ai_genre(1); // Fantasy active
+        assert_eq!(lib.ai.as_ref().unwrap().genre.as_deref(), Some("Fantasy"));
+        // A fresh search (refine) resets the facet.
+        lib.set_ai_searching("dragon heart".into());
+        assert!(lib.ai.as_ref().unwrap().genre.is_none());
+        assert_eq!(lib.ai.as_ref().unwrap().visible_book_count(), 0);
+    }
+
+    #[test]
+    fn test_clear_ai_clears_genre() {
+        let mut lib = genre_ranked_library();
+        lib.cycle_ai_genre(1);
+        lib.clear_ai();
+        assert!(lib.ai.is_none());
+        assert_eq!(lib.visible_indices(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_genre_filtered_rows_and_book_count() {
+        let lib = genre_ranked_library();
+        let ai = lib.ai.as_ref().unwrap();
+        assert_eq!(ai.visible_book_count(), 3);
+        assert_eq!(
+            ai.rows(),
+            vec![
+                AiRow::Book { book_index: 0 },
+                AiRow::Book { book_index: 1 },
+                AiRow::Book { book_index: 2 },
+            ]
+        );
     }
 }

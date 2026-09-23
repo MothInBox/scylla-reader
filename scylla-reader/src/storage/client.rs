@@ -314,7 +314,7 @@ mod tests {
     /// (`test_search_chapter_mode_wire_contract`). The server test asserts the
     /// route produces exactly this body; this test parses the same literal so
     /// the two sides can't drift. Canonical serde_json form (keys sorted).
-    const CHAPTER_MODE_WIRE_FIXTURE: &str = r#"{"embedded":1,"hits":[{"chapter_idx":1,"score":100.0,"title":"Chapter A1","url":"ch-a1"}],"mode":"chapter","total":1}"#;
+    const CHAPTER_MODE_WIRE_FIXTURE: &str = r#"{"embedded":1,"hits":[{"chapter_idx":1,"score":100.0,"snippet":"chunk","title":"Chapter A1","url":"ch-a1"}],"mode":"chapter","total":1}"#;
 
     #[test]
     fn test_parse_chapter_mode_wire_contract() {

@@ -5,27 +5,53 @@ use serde_json::json;
 
 use crate::state::AppState;
 
+/// Serializes a book with its genres attached (the genre facet's data source on
+/// the library listing path). `scylla_core::types::Book` has no genres field,
+/// so the route enriches the JSON — the TUI's own `Book` model ignores unknown
+/// fields, so this is wire-compatible.
+fn book_json(book: &scylla_core::types::Book, genres: &[String]) -> serde_json::Value {
+    let mut v = serde_json::to_value(book).unwrap_or(serde_json::Value::Null);
+    v["genres"] = serde_json::to_value(genres).unwrap_or(serde_json::Value::Null);
+    v
+}
+
 pub async fn list_books(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<scylla_core::types::Book>>, StatusCode> {
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     let db = state.db.lock().await;
-    db.load_books()
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    let books = db
+        .load_books()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let genres = db
+        .load_book_genres()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let out = books
+        .iter()
+        .map(|b| book_json(b, genres.get(&b.url).map(Vec::as_slice).unwrap_or(&[])))
+        .collect();
+    Ok(Json(out))
 }
 
 pub async fn get_book(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(url): axum::extract::Path<String>,
-) -> Result<Json<scylla_core::types::Book>, StatusCode> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let db = state.db.lock().await;
     let books = db
         .load_books()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let genres = db
+        .load_book_genres()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     books
-        .into_iter()
+        .iter()
         .find(|b| b.url == url)
-        .map(Json)
+        .map(|b| {
+            Json(book_json(
+                b,
+                genres.get(&b.url).map(Vec::as_slice).unwrap_or(&[]),
+            ))
+        })
         .ok_or(StatusCode::NOT_FOUND)
 }
 

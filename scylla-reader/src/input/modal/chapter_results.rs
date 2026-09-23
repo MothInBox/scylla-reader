@@ -285,6 +285,7 @@ mod tests {
             chapter_title: format!("Ch{}", idx),
             score,
             genres: vec![],
+            snippet: String::new(),
         }
     }
 

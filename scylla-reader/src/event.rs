@@ -367,6 +367,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                                         chapter_title: c.chapter_title,
                                         score: c.score,
                                         genres: group.genres.clone(),
+                                        snippet: c.snippet,
                                     })
                                     .collect();
                                 group.best_score =
@@ -505,6 +506,7 @@ mod tests {
             chapter_title: format!("Ch{}", idx),
             score,
             genres: vec![],
+            snippet: String::new(),
         }
     }
 
@@ -1265,6 +1267,7 @@ mod tests {
                         chapter_idx: 0,
                         chapter_title: "c0".into(),
                         score: 88.0,
+                        snippet: String::new(),
                     }],
                 }),
             },
@@ -1316,12 +1319,14 @@ mod tests {
                         chapter_idx: 0,
                         chapter_title: "Ch0".into(),
                         score: 90.0,
+                        snippet: "the dragon circled the spire".into(),
                     },
                     AiChapter {
                         chapter_url: "u1/ch1".into(),
                         chapter_idx: 1,
                         chapter_title: "Ch1".into(),
                         score: 80.0,
+                        snippet: String::new(),
                     },
                 ]),
             },
@@ -1340,6 +1345,12 @@ mod tests {
                 assert_eq!(groups[0].chapters[1].chapter_url, "u1/ch1");
                 // Genres are preserved from the group.
                 assert_eq!(groups[0].chapters[0].genres, vec!["Fantasy"]);
+                // Snippets carry through from the wire chapter into the modal row.
+                assert_eq!(
+                    groups[0].chapters[0].snippet,
+                    "the dragon circled the spire"
+                );
+                assert!(groups[0].chapters[1].snippet.is_empty());
             }
             _ => panic!("expected ChapterResults"),
         }

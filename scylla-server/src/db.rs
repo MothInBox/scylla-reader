@@ -257,6 +257,24 @@ impl ServerDb {
         stmt.query_map([book_url], |row| row.get(0))?.collect()
     }
 
+    /// book_url → genres, from `book_embeddings` (the genre facet's data
+    /// source). Books without an embedding row (or without genres) get no
+    /// entry — callers default to an empty list.
+    pub fn load_book_genres(&self) -> Result<HashMap<String, Vec<String>>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT book_url, genres FROM book_embeddings WHERE genres IS NOT NULL")?;
+        let rows = stmt.query_map([], |row| {
+            let url: String = row.get(0)?;
+            let genres: Option<String> = row.get(1)?;
+            let genres = genres
+                .and_then(|g| serde_json::from_str(&g).ok())
+                .unwrap_or_default();
+            Ok((url, genres))
+        })?;
+        rows.collect()
+    }
+
     pub fn load_chapters(&self, book_url: &str) -> Result<Vec<Chapter>> {
         let mut stmt = self
             .conn
@@ -1381,6 +1399,31 @@ mod tests {
         assert_eq!(got_desc, Some(desc));
         assert_eq!(got_agg, Some(agg));
         assert_eq!(got_genres, Some(genres));
+    }
+
+    #[test]
+    fn test_load_book_genres_joins_embeddings() {
+        let db = test_db();
+        // Book 1 has genres; book 2 has an embedding row without genres;
+        // book 3 has no embedding row at all.
+        db.upsert_book_embedding(
+            "book1",
+            None,
+            Some(&[1.0, 0.0]),
+            Some(&["Fantasy".to_string(), "LitRPG".to_string()]),
+        )
+        .unwrap();
+        db.upsert_book_embedding("book2", None, Some(&[0.0, 1.0]), None)
+            .unwrap();
+
+        let genres = db.load_book_genres().unwrap();
+        assert_eq!(
+            genres.get("book1").cloned().unwrap_or_default(),
+            vec!["Fantasy".to_string(), "LitRPG".to_string()]
+        );
+        // No genres → no entry (callers default to empty).
+        assert!(!genres.contains_key("book2"));
+        assert!(!genres.contains_key("book3"));
     }
 
     #[test]

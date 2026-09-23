@@ -124,6 +124,7 @@ async fn search_chapters(
     // Embed + rank + rerank are CPU-bound (model forward passes) — run them on
     // the blocking pool so the tokio worker never stalls.
     let query = query.to_string();
+    let query_for_snippet = query.clone();
     let ranked = tokio::task::spawn_blocking(move || {
         let query_vec = embed_query(&state, &query)?;
         Ok::<_, SearchError>(fuse_and_rerank(&state, &query, &chapters, &query_vec))
@@ -140,12 +141,13 @@ async fn search_chapters(
         .into_iter()
         .take(limit)
         .map(
-            |(_, _, chapter_url, chapter_title, chapter_idx, _, score, _)| {
+            |(_, _, chapter_url, chapter_title, chapter_idx, _, score, text)| {
                 json!({
                     "url": chapter_url,
                     "chapter_idx": chapter_idx,
                     "title": chapter_title,
                     "score": score,
+                    "snippet": make_snippet(&text, &query_for_snippet),
                 })
             },
         )
@@ -206,6 +208,7 @@ async fn search_books(
 
     // Embed + rank + rerank are CPU-bound — run them on the blocking pool.
     let query = query.to_string();
+    let query_for_snippet = query.clone();
     let books_for_rank = books.clone();
     let (ranked_books, by_book) = tokio::task::spawn_blocking(move || {
         let query_vec = embed_query(&state, &query)?;
@@ -249,12 +252,13 @@ async fn search_books(
                     group
                         .iter()
                         .map(
-                            |(_, _, chapter_url, chapter_title, chapter_idx, _, score, _)| {
+                            |(_, _, chapter_url, chapter_title, chapter_idx, _, score, text)| {
                                 json!({
                                     "url": chapter_url,
                                     "chapter_idx": chapter_idx,
                                     "title": chapter_title,
                                     "score": score,
+                                    "snippet": make_snippet(text, &query_for_snippet),
                                 })
                             },
                         )
@@ -295,6 +299,18 @@ fn embed_query(state: &AppState, query: &str) -> Result<Vec<f32>, SearchError> {
             )
         })
         .map(|mut v| v.remove(0))
+}
+
+/// Builds a snippet for a chapter hit from its passage text (`RankedChapterHit`
+/// index 7). For BM25-surfaced chapters that text is the BM25-best chunk, so
+/// centering on the first query token present in it lands on the matched term
+/// span; for semantic hits the same rule is a bonus (centers on a query term if
+/// one happens to appear) and otherwise falls back to the start of the text.
+fn make_snippet(text: &str, query: &str) -> String {
+    let center = query
+        .split_whitespace()
+        .find(|t| text.to_lowercase().contains(&t.to_lowercase()));
+    crate::snippet::snippet(text, center, crate::snippet::SNIPPET_LEN)
 }
 
 /// Cross-encoder rerank for chapter hits: scores each candidate's best chunk
