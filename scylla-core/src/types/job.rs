@@ -203,7 +203,7 @@ pub struct JobDto {
 }
 
 /// Serializable job outcome payload.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct JobOutcomeDto {
     /// "BookScraped" | "ChapterFetched" | "CoverFetched" | "PluginInstalled"
     pub kind: String,
@@ -213,6 +213,42 @@ pub struct JobOutcomeDto {
     pub content_chars: Option<usize>,
     /// All (domain, path) pairs for a `PluginInstalled` outcome.
     pub plugins: Option<Vec<(String, String)>>,
+}
+
+impl From<&JobOutcome> for JobOutcomeDto {
+    fn from(outcome: &JobOutcome) -> Self {
+        match outcome {
+            JobOutcome::BookScraped {
+                title,
+                chapters,
+                cover,
+            } => Self {
+                kind: "BookScraped".to_string(),
+                title: Some(title.clone()),
+                chapters: Some(*chapters),
+                cover: Some(*cover),
+                ..Self::default()
+            },
+            JobOutcome::ChapterFetched {
+                title,
+                content_chars,
+            } => Self {
+                kind: "ChapterFetched".to_string(),
+                title: Some(title.clone()),
+                content_chars: Some(*content_chars),
+                ..Self::default()
+            },
+            JobOutcome::CoverFetched => Self {
+                kind: "CoverFetched".to_string(),
+                ..Self::default()
+            },
+            JobOutcome::PluginInstalled { plugins } => Self {
+                kind: "PluginInstalled".to_string(),
+                plugins: Some(plugins.clone()),
+                ..Self::default()
+            },
+        }
+    }
 }
 
 impl From<&Job> for JobDto {
@@ -235,52 +271,6 @@ impl From<&Job> for JobDto {
             error: job.error.clone(),
             outcome: job.outcome.as_ref().map(JobOutcomeDto::from),
             detail: job.detail.clone(),
-        }
-    }
-}
-
-impl From<&JobOutcome> for JobOutcomeDto {
-    fn from(outcome: &JobOutcome) -> Self {
-        match outcome {
-            JobOutcome::BookScraped {
-                title,
-                chapters,
-                cover,
-            } => Self {
-                kind: "BookScraped".to_string(),
-                title: Some(title.clone()),
-                chapters: Some(*chapters),
-                cover: Some(*cover),
-                content_chars: None,
-                plugins: None,
-            },
-            JobOutcome::ChapterFetched {
-                title,
-                content_chars,
-            } => Self {
-                kind: "ChapterFetched".to_string(),
-                title: Some(title.clone()),
-                chapters: None,
-                cover: None,
-                content_chars: Some(*content_chars),
-                plugins: None,
-            },
-            JobOutcome::CoverFetched => Self {
-                kind: "CoverFetched".to_string(),
-                title: None,
-                chapters: None,
-                cover: None,
-                content_chars: None,
-                plugins: None,
-            },
-            JobOutcome::PluginInstalled { plugins } => Self {
-                kind: "PluginInstalled".to_string(),
-                title: None,
-                chapters: None,
-                cover: None,
-                content_chars: None,
-                plugins: Some(plugins.clone()),
-            },
         }
     }
 }

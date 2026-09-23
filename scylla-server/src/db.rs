@@ -1544,6 +1544,24 @@ mod tests {
     }
 
     #[test]
+    fn test_coverage_counts() {
+        let db = test_db();
+        // No chapters, no embeddings.
+        assert_eq!(db.coverage_counts().unwrap(), (0, 0));
+        // A book with 2 chapters, 1 embedded (2 chunks for one chapter).
+        db.upsert_book(&sample_book("book1")).unwrap();
+        db.upsert_chapter_chunks(
+            "ch1",
+            Some("book1"),
+            &[(0, "a", &[1.0]), (1, "b", &[2.0])],
+            None,
+        )
+        .unwrap();
+        // Embedded counts DISTINCT chapters (1), not chunks (2).
+        assert_eq!(db.coverage_counts().unwrap(), (1, 2));
+    }
+
+    #[test]
     fn test_load_chapters_public() {
         let db = test_db();
         db.upsert_book(&sample_book("book1")).unwrap();
