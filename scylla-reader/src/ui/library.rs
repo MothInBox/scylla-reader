@@ -185,6 +185,12 @@ fn draw_ai_list(frame: &mut Frame, area: Rect, ai: &AiSession) {
                 area,
             );
         }
+        SearchStatus::NoChapters => {
+            frame.render_widget(
+                Paragraph::new("No matching chapters in this book.").alignment(Alignment::Center),
+                area,
+            );
+        }
         SearchStatus::Error(msg) => {
             frame.render_widget(
                 Paragraph::new(format!("Search failed: {}", msg)).alignment(Alignment::Center),
@@ -480,6 +486,7 @@ mod tests {
                         book_url: "u2".into(),
                         book_title: "Book B".into(),
                         score: 90.0,
+                        genres: vec![],
                         chapters: vec![crate::event_types::AiChapter {
                             chapter_url: "u2/ch0".into(),
                             chapter_idx: 0,
@@ -491,6 +498,7 @@ mod tests {
                         book_url: "u1".into(),
                         book_title: "Book A".into(),
                         score: 70.0,
+                        genres: vec![],
                         chapters: vec![],
                     },
                 ],

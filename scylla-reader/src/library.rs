@@ -81,10 +81,6 @@ pub struct Library {
     pub books: Vec<Book>,
     pub selected_index: usize,
     pub filter: BookFilter,
-    /// Legacy ranking seam: re-ranks `visible_indices`. When `ai` is active the
-    /// AI-derived order takes precedence; this field is only consulted when no
-    /// AI session is active (e.g. a backend picker clearing it).
-    pub search_order: Option<Vec<usize>>,
     /// Explicit AI session — the source of truth for AI-ranked display. When
     /// `Some`, the library is ranked by the AI results; clearing is explicit
     /// (Esc / clear-AI), never a silent side effect of filter commit or delete.
@@ -157,7 +153,6 @@ impl Library {
             books: Vec::new(),
             selected_index: 0,
             filter: BookFilter::default(),
-            search_order: None,
             ai: None,
             cover_cache: HashMap::new(),
             embedding_status_cache: HashMap::new(),
@@ -168,8 +163,6 @@ impl Library {
     pub fn visible_indices(&self) -> Vec<usize> {
         if let Some(order) = self.ai_search_order() {
             order
-        } else if let Some(order) = &self.search_order {
-            order.clone()
         } else {
             self.search(&self.filter)
         }
@@ -261,25 +254,38 @@ impl Library {
     }
 
     pub fn remove_selected(&mut self) {
-        // With an active AI session, remove the selected AI book. The AI
-        // session itself is preserved (clearing is explicit, not a side effect
-        // of delete).
-        if let Some(ai) = &self.ai {
-            let book_url = match self.ai_selected_book_url(ai) {
-                Some(u) => u.to_string(),
-                None => return,
+        // With an active AI session, remove the selected AI book from both the
+        // library and the session (so the row doesn't dangle), then clamp the
+        // cursor. The AI session itself is preserved (clearing is explicit, not
+        // a side effect of delete).
+        if self.ai.is_some() {
+            let book_url = {
+                let ai = self.ai.as_ref().unwrap();
+                let rows = ai.rows();
+                let Some(row) = rows.get(ai.cursor) else {
+                    return;
+                };
+                let bi = match row {
+                    AiRow::Book { book_index } => *book_index,
+                    AiRow::Chapter { book_index, .. } => *book_index,
+                };
+                ai.results.books[bi].book_url.clone()
             };
             if let Some(pos) = self.books.iter().position(|b| b.url == book_url) {
                 self.books.remove(pos);
+            }
+            if let Some(ai) = &mut self.ai {
+                ai.results.books.retain(|b| b.book_url != book_url);
+                let len = ai.rows().len();
+                if ai.cursor >= len {
+                    ai.cursor = len.saturating_sub(1);
+                }
             }
             return;
         }
         let indices = self.visible_indices();
         if let Some(&real_idx) = indices.get(self.selected_index) {
             self.books.remove(real_idx);
-            // The search order holds indices into the old `books` layout;
-            // drop it so `visible_indices()` recomputes from the filter.
-            self.search_order = None;
             let new_len = self.visible_indices().len();
             if self.selected_index > 0 && self.selected_index >= new_len {
                 self.selected_index -= 1;
@@ -333,7 +339,8 @@ impl Library {
     }
 
     /// Apply a completed search outcome to the active AI session (normalizing
-    /// whichever wire mode into ranked books).
+    /// whichever wire mode into ranked books). The session's display mode is
+    /// preserved — a chapter-mode outcome must not reset a `g` toggle.
     pub fn apply_ai_results(&mut self, query: String, outcome: SearchOutcome) {
         let (status, results) = match outcome {
             SearchOutcome::BookMode {
@@ -384,11 +391,12 @@ impl Library {
                 },
             ),
         };
+        let book_mode = self.ai.as_ref().map(|ai| ai.book_mode).unwrap_or(true);
         self.ai = Some(AiSession {
             query,
             status,
             results,
-            book_mode: true,
+            book_mode,
             cursor: 0,
         });
         self.selected_index = 0;
@@ -462,6 +470,7 @@ impl Library {
                     book_url,
                     book_title,
                     score: hit.score,
+                    genres: vec![],
                     chapters: vec![chapter],
                 });
             }
@@ -526,7 +535,7 @@ mod tests {
         assert!(lib.books.is_empty());
         assert_eq!(lib.selected_index, 0);
         assert_eq!(lib.filter, BookFilter::default());
-        assert!(lib.search_order.is_none());
+        assert!(lib.ai.is_none());
     }
 
     #[test]
@@ -641,17 +650,6 @@ mod tests {
         lib.remove_selected();
         assert_eq!(lib.books.len(), 2);
         assert_eq!(lib.books[0].title, "Book 1");
-    }
-
-    #[test]
-    fn test_remove_selected_clears_stale_search_order() {
-        let mut lib = lib_with_n(3);
-        lib.search_order = Some(vec![2, 0, 1]);
-        lib.remove_selected();
-        assert!(lib.search_order.is_none());
-        // Second removal must not panic on the stale order.
-        lib.remove_selected();
-        assert!(lib.search_order.is_none());
     }
 
     #[test]
@@ -953,15 +951,6 @@ mod tests {
     }
 
     #[test]
-    fn test_search_order_overrides_predicate_filter() {
-        let mut lib = lib_with_n(3);
-        lib.books[1].status = BookStatus::Dropped;
-        lib.filter.status = Some(BookStatus::Reading);
-        lib.search_order = Some(vec![1, 0]);
-        assert_eq!(lib.visible_indices(), vec![1, 0]);
-    }
-
-    #[test]
     fn test_known_tags_union_dedupe_sort() {
         let mut lib = lib_with_n(2);
         lib.books[0].tags = vec!["litrpg".into(), "fantasy".into()];
@@ -1006,6 +995,7 @@ mod tests {
                         book_url: "url-2".into(),
                         book_title: "Book 2".into(),
                         score: 90.0,
+                        genres: vec![],
                         chapters: vec![AiChapter {
                             chapter_url: "url-2/ch0".into(),
                             chapter_idx: 0,
@@ -1017,12 +1007,14 @@ mod tests {
                         book_url: "url-1".into(),
                         book_title: "Book 1".into(),
                         score: 70.0,
+                        genres: vec![],
                         chapters: vec![],
                     },
                     AiBook {
                         book_url: "url-0".into(),
                         book_title: "Book 0".into(),
                         score: 50.0,
+                        genres: vec![],
                         chapters: vec![],
                     },
                 ],
@@ -1081,12 +1073,14 @@ mod tests {
                         book_url: "url-0".into(),
                         book_title: "Book 0".into(),
                         score: 90.0,
+                        genres: vec![],
                         chapters: vec![],
                     },
                     AiBook {
                         book_url: "not-in-library".into(),
                         book_title: "Ghost".into(),
                         score: 70.0,
+                        genres: vec![],
                         chapters: vec![],
                     },
                 ],
@@ -1249,5 +1243,36 @@ mod tests {
         assert_eq!(lib.books.len(), 2);
         // Derived order now skips the removed book.
         assert_eq!(lib.visible_indices(), vec![1, 0]);
+    }
+
+    #[test]
+    fn test_remove_selected_removes_book_from_ai_session() {
+        let mut lib = ai_ranked_library();
+        lib.remove_selected();
+        // The removed book is gone from the session too — no dangling row.
+        let ai = lib.ai.as_ref().unwrap();
+        assert!(!ai.results.books.iter().any(|b| b.book_url == "url-2"));
+        assert_eq!(ai.results.books.len(), 2);
+        // The cursor is clamped and the selection resolves to a real book.
+        assert!(ai.cursor < ai.rows().len());
+        assert!(lib.selected_book().is_some());
+    }
+
+    #[test]
+    fn test_apply_ai_results_preserves_session_mode() {
+        let mut lib = lib_with_n(2);
+        lib.set_ai_searching("q".into());
+        lib.toggle_ai_mode(); // grouped-chapter mode
+        assert!(!lib.ai.as_ref().unwrap().book_mode);
+        // A chapter-mode outcome must not reset the user's mode toggle.
+        lib.apply_ai_results(
+            "q".into(),
+            SearchOutcome::ChapterMode {
+                hits: vec![],
+                embedded: 0,
+                total: 0,
+            },
+        );
+        assert!(!lib.ai.as_ref().unwrap().book_mode);
     }
 }

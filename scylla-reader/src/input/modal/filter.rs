@@ -263,7 +263,6 @@ fn commit(state: &mut AppState) {
     let library_changed = working.library != state.lib.library.filter.library;
     state.lib.library.filter = working.clone();
     state.lib.library.selected_index = 0;
-    state.lib.library.search_order = None;
 
     state
         .lib
@@ -505,7 +504,6 @@ mod tests {
         assert_eq!(state.ui.modal, Modal::None);
         assert_eq!(state.lib.library.filter.name, "glo");
         assert_eq!(state.lib.library.selected_index, 0);
-        assert!(state.lib.library.search_order.is_none());
         assert_eq!(state.lib.library.visible_indices(), vec![0]);
     }
 

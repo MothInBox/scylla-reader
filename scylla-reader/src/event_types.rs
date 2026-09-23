@@ -26,24 +26,34 @@ pub struct ChapterHit {
 /// A chapter hit in an AI search result. Matches the wire shape
 /// `{"url","chapter_idx","title","score"}` (book-mode inline chapters and
 /// chapter-mode hits share this shape). `score` is a display-only 0–100 value.
+/// All fields default so future wire additions (e.g. Phase 4's `snippet`)
+/// degrade gracefully instead of dropping hits.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct AiChapter {
-    #[serde(rename = "url")]
+    #[serde(rename = "url", default)]
     pub chapter_url: String,
+    #[serde(default)]
     pub chapter_idx: usize,
-    #[serde(rename = "title")]
+    #[serde(rename = "title", default)]
     pub chapter_title: String,
+    #[serde(default)]
     pub score: f32,
 }
 
 /// A book hit in book-mode. Matches the wire shape
-/// `{"book_url","title","score","chapters"}` with top-3 inline chapters.
+/// `{"book_url","title","score","genres","chapters"}` with top-3 inline
+/// chapters. All fields default so future wire additions degrade gracefully.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct AiBook {
+    #[serde(default)]
     pub book_url: String,
-    #[serde(rename = "title")]
+    #[serde(rename = "title", default)]
     pub book_title: String,
+    #[serde(default)]
     pub score: f32,
+    #[serde(default)]
+    pub genres: Vec<String>,
+    #[serde(default)]
     pub chapters: Vec<AiChapter>,
 }
 
@@ -164,6 +174,12 @@ pub enum ServerEvent {
     AiSearchResults {
         query: String,
         result: Result<SearchOutcome, String>,
+    },
+    /// TUI-internal: full per-book chapter ranking for the drill-down modal
+    /// (from the `a` key in the chapter-results modal).
+    DrillDownResults {
+        book_url: String,
+        result: Result<Vec<AiChapter>, String>,
     },
     /// Per-chapter detail for an `EmbedBatch` job.
     JobDetailChanged {

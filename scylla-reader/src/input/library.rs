@@ -184,14 +184,20 @@ fn open_ai_drilldown(ui: &mut UiState, lib: &mut LibraryState) {
     let group = ai_book_to_group(book);
     let query = ai.query.clone();
     // Show the book's chapters expanded; the cursor lands on the selected
-    // chapter (or the first), so one more Enter opens it.
+    // chapter (or the first), so one more Enter opens it. A book with no
+    // matching chapters gets the "no matching chapters" hint, not an empty list.
+    let status = if group.chapters.is_empty() {
+        SearchStatus::NoChapters
+    } else {
+        SearchStatus::Ready
+    };
     let cursor = chapter_index.min(group.chapters.len().saturating_sub(1));
     ui.modal = Modal::ChapterResults {
         query,
         groups: vec![group],
         cursor,
         scroll_offset: 0,
-        status: SearchStatus::Ready,
+        status,
         expanded: Some(0),
     };
 }
@@ -208,13 +214,13 @@ fn ai_book_to_group(book: &crate::event_types::AiBook) -> ChapterGroup {
             chapter_idx: c.chapter_idx,
             chapter_title: c.chapter_title.clone(),
             score: c.score,
-            genres: vec![],
+            genres: book.genres.clone(),
         })
         .collect();
     ChapterGroup {
         book_url: book.book_url.clone(),
         book_title: book.book_title.clone(),
-        genres: vec![],
+        genres: book.genres.clone(),
         chapters,
         best_score: book.score,
     }
@@ -583,6 +589,7 @@ mod tests {
                         book_url: "u2".into(),
                         book_title: "Book B".into(),
                         score: 90.0,
+                        genres: vec![],
                         chapters: vec![crate::event_types::AiChapter {
                             chapter_url: "u2/ch0".into(),
                             chapter_idx: 0,
@@ -594,6 +601,7 @@ mod tests {
                         book_url: "u1".into(),
                         book_title: "Book A".into(),
                         score: 70.0,
+                        genres: vec![],
                         chapters: vec![],
                     },
                 ],

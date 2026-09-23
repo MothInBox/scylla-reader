@@ -67,6 +67,10 @@ pub async fn search(
 /// The per-book diversity cap is a no-op for single-book inputs, so the
 /// drill-down gets its own top-`limit` unfiltered. A book with no embeddings
 /// returns empty results — the `no_embeddings` hint is library-level only.
+///
+/// Wire shape (pinned): `{"mode":"chapter","embedded":X,"total":Y,"hits":[
+/// {"url","chapter_idx","title","score"}]}` — see the shared fixture in the
+/// server and TUI tests.
 async fn search_chapters(
     state: &AppState,
     query: &str,
@@ -112,18 +116,15 @@ async fn search_chapters(
 
     let query_vec = embed_query(state, query)?;
     let ranked = crate::embeddings::rank_chapters(&chapters, &query_vec, limit);
-    let results: Vec<serde_json::Value> = ranked
+    let hits: Vec<serde_json::Value> = ranked
         .into_iter()
         .map(
-            |(book_url, book_title, chapter_url, chapter_title, chapter_idx, genres, score)| {
+            |(_, _, chapter_url, chapter_title, chapter_idx, _, score)| {
                 json!({
-                    "book_url": book_url,
-                    "book_title": book_title,
-                    "chapter_url": chapter_url,
+                    "url": chapter_url,
                     "chapter_idx": chapter_idx,
-                    "chapter_title": chapter_title,
+                    "title": chapter_title,
                     "score": score,
-                    "genres": genres.unwrap_or_default(),
                 })
             },
         )
@@ -132,18 +133,21 @@ async fn search_chapters(
         "mode": "chapter",
         "embedded": embedded,
         "total": total,
-        "results": results,
+        "hits": hits,
     })))
 }
 
 /// Book-mode search. Each book hit carries its top-3 chapter hits inline so the
 /// TUI drill-down is a local filter of already-received data.
+///
+/// An empty corpus (no chapter embeddings) is the same first-run state as
+/// chapter mode: it returns the distinct `no_embeddings` response, checked
+/// before the embedder so an offline first run gets the hint, not a 503.
 async fn search_books(
     state: &AppState,
     query: &str,
     limit: usize,
 ) -> Result<Json<serde_json::Value>, SearchError> {
-    let query_vec = embed_query(state, query)?;
     let db = state.db.lock().await;
     let books = db.load_all_book_embeddings_with_titles().map_err(|_| {
         (
@@ -171,6 +175,16 @@ async fn search_books(
     })?;
     drop(db);
 
+    if chapters.is_empty() {
+        return Ok(Json(json!({
+            "error": "no_embeddings",
+            "embedded": 0,
+            "total": total,
+        })));
+    }
+
+    let query_vec = embed_query(state, query)?;
+
     // Rank books by aggregate embedding.
     let aggregates: Vec<crate::embeddings::BookAggregate> = books
         .iter()
@@ -190,7 +204,7 @@ async fn search_books(
 
     let hits: Vec<serde_json::Value> = ranked_books
         .into_iter()
-        .map(|(book_url, score, _genres)| {
+        .map(|(book_url, score, genres)| {
             let chapters = by_book
                 .get(&book_url)
                 .map(|group| {
@@ -213,6 +227,7 @@ async fn search_books(
                 "book_url": book_url,
                 "title": titles.get(&book_url).cloned().unwrap_or_default(),
                 "score": crate::embeddings::normalize_score(score),
+                "genres": genres.unwrap_or_default(),
                 "chapters": chapters,
             })
         })

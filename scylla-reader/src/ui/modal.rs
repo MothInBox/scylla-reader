@@ -485,6 +485,13 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                     .alignment(Alignment::Center);
                     frame.render_widget(para, inner);
                 }
+                SearchStatus::NoChapters => {
+                    let para = Paragraph::new(
+                        "No matching chapters in this book.\n\nf refine · Esc close",
+                    )
+                    .alignment(Alignment::Center);
+                    frame.render_widget(para, inner);
+                }
                 SearchStatus::Error(msg) => {
                     let para =
                         Paragraph::new(format!("Search failed: {}\n\nf retry · Esc close", msg))
@@ -510,7 +517,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
             }
 
             frame.render_widget(
-                Paragraph::new(" ↑↓ move  Tab expand/collapse  Enter open  f refine  Esc close ")
+                Paragraph::new(" ↑↓ move  Tab expand  Enter open  a all  f refine  Esc close ")
                     .style(Style::default().fg(Color::DarkGray)),
                 footer_area,
             );
@@ -1076,6 +1083,16 @@ mod tests {
         );
         // Not an error toast — no "Search failed".
         assert!(!content.contains("Search failed"), "content: {}", content);
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_no_chapters_hint() {
+        let content = draw_chapter_results(SearchStatus::NoChapters);
+        assert!(
+            content.contains("No matching chapters in this book"),
+            "content: {}",
+            content
+        );
     }
 
     #[test]

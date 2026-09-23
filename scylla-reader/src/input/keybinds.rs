@@ -40,6 +40,9 @@ pub const KEY_TOGGLE_ITEM: KeyCode = KeyCode::Char(' ');
 
 // ── Modal: Chapter Results ──
 pub const KEY_REFINE: KeyCode = KeyCode::Char('f');
+/// Fetch the full per-book chapter ranking (deeper drill-down) in the
+/// chapter-results modal.
+pub const KEY_DRILLDOWN_ALL: KeyCode = KeyCode::Char('a');
 
 // ── Modal: Add Book ──
 pub const KEY_SUBMIT_MODIFIER: KeyModifiers = KeyModifiers::CONTROL;

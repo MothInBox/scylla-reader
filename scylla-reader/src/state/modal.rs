@@ -24,6 +24,8 @@ pub enum SearchStatus {
     NoEmbeddings {
         total: usize,
     },
+    /// The drill-down found no matching chapters for the focused book.
+    NoChapters,
     Error(String),
 }
 

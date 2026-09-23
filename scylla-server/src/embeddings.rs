@@ -485,12 +485,13 @@ pub(crate) fn normalize_score(cos: f32) -> f32 {
 }
 
 /// Groups ranked chapter hits by book, keeping the top `per_book` per book.
-/// The input must be sorted by score descending (as `rank_chapters` returns),
-/// so the first `per_book` hits seen per book are its best.
+/// The input is sorted by score descending before grouping, so the first
+/// `per_book` hits seen per book are its best regardless of input order.
 pub fn top_chapters_per_book(
-    ranked: Vec<RankedChapterHit>,
+    mut ranked: Vec<RankedChapterHit>,
     per_book: usize,
 ) -> HashMap<String, Vec<RankedChapterHit>> {
+    ranked.sort_by(|a, b| b.6.partial_cmp(&a.6).unwrap_or(std::cmp::Ordering::Equal));
     let mut by_book: HashMap<String, Vec<RankedChapterHit>> = HashMap::new();
     for hit in ranked {
         let group = by_book.entry(hit.0.clone()).or_default();
@@ -830,5 +831,37 @@ mod tests {
         );
         // A book with fewer than `per_book` hits keeps all of them.
         assert_eq!(book2.len(), 2);
+    }
+
+    #[test]
+    fn test_top_chapters_per_book_handles_unsorted_input() {
+        // Same data, shuffled — the internal sort must still pick the best 3.
+        let ranked = vec![
+            ranked_chapter_hit("book1", "ch4", 89.0),
+            ranked_chapter_hit("book2", "ch6", 99.5),
+            ranked_chapter_hit("book1", "ch1", 100.0),
+            ranked_chapter_hit("book1", "ch3", 96.0),
+            ranked_chapter_hit("book2", "ch7", 61.0),
+            ranked_chapter_hit("book1", "ch2", 99.0),
+        ];
+        let by_book = top_chapters_per_book(ranked, 3);
+        assert_eq!(
+            by_book
+                .get("book1")
+                .unwrap()
+                .iter()
+                .map(|h| h.2.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ch1", "ch2", "ch3"]
+        );
+        assert_eq!(
+            by_book
+                .get("book2")
+                .unwrap()
+                .iter()
+                .map(|h| h.2.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ch6", "ch7"]
+        );
     }
 }

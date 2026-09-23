@@ -309,6 +309,34 @@ mod tests {
         }
     }
 
+    /// Shared wire-contract fixture — MUST stay byte-identical to the fixture
+    /// in `scylla-server/src/main.rs`
+    /// (`test_search_chapter_mode_wire_contract`). The server test asserts the
+    /// route produces exactly this body; this test parses the same literal so
+    /// the two sides can't drift. Canonical serde_json form (keys sorted).
+    const CHAPTER_MODE_WIRE_FIXTURE: &str = r#"{"embedded":1,"hits":[{"chapter_idx":1,"score":100.0,"title":"Chapter A1","url":"ch-a1"}],"mode":"chapter","total":1}"#;
+
+    #[test]
+    fn test_parse_chapter_mode_wire_contract() {
+        let json: serde_json::Value = serde_json::from_str(CHAPTER_MODE_WIRE_FIXTURE).unwrap();
+        match parse_search_outcome(&json) {
+            SearchOutcome::ChapterMode {
+                hits,
+                embedded,
+                total,
+            } => {
+                assert_eq!(embedded, 1);
+                assert_eq!(total, 1);
+                assert_eq!(hits.len(), 1);
+                assert_eq!(hits[0].chapter_url, "ch-a1");
+                assert_eq!(hits[0].chapter_idx, 1);
+                assert_eq!(hits[0].chapter_title, "Chapter A1");
+                assert_eq!(hits[0].score, 100.0);
+            }
+            _ => panic!("expected ChapterMode"),
+        }
+    }
+
     #[test]
     fn test_parse_book_mode_hits_with_inline_chapters() {
         let json = serde_json::json!({
@@ -353,7 +381,7 @@ mod tests {
             "mode": "chapter",
             "hits": [
                 {"url":"c1","chapter_idx":0,"title":"C1","score":90.0},
-                {"url":"c2"}  // missing required fields
+                {"url":"c2","chapter_idx":"not-a-number"}  // wrong type — still dropped
             ]
         });
         match parse_search_outcome(&json) {
