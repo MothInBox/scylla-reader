@@ -55,6 +55,7 @@ pub fn rect() -> Rect {
 /// assert what the TUI sent to the server.
 pub struct MockBackend {
     pub name: String,
+    pub url: String,
     pub books: Arc<Mutex<Vec<Book>>>,
     pub sessions: Arc<Mutex<Vec<Session>>>,
     pub calls: Arc<Mutex<Vec<String>>>,
@@ -64,8 +65,15 @@ pub struct MockBackend {
 
 impl MockBackend {
     pub fn new(name: &str) -> Self {
+        Self::with_url(name, "http://mock")
+    }
+
+    /// Build a backend with a custom URL — e.g. a guaranteed-closed port so
+    /// network calls fail fast regardless of the environment.
+    pub fn with_url(name: &str, url: &str) -> Self {
         Self {
             name: name.to_string(),
+            url: url.to_string(),
             books: Arc::new(Mutex::new(Vec::new())),
             sessions: Arc::new(Mutex::new(Vec::new())),
             calls: Arc::new(Mutex::new(Vec::new())),
@@ -99,7 +107,7 @@ impl StorageBackend for MockBackend {
     }
 
     fn url(&self) -> Option<String> {
-        Some("http://mock".to_string())
+        Some(self.url.clone())
     }
 
     async fn list_books(&self) -> Result<Vec<Book>, String> {

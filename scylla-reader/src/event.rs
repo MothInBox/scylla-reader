@@ -1,6 +1,6 @@
-use crate::event_types::{ChapterGroup, ChapterHit, ServerEvent};
-use crate::state::AppState;
-use crate::state::modal::{Modal, SearchStatus};
+use crate::event_types::{AiChapter, ChapterHit, ServerEvent};
+use crate::state::modal::SearchStatus;
+use crate::state::{AppState, Modal};
 use std::sync::mpsc;
 
 pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>) {
@@ -17,12 +17,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                 );
                 state.jobs.jobs = jobs;
                 state.jobs.server_now_ms = server_now_ms;
-                state.jobs.active_count = state
-                    .jobs
-                    .jobs
-                    .iter()
-                    .filter(|j| j.status == "Running")
-                    .count() as u8;
+                state.jobs.refresh_active_count();
                 // Clamp selection/detail to the new list so a shrinking
                 // snapshot never leaves a dangling index.
                 let filtered_len = state.jobs.filtered_jobs().len();
@@ -66,12 +61,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     started_at_ms,
                     completed_at_ms,
                 );
-                state.jobs.active_count = state
-                    .jobs
-                    .jobs
-                    .iter()
-                    .filter(|j| j.status == "Running")
-                    .count() as u8;
+                state.jobs.refresh_active_count();
             }
             ServerEvent::JobOutcome { id, outcome } => {
                 crate::settings::log(
@@ -299,12 +289,15 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                 }
             }
             ServerEvent::AiSearchResults { query, result } => {
-                // Only apply when the chapter-results modal is open for the
+                // Only apply when the library has an active AI session for the
                 // same query; anything else is stale.
-                let is_current = matches!(
-                    &state.ui.modal,
-                    Modal::ChapterResults { query: q, .. } if *q == query
-                );
+                let is_current = state
+                    .lib
+                    .library
+                    .ai
+                    .as_ref()
+                    .map(|ai| ai.query == query)
+                    .unwrap_or(false);
                 if !is_current {
                     crate::settings::log(
                         crate::settings::LogLevel::Debug,
@@ -314,77 +307,87 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     continue;
                 }
                 match result {
-                    Ok(hits) => {
-                        let groups = build_groups(hits);
-                        let status = if groups.is_empty() {
-                            SearchStatus::Empty
-                        } else {
-                            SearchStatus::Ready
-                        };
-                        if let Modal::ChapterResults {
-                            groups: g,
-                            cursor,
-                            scroll_offset,
-                            status: s,
-                            expanded,
-                            ..
-                        } = &mut state.ui.modal
-                        {
-                            *g = groups;
-                            *cursor = 0;
-                            *scroll_offset = 0;
-                            *s = status;
-                            *expanded = None;
-                        }
-                    }
+                    Ok(outcome) => state.lib.library.apply_ai_results(query, outcome),
                     Err(e) => {
                         crate::settings::log(
                             crate::settings::LogLevel::Error,
                             "AI",
                             &format!("AI search failed: {}", e),
                         );
-                        if let Modal::ChapterResults { status: s, .. } = &mut state.ui.modal {
-                            *s = SearchStatus::Error(e);
+                        state.lib.library.set_ai_error(query, e);
+                    }
+                }
+            }
+            ServerEvent::DrillDownResults { book_url, result } => {
+                // Only apply when the chapter-results modal is open for the
+                // same book; anything else is stale.
+                let is_current = matches!(
+                    &state.ui.modal,
+                    Modal::ChapterResults { groups, .. }
+                        if groups.iter().any(|g| g.book_url == book_url)
+                );
+                if !is_current {
+                    crate::settings::log(
+                        crate::settings::LogLevel::Debug,
+                        "AI",
+                        &format!("Stale drill-down result dropped for book: {}", book_url),
+                    );
+                    continue;
+                }
+                match result {
+                    Ok(chapters) => {
+                        if let Modal::ChapterResults {
+                            groups,
+                            status,
+                            cursor,
+                            scroll_offset,
+                            expanded,
+                            ..
+                        } = &mut state.ui.modal
+                        {
+                            if let Some(group) = groups.iter_mut().find(|g| g.book_url == book_url)
+                            {
+                                group.chapters = chapters
+                                    .into_iter()
+                                    .map(|c: AiChapter| ChapterHit {
+                                        book_url: book_url.clone(),
+                                        book_title: group.book_title.clone(),
+                                        chapter_url: c.chapter_url,
+                                        chapter_idx: c.chapter_idx,
+                                        chapter_title: c.chapter_title,
+                                        score: c.score,
+                                        genres: group.genres.clone(),
+                                        snippet: c.snippet,
+                                    })
+                                    .collect();
+                                group.best_score =
+                                    group.chapters.first().map(|c| c.score).unwrap_or(0.0);
+                            }
+                            let has_chapters = groups.iter().any(|g| !g.chapters.is_empty());
+                            *status = if has_chapters {
+                                SearchStatus::Ready
+                            } else {
+                                SearchStatus::NoChapters
+                            };
+                            *cursor = 0;
+                            *scroll_offset = 0;
+                            *expanded = Some(0);
+                        }
+                    }
+                    Err(e) => {
+                        crate::settings::log(
+                            crate::settings::LogLevel::Error,
+                            "AI",
+                            &format!("Drill-down search failed: {}", e),
+                        );
+                        if let Modal::ChapterResults { status, .. } = &mut state.ui.modal {
+                            *status = SearchStatus::Error(e);
                         }
                     }
                 }
             }
         }
     }
-}
-
-/// Group flat chapter hits by book (first-appearance order), sort each group's
-/// chapters by score descending, and order the books by their best chapter's
-/// score descending.
-fn build_groups(hits: Vec<ChapterHit>) -> Vec<ChapterGroup> {
-    let mut groups: Vec<ChapterGroup> = Vec::new();
-    for hit in hits {
-        if let Some(group) = groups.iter_mut().find(|g| g.book_url == hit.book_url) {
-            group.chapters.push(hit);
-        } else {
-            groups.push(ChapterGroup {
-                book_url: hit.book_url.clone(),
-                book_title: hit.book_title.clone(),
-                genres: hit.genres.clone(),
-                chapters: vec![hit],
-                best_score: 0.0,
-            });
-        }
-    }
-    for group in &mut groups {
-        group.chapters.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        group.best_score = group.chapters.first().map(|c| c.score).unwrap_or(0.0);
-    }
-    groups.sort_by(|a, b| {
-        b.best_score
-            .partial_cmp(&a.best_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    groups
 }
 
 pub fn update_covers(state: &mut AppState, fetched_covers: &mut std::collections::HashSet<String>) {
@@ -479,9 +482,33 @@ pub fn update_embedding_statuses(state: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event_types::{AiBook, AiChapter, ChapterGroup, SearchOutcome};
     use crate::state::Page;
     use crate::test_helpers::*;
     use scylla_core::types::{BookStatus, Chapter, JobDto, Progress, Session};
+
+    fn sample_hit(book_url: &str, book_title: &str, idx: usize, score: f32) -> ChapterHit {
+        ChapterHit {
+            book_url: book_url.into(),
+            book_title: book_title.into(),
+            chapter_url: format!("{}/ch{}", book_url, idx),
+            chapter_idx: idx,
+            chapter_title: format!("Ch{}", idx),
+            score,
+            genres: vec![],
+            snippet: String::new(),
+        }
+    }
+
+    fn sample_chapter_group(book_url: &str, book_title: &str, score: f32) -> ChapterGroup {
+        ChapterGroup {
+            book_url: book_url.into(),
+            book_title: book_title.into(),
+            genres: vec!["Fantasy".into()],
+            chapters: vec![sample_hit(book_url, book_title, 0, score)],
+            best_score: score,
+        }
+    }
 
     fn sample_book(url: &str) -> scylla_core::types::Book {
         scylla_core::types::Book {
@@ -1075,89 +1102,71 @@ mod tests {
         assert_eq!(state.lib.settings.max_workers, 8);
     }
 
-    fn sample_hit(book_url: &str, book_title: &str, idx: usize, score: f32) -> ChapterHit {
-        ChapterHit {
-            book_url: book_url.into(),
-            book_title: book_title.into(),
-            chapter_url: format!("{}/ch{}", book_url, idx),
-            chapter_idx: idx,
-            chapter_title: format!("Ch{}", idx),
-            score,
-            genres: vec![],
-        }
-    }
-
-    fn chapter_results_state(query: &str) -> AppState {
+    fn ai_loading_state(query: &str) -> AppState {
         let mut state = test_state();
-        state.ui.modal = Modal::ChapterResults {
-            query: query.into(),
-            groups: vec![],
-            cursor: 0,
-            scroll_offset: 0,
-            status: SearchStatus::Loading,
-            expanded: None,
-        };
+        state.lib.library.set_ai_searching(query.into());
         state
     }
 
+    fn sample_ai_book(book_url: &str, book_title: &str, score: f32) -> AiBook {
+        AiBook {
+            book_url: book_url.into(),
+            book_title: book_title.into(),
+            score,
+            genres: vec![],
+            chapters: vec![],
+        }
+    }
+
     #[test]
-    fn test_ai_search_results_groups_by_book() {
-        let mut state = chapter_results_state("dragon");
-        let hits = vec![
-            sample_hit("u1", "Book A", 0, 0.5),
-            sample_hit("u2", "Book B", 0, 0.9),
-            sample_hit("u1", "Book A", 1, 0.8),
-        ];
+    fn test_ai_search_results_book_mode_ranks_library() {
+        let mut state = ai_loading_state("dragon");
         send(
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "dragon".into(),
-                result: Ok(hits),
+                result: Ok(SearchOutcome::BookMode {
+                    embedded: 3,
+                    total: 3,
+                    hits: vec![
+                        sample_ai_book("u1", "Book A", 90.0),
+                        sample_ai_book("u2", "Book B", 70.0),
+                    ],
+                }),
             },
         );
-        match &state.ui.modal {
-            Modal::ChapterResults {
-                groups,
-                status,
-                cursor,
-                ..
-            } => {
-                assert_eq!(*status, SearchStatus::Ready);
-                assert_eq!(*cursor, 0);
-                assert_eq!(groups.len(), 2);
-                // Books ordered by best chapter score desc: Book B (0.9) first.
-                assert_eq!(groups[0].book_title, "Book B");
-                assert_eq!(groups[1].book_title, "Book A");
-                // best_score mirrors the best chapter's score.
-                assert_eq!(groups[0].best_score, 0.9);
-                assert_eq!(groups[1].best_score, 0.8);
-                // Chapters within a group sorted by score desc.
-                assert_eq!(groups[1].chapters[0].chapter_idx, 1);
-                assert_eq!(groups[1].chapters[1].chapter_idx, 0);
-            }
-            _ => panic!("expected ChapterResults"),
-        }
+        let ai = state.lib.library.ai.as_ref().unwrap();
+        assert_eq!(ai.query, "dragon");
+        assert_eq!(ai.status, crate::state::modal::SearchStatus::Ready);
+        assert_eq!(ai.results.books.len(), 2);
+        assert_eq!(ai.results.embedded, 3);
+        assert_eq!(ai.results.total, 3);
+        assert_eq!(ai.results.books[0].book_title, "Book A");
     }
 
     #[test]
     fn test_ai_search_results_empty_sets_empty_status() {
-        let mut state = chapter_results_state("dragon");
+        let mut state = ai_loading_state("dragon");
         send(
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "dragon".into(),
-                result: Ok(vec![]),
+                result: Ok(SearchOutcome::BookMode {
+                    embedded: 0,
+                    total: 0,
+                    hits: vec![],
+                }),
             },
         );
-        match &state.ui.modal {
-            Modal::ChapterResults { status, .. } => assert_eq!(*status, SearchStatus::Empty),
-            _ => panic!("expected ChapterResults"),
-        }
+        assert_eq!(
+            state.lib.library.ai.as_ref().unwrap().status,
+            crate::state::modal::SearchStatus::Empty
+        );
     }
 
     #[test]
     fn test_ai_search_results_error_sets_error_status() {
-        let mut state = chapter_results_state("dragon");
+        let mut state = ai_loading_state("dragon");
         send(
             &mut state,
             ServerEvent::AiSearchResults {
@@ -1165,60 +1174,98 @@ mod tests {
                 result: Err("boom".into()),
             },
         );
-        match &state.ui.modal {
-            Modal::ChapterResults { status, .. } => {
-                assert_eq!(*status, SearchStatus::Error("boom".into()))
-            }
-            _ => panic!("expected ChapterResults"),
-        }
+        assert_eq!(
+            state.lib.library.ai.as_ref().unwrap().status,
+            crate::state::modal::SearchStatus::Error("boom".into())
+        );
+    }
+
+    #[test]
+    fn test_ai_search_results_no_embeddings_sets_hint_status() {
+        let mut state = ai_loading_state("dragon");
+        send(
+            &mut state,
+            ServerEvent::AiSearchResults {
+                query: "dragon".into(),
+                result: Ok(SearchOutcome::NoEmbeddings { total: 12 }),
+            },
+        );
+        let ai = state.lib.library.ai.as_ref().unwrap();
+        assert_eq!(
+            ai.status,
+            crate::state::modal::SearchStatus::NoEmbeddings { total: 12 }
+        );
+        assert!(ai.results.books.is_empty());
     }
 
     #[test]
     fn test_ai_search_results_stale_query_is_dropped() {
-        let mut state = chapter_results_state("dragon");
+        let mut state = ai_loading_state("dragon");
         send(
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "other".into(),
-                result: Ok(vec![sample_hit("u1", "Book A", 0, 0.9)]),
+                result: Ok(SearchOutcome::BookMode {
+                    embedded: 1,
+                    total: 1,
+                    hits: vec![sample_ai_book("u1", "Book A", 90.0)],
+                }),
             },
         );
-        match &state.ui.modal {
-            Modal::ChapterResults { status, groups, .. } => {
-                assert_eq!(*status, SearchStatus::Loading);
-                assert!(groups.is_empty());
-            }
-            _ => panic!("expected ChapterResults"),
-        }
+        // The stale result must not touch the active "dragon" session.
+        let ai = state.lib.library.ai.as_ref().unwrap();
+        assert_eq!(ai.query, "dragon");
+        assert_eq!(ai.status, crate::state::modal::SearchStatus::Loading);
+        assert!(ai.results.books.is_empty());
     }
 
     #[test]
-    fn test_ai_search_results_without_modal_is_dropped() {
+    fn test_ai_search_results_without_active_session_is_dropped() {
         let mut state = test_state();
         send(
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "dragon".into(),
-                result: Ok(vec![sample_hit("u1", "Book A", 0, 0.9)]),
+                result: Ok(SearchOutcome::BookMode {
+                    embedded: 1,
+                    total: 1,
+                    hits: vec![sample_ai_book("u1", "Book A", 90.0)],
+                }),
             },
         );
-        assert_eq!(state.ui.modal, Modal::None);
+        assert!(state.lib.library.ai.is_none());
     }
 
     #[test]
-    fn test_build_groups_preserves_genres_and_sorts() {
-        let mut hits = vec![
-            sample_hit("u1", "Book A", 0, 0.5),
-            sample_hit("u1", "Book A", 1, 0.9),
-        ];
-        hits[0].genres = vec!["Fantasy".into()];
-        hits[1].genres = vec!["Fantasy".into()];
-        let groups = build_groups(hits);
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].genres, vec!["Fantasy"]);
-        assert_eq!(groups[0].best_score, 0.9);
-        assert_eq!(groups[0].chapters[0].chapter_idx, 1);
-        assert_eq!(groups[0].chapters[1].chapter_idx, 0);
+    fn test_ai_search_results_chapter_mode_groups_into_library() {
+        let mut state = ai_loading_state("dragon");
+        state.lib.library.add_book("Book A".into(), "u1".into());
+        state.lib.library.books[0].chapters = vec![crate::models::Chapter {
+            title: "c0".into(),
+            url: "u1/ch0".into(),
+            order: 0,
+        }];
+        send(
+            &mut state,
+            ServerEvent::AiSearchResults {
+                query: "dragon".into(),
+                result: Ok(SearchOutcome::ChapterMode {
+                    embedded: 1,
+                    total: 1,
+                    hits: vec![AiChapter {
+                        chapter_url: "u1/ch0".into(),
+                        chapter_idx: 0,
+                        chapter_title: "c0".into(),
+                        score: 88.0,
+                        snippet: String::new(),
+                    }],
+                }),
+            },
+        );
+        let ai = state.lib.library.ai.as_ref().unwrap();
+        assert_eq!(ai.results.books.len(), 1);
+        assert_eq!(ai.results.books[0].book_title, "Book A");
+        assert_eq!(ai.results.books[0].chapters[0].score, 88.0);
     }
 
     #[test]
@@ -1239,5 +1286,141 @@ mod tests {
         let now = std::time::Instant::now();
         let recent = now - std::time::Duration::from_secs(5);
         assert!(!should_refresh(Some(recent), now));
+    }
+
+    #[test]
+    fn test_drill_down_results_replaces_modal_content() {
+        let mut state = test_state();
+        state.ui.modal = Modal::ChapterResults {
+            query: "dragon".into(),
+            groups: vec![sample_chapter_group("u1", "Book A", 90.0)],
+            cursor: 0,
+            scroll_offset: 0,
+            status: SearchStatus::Loading,
+            expanded: Some(0),
+        };
+        send(
+            &mut state,
+            ServerEvent::DrillDownResults {
+                book_url: "u1".into(),
+                result: Ok(vec![
+                    AiChapter {
+                        chapter_url: "u1/ch0".into(),
+                        chapter_idx: 0,
+                        chapter_title: "Ch0".into(),
+                        score: 90.0,
+                        snippet: "the dragon circled the spire".into(),
+                    },
+                    AiChapter {
+                        chapter_url: "u1/ch1".into(),
+                        chapter_idx: 1,
+                        chapter_title: "Ch1".into(),
+                        score: 80.0,
+                        snippet: String::new(),
+                    },
+                ]),
+            },
+        );
+        match &state.ui.modal {
+            Modal::ChapterResults {
+                groups,
+                status,
+                expanded,
+                ..
+            } => {
+                assert_eq!(*status, SearchStatus::Ready);
+                assert_eq!(*expanded, Some(0));
+                assert_eq!(groups[0].chapters.len(), 2);
+                assert_eq!(groups[0].chapters[0].chapter_url, "u1/ch0");
+                assert_eq!(groups[0].chapters[1].chapter_url, "u1/ch1");
+                // Genres are preserved from the group.
+                assert_eq!(groups[0].chapters[0].genres, vec!["Fantasy"]);
+                // Snippets carry through from the wire chapter into the modal row.
+                assert_eq!(
+                    groups[0].chapters[0].snippet,
+                    "the dragon circled the spire"
+                );
+                assert!(groups[0].chapters[1].snippet.is_empty());
+            }
+            _ => panic!("expected ChapterResults"),
+        }
+    }
+
+    #[test]
+    fn test_drill_down_results_empty_sets_no_chapters() {
+        let mut state = test_state();
+        state.ui.modal = Modal::ChapterResults {
+            query: "dragon".into(),
+            groups: vec![sample_chapter_group("u1", "Book A", 90.0)],
+            cursor: 0,
+            scroll_offset: 0,
+            status: SearchStatus::Loading,
+            expanded: Some(0),
+        };
+        send(
+            &mut state,
+            ServerEvent::DrillDownResults {
+                book_url: "u1".into(),
+                result: Ok(vec![]),
+            },
+        );
+        match &state.ui.modal {
+            Modal::ChapterResults { status, .. } => {
+                assert_eq!(*status, SearchStatus::NoChapters)
+            }
+            _ => panic!("expected ChapterResults"),
+        }
+    }
+
+    #[test]
+    fn test_drill_down_results_error_sets_error_status() {
+        let mut state = test_state();
+        state.ui.modal = Modal::ChapterResults {
+            query: "dragon".into(),
+            groups: vec![sample_chapter_group("u1", "Book A", 90.0)],
+            cursor: 0,
+            scroll_offset: 0,
+            status: SearchStatus::Loading,
+            expanded: Some(0),
+        };
+        send(
+            &mut state,
+            ServerEvent::DrillDownResults {
+                book_url: "u1".into(),
+                result: Err("boom".into()),
+            },
+        );
+        match &state.ui.modal {
+            Modal::ChapterResults { status, .. } => {
+                assert_eq!(*status, SearchStatus::Error("boom".into()))
+            }
+            _ => panic!("expected ChapterResults"),
+        }
+    }
+
+    #[test]
+    fn test_drill_down_results_stale_book_is_dropped() {
+        let mut state = test_state();
+        state.ui.modal = Modal::ChapterResults {
+            query: "dragon".into(),
+            groups: vec![sample_chapter_group("u1", "Book A", 90.0)],
+            cursor: 0,
+            scroll_offset: 0,
+            status: SearchStatus::Loading,
+            expanded: Some(0),
+        };
+        send(
+            &mut state,
+            ServerEvent::DrillDownResults {
+                book_url: "other-book".into(),
+                result: Ok(vec![]),
+            },
+        );
+        match &state.ui.modal {
+            Modal::ChapterResults { status, .. } => {
+                assert_eq!(*status, SearchStatus::Loading)
+            }
+            _ => panic!("expected ChapterResults"),
+        }
     }
 }

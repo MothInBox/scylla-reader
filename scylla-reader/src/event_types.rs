@@ -21,6 +21,79 @@ pub struct ChapterHit {
     pub score: f32,
     #[serde(default)]
     pub genres: Vec<String>,
+    /// ~120 chars around the best-matching span (Phase 4). Empty when a server
+    /// predates snippets or the span wasn't found.
+    #[serde(default)]
+    pub snippet: String,
+}
+
+/// A chapter hit in an AI search result. Matches the wire shape
+/// `{"url","chapter_idx","title","score","snippet"}` (book-mode inline chapters
+/// and chapter-mode hits share this shape). `score` is a display-only 0–100
+/// value. All fields default so future wire additions degrade gracefully
+/// instead of dropping hits.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AiChapter {
+    #[serde(rename = "url", default)]
+    pub chapter_url: String,
+    #[serde(default)]
+    pub chapter_idx: usize,
+    #[serde(rename = "title", default)]
+    pub chapter_title: String,
+    #[serde(default)]
+    pub score: f32,
+    /// ~120 chars around the best-matching span (Phase 4). Empty when a server
+    /// predates snippets or the span wasn't found.
+    #[serde(default)]
+    pub snippet: String,
+}
+
+/// A book hit in book-mode. Matches the wire shape
+/// `{"book_url","title","score","genres","chapters"}` with top-3 inline
+/// chapters. All fields default so future wire additions degrade gracefully.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AiBook {
+    #[serde(default)]
+    pub book_url: String,
+    #[serde(rename = "title", default)]
+    pub book_title: String,
+    #[serde(default)]
+    pub score: f32,
+    #[serde(default)]
+    pub genres: Vec<String>,
+    #[serde(default)]
+    pub chapters: Vec<AiChapter>,
+}
+
+/// Normalized AI search results for the library: ranked books (each with its
+/// inline chapter hits) plus library-level embedding coverage. `books` is empty
+/// while the search is in flight or when it found nothing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AiSearchResults {
+    pub embedded: usize,
+    pub total: usize,
+    pub books: Vec<AiBook>,
+}
+
+/// The server's search response: book-mode hits (books with inline top-3
+/// chapters), chapter-mode hits (flat chapter hits), or a distinct
+/// "no embeddings yet" signal (first-run UX — the searchable corpus is empty).
+/// `embedded`/`total` are library-level chapter-embedding coverage counts.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SearchOutcome {
+    ChapterMode {
+        hits: Vec<AiChapter>,
+        embedded: usize,
+        total: usize,
+    },
+    BookMode {
+        hits: Vec<AiBook>,
+        embedded: usize,
+        total: usize,
+    },
+    NoEmbeddings {
+        total: usize,
+    },
 }
 
 /// Chapters of one book, grouped for the AI results modal.
@@ -108,7 +181,13 @@ pub enum ServerEvent {
     /// TUI-internal: AI search results delivered by the one-shot search thread.
     AiSearchResults {
         query: String,
-        result: Result<Vec<ChapterHit>, String>,
+        result: Result<SearchOutcome, String>,
+    },
+    /// TUI-internal: full per-book chapter ranking for the drill-down modal
+    /// (from the `a` key in the chapter-results modal).
+    DrillDownResults {
+        book_url: String,
+        result: Result<Vec<AiChapter>, String>,
     },
     /// Per-chapter detail for an `EmbedBatch` job.
     JobDetailChanged {
@@ -524,20 +603,20 @@ mod tests {
 
     #[test]
     fn test_chapter_hit_deserializes_from_response_json() {
-        let json = r#"{"book_url":"http://example.com/book","book_title":"Book","chapter_url":"http://example.com/book/ch1","chapter_idx":3,"chapter_title":"Ch3","score":0.87,"genres":["Fantasy","LitRPG"]}"#;
+        let json = r#"{"book_url":"http://example.com/book","book_title":"Book","chapter_url":"http://example.com/book/ch1","chapter_idx":3,"chapter_title":"Ch3","score":87.0,"genres":["Fantasy","LitRPG"]}"#;
         let hit: ChapterHit = serde_json::from_str(json).unwrap();
         assert_eq!(hit.book_url, "http://example.com/book");
         assert_eq!(hit.book_title, "Book");
         assert_eq!(hit.chapter_url, "http://example.com/book/ch1");
         assert_eq!(hit.chapter_idx, 3);
         assert_eq!(hit.chapter_title, "Ch3");
-        assert!((hit.score - 0.87).abs() < 1e-6);
+        assert!((hit.score - 87.0).abs() < 1e-6);
         assert_eq!(hit.genres, vec!["Fantasy", "LitRPG"]);
     }
 
     #[test]
     fn test_chapter_hit_genres_default_when_missing() {
-        let json = r#"{"book_url":"u","book_title":"B","chapter_url":"c","chapter_idx":0,"chapter_title":"C","score":0.5}"#;
+        let json = r#"{"book_url":"u","book_title":"B","chapter_url":"c","chapter_idx":0,"chapter_title":"C","score":50.0}"#;
         let hit: ChapterHit = serde_json::from_str(json).unwrap();
         assert!(hit.genres.is_empty());
     }
@@ -546,7 +625,11 @@ mod tests {
     fn test_ai_search_results_event_constructed_directly() {
         let event = ServerEvent::AiSearchResults {
             query: "dragon".into(),
-            result: Ok(vec![]),
+            result: Ok(SearchOutcome::BookMode {
+                hits: vec![],
+                embedded: 0,
+                total: 0,
+            }),
         };
         match event {
             ServerEvent::AiSearchResults { query, result } => {
@@ -555,6 +638,52 @@ mod tests {
             }
             _ => panic!("expected AiSearchResults"),
         }
+    }
+
+    #[test]
+    fn test_ai_chapter_deserializes_from_wire() {
+        let json =
+            r#"{"url":"http://example.com/book/ch3","chapter_idx":3,"title":"Ch3","score":87.0}"#;
+        let hit: AiChapter = serde_json::from_str(json).unwrap();
+        assert_eq!(hit.chapter_url, "http://example.com/book/ch3");
+        assert_eq!(hit.chapter_idx, 3);
+        assert_eq!(hit.chapter_title, "Ch3");
+        assert!((hit.score - 87.0).abs() < 1e-6);
+        // Snippet is absent → defaults to empty (old server / no span).
+        assert!(hit.snippet.is_empty());
+    }
+
+    #[test]
+    fn test_ai_chapter_deserializes_snippet_from_wire() {
+        let json = r#"{"url":"u","chapter_idx":0,"title":"Ch","score":87.0,"snippet":"the dragon circled the spire"}"#;
+        let hit: AiChapter = serde_json::from_str(json).unwrap();
+        assert_eq!(hit.snippet, "the dragon circled the spire");
+    }
+
+    #[test]
+    fn test_chapter_hit_deserializes_snippet_from_wire() {
+        let json = r#"{"book_url":"u","book_title":"B","chapter_url":"c","chapter_idx":0,"chapter_title":"C","score":87.0,"snippet":"a matching fragment"}"#;
+        let hit: ChapterHit = serde_json::from_str(json).unwrap();
+        assert_eq!(hit.snippet, "a matching fragment");
+    }
+
+    #[test]
+    fn test_chapter_hit_snippet_defaults_when_missing() {
+        let json = r#"{"book_url":"u","book_title":"B","chapter_url":"c","chapter_idx":0,"chapter_title":"C","score":50.0}"#;
+        let hit: ChapterHit = serde_json::from_str(json).unwrap();
+        assert!(hit.snippet.is_empty());
+    }
+
+    #[test]
+    fn test_ai_book_deserializes_from_wire_with_inline_chapters() {
+        let json = r#"{"book_url":"http://example.com/book","title":"Book","score":90.0,"chapters":[{"url":"http://example.com/book/ch1","chapter_idx":1,"title":"Ch1","score":90.0},{"url":"http://example.com/book/ch2","chapter_idx":2,"title":"Ch2","score":80.0}]}"#;
+        let hit: AiBook = serde_json::from_str(json).unwrap();
+        assert_eq!(hit.book_url, "http://example.com/book");
+        assert_eq!(hit.book_title, "Book");
+        assert!((hit.score - 90.0).abs() < 1e-6);
+        assert_eq!(hit.chapters.len(), 2);
+        assert_eq!(hit.chapters[1].chapter_title, "Ch2");
+        assert!((hit.chapters[1].score - 80.0).abs() < 1e-6);
     }
 
     #[test]

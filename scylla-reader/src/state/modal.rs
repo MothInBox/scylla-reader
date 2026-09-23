@@ -19,6 +19,13 @@ pub enum SearchStatus {
     Loading,
     Ready,
     Empty,
+    /// The searchable corpus is empty — first-run hint, not an error. `total`
+    /// is the library's chapter count (0 embedded).
+    NoEmbeddings {
+        total: usize,
+    },
+    /// The drill-down found no matching chapters for the focused book.
+    NoChapters,
     Error(String),
 }
 

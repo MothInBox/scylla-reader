@@ -18,10 +18,11 @@ pub struct AppState {
     pub job_events: tokio::sync::broadcast::Sender<Arc<scylla_core::messenger::AppEvent>>,
     /// Shared, lazily-loaded embedder (used by the embedding thread and routes).
     ///
-    /// Read by Phase 4's search endpoint; the embedding thread holds its own
-    /// clone of the same `Arc`.
-    #[allow(dead_code)]
+    /// Read by the search endpoint; the embedding thread holds its own clone of
+    /// the same `Arc`.
     pub embedder: Arc<crate::embeddings::SharedEmbedder>,
+    /// Shared, lazily-loaded cross-encoder reranker (search only).
+    pub reranker: Arc<crate::embeddings::SharedCrossEncoder>,
     /// Whether scraped chapters/descriptions are embedded automatically.
     pub autoembed: Arc<std::sync::Mutex<bool>>,
 }

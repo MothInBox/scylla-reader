@@ -20,6 +20,12 @@ pub const KEY_SESSIONS: KeyCode = KeyCode::Enter;
 pub const KEY_EMBED: KeyCode = KeyCode::Char('e');
 pub const KEY_NAV_UP: KeyCode = KeyCode::Up;
 pub const KEY_NAV_DOWN: KeyCode = KeyCode::Down;
+/// Toggle the AI results between book mode and grouped-chapter mode.
+pub const KEY_AI_TOGGLE: KeyCode = KeyCode::Char('g');
+/// Cycle the AI genre facet forward (`.`).
+pub const KEY_AI_GENRE_NEXT: KeyCode = KeyCode::Char('.');
+/// Cycle the AI genre facet backward (`,`).
+pub const KEY_AI_GENRE_PREV: KeyCode = KeyCode::Char(',');
 
 // ── Reader Page ──
 pub const KEY_NEXT_CHAPTER: KeyCode = KeyCode::Char('>');
@@ -38,6 +44,9 @@ pub const KEY_TOGGLE_ITEM: KeyCode = KeyCode::Char(' ');
 
 // ── Modal: Chapter Results ──
 pub const KEY_REFINE: KeyCode = KeyCode::Char('f');
+/// Fetch the full per-book chapter ranking (deeper drill-down) in the
+/// chapter-results modal.
+pub const KEY_DRILLDOWN_ALL: KeyCode = KeyCode::Char('a');
 
 // ── Modal: Add Book ──
 pub const KEY_SUBMIT_MODIFIER: KeyModifiers = KeyModifiers::CONTROL;

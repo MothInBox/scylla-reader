@@ -54,7 +54,6 @@ pub fn handle_backend_picker(state: &mut AppState, key: KeyEvent) -> bool {
                 state.lib.manager.set_active_backend(Some(name.clone()));
                 state.lib.library.filter.library = Some(name.clone());
                 state.lib.library.selected_index = 0;
-                state.lib.library.search_order = None;
                 if let Some(backend) = state.lib.manager.primary_backend() {
                     match crate::storage::client::block_on(backend.list_books()) {
                         Ok(books) => state.lib.library.books = books,

@@ -5,6 +5,20 @@ use crate::state::{JobsState, LibraryState};
 use crossterm::event::{KeyCode, KeyEvent};
 use scylla_core::types::JobFilter;
 
+/// Sends a job command to the server, logging a failure with the action name.
+fn send_job_command(lib: &LibraryState, path: &str, body: serde_json::Value, action: &str) {
+    let base = crate::storage::client::api_base_for(&lib.manager);
+    if let Err(e) =
+        crate::storage::client::block_on(crate::storage::client::job_command(&base, path, body))
+    {
+        crate::settings::log(
+            crate::settings::LogLevel::Error,
+            "JOBS",
+            &format!("Failed to {}: {}", action, e),
+        );
+    }
+}
+
 pub fn handle_jobs(jobs: &mut JobsState, lib: &mut LibraryState, key: KeyEvent) -> bool {
     let filtered_indices = jobs.filtered_jobs();
     let max_idx = filtered_indices.len().saturating_sub(1);
@@ -38,37 +52,18 @@ pub fn handle_jobs(jobs: &mut JobsState, lib: &mut LibraryState, key: KeyEvent) 
                     "JOBS",
                     &format!("Cancel job {}", job_id),
                 );
-                let base = crate::storage::client::api_base_for(&lib.manager);
-                if let Err(e) =
-                    crate::storage::client::block_on(crate::storage::client::job_command(
-                        &base,
-                        "cancel",
-                        serde_json::json!({ "id": job_id }),
-                    ))
-                {
-                    crate::settings::log(
-                        crate::settings::LogLevel::Error,
-                        "JOBS",
-                        &format!("Failed to cancel job {}: {}", job_id, e),
-                    );
-                }
+                send_job_command(
+                    lib,
+                    "cancel",
+                    serde_json::json!({ "id": job_id }),
+                    "cancel job",
+                );
             }
             true
         }
         KEY_JOBS_CANCEL_ALL => {
             crate::settings::log(crate::settings::LogLevel::Debug, "JOBS", "Cancel all jobs");
-            let base = crate::storage::client::api_base_for(&lib.manager);
-            if let Err(e) = crate::storage::client::block_on(crate::storage::client::job_command(
-                &base,
-                "cancel-all",
-                serde_json::json!({}),
-            )) {
-                crate::settings::log(
-                    crate::settings::LogLevel::Error,
-                    "JOBS",
-                    &format!("Failed to cancel all jobs: {}", e),
-                );
-            }
+            send_job_command(lib, "cancel-all", serde_json::json!({}), "cancel all jobs");
             true
         }
         KEY_JOBS_RETRY => {
@@ -81,20 +76,12 @@ pub fn handle_jobs(jobs: &mut JobsState, lib: &mut LibraryState, key: KeyEvent) 
                     "JOBS",
                     &format!("Retry job {}", job_id),
                 );
-                let base = crate::storage::client::api_base_for(&lib.manager);
-                if let Err(e) =
-                    crate::storage::client::block_on(crate::storage::client::job_command(
-                        &base,
-                        "retry",
-                        serde_json::json!({ "id": job_id }),
-                    ))
-                {
-                    crate::settings::log(
-                        crate::settings::LogLevel::Error,
-                        "JOBS",
-                        &format!("Failed to retry job {}: {}", job_id, e),
-                    );
-                }
+                send_job_command(
+                    lib,
+                    "retry",
+                    serde_json::json!({ "id": job_id }),
+                    "retry job",
+                );
             }
             true
         }
@@ -104,18 +91,7 @@ pub fn handle_jobs(jobs: &mut JobsState, lib: &mut LibraryState, key: KeyEvent) 
                 "JOBS",
                 "Retry all failed jobs",
             );
-            let base = crate::storage::client::api_base_for(&lib.manager);
-            if let Err(e) = crate::storage::client::block_on(crate::storage::client::job_command(
-                &base,
-                "retry-all",
-                serde_json::json!({}),
-            )) {
-                crate::settings::log(
-                    crate::settings::LogLevel::Error,
-                    "JOBS",
-                    &format!("Failed to retry all jobs: {}", e),
-                );
-            }
+            send_job_command(lib, "retry-all", serde_json::json!({}), "retry all jobs");
             true
         }
         KeyCode::Char('+') | KeyCode::Char('=') => {
@@ -128,18 +104,12 @@ pub fn handle_jobs(jobs: &mut JobsState, lib: &mut LibraryState, key: KeyEvent) 
             jobs.max_workers = new;
             lib.settings.max_workers = new;
             lib.settings.save();
-            let base = crate::storage::client::api_base_for(&lib.manager);
-            if let Err(e) = crate::storage::client::block_on(crate::storage::client::job_command(
-                &base,
+            send_job_command(
+                lib,
                 "workers",
                 serde_json::json!({ "max_workers": new }),
-            )) {
-                crate::settings::log(
-                    crate::settings::LogLevel::Error,
-                    "JOBS",
-                    &format!("Failed to set workers: {}", e),
-                );
-            }
+                "set workers",
+            );
             true
         }
         KEY_JOBS_DEC_WORKERS => {
@@ -152,18 +122,12 @@ pub fn handle_jobs(jobs: &mut JobsState, lib: &mut LibraryState, key: KeyEvent) 
             jobs.max_workers = new;
             lib.settings.max_workers = new;
             lib.settings.save();
-            let base = crate::storage::client::api_base_for(&lib.manager);
-            if let Err(e) = crate::storage::client::block_on(crate::storage::client::job_command(
-                &base,
+            send_job_command(
+                lib,
                 "workers",
                 serde_json::json!({ "max_workers": new }),
-            )) {
-                crate::settings::log(
-                    crate::settings::LogLevel::Error,
-                    "JOBS",
-                    &format!("Failed to set workers: {}", e),
-                );
-            }
+                "set workers",
+            );
             true
         }
         KEY_JOBS_FLUSH_COMPLETED => {
@@ -172,35 +136,18 @@ pub fn handle_jobs(jobs: &mut JobsState, lib: &mut LibraryState, key: KeyEvent) 
                 "JOBS",
                 "Flush completed jobs",
             );
-            let base = crate::storage::client::api_base_for(&lib.manager);
-            if let Err(e) = crate::storage::client::block_on(crate::storage::client::job_command(
-                &base,
+            send_job_command(
+                lib,
                 "flush-completed",
                 serde_json::json!({}),
-            )) {
-                crate::settings::log(
-                    crate::settings::LogLevel::Error,
-                    "JOBS",
-                    &format!("Failed to flush completed jobs: {}", e),
-                );
-            }
+                "flush completed jobs",
+            );
             jobs.remove_completed();
             true
         }
         KEY_JOBS_FLUSH_ALL => {
             crate::settings::log(crate::settings::LogLevel::Debug, "JOBS", "Flush all jobs");
-            let base = crate::storage::client::api_base_for(&lib.manager);
-            if let Err(e) = crate::storage::client::block_on(crate::storage::client::job_command(
-                &base,
-                "flush-all",
-                serde_json::json!({}),
-            )) {
-                crate::settings::log(
-                    crate::settings::LogLevel::Error,
-                    "JOBS",
-                    &format!("Failed to flush all jobs: {}", e),
-                );
-            }
+            send_job_command(lib, "flush-all", serde_json::json!({}), "flush all jobs");
             jobs.remove_all();
             true
         }

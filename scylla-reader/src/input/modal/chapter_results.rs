@@ -1,10 +1,11 @@
 //! Chapter-results modal input — navigate ranked books (collapsed) and their
 //! chapters (expanded). Tab/Enter expand/collapse the focused book; when
-//! expanded, Enter jumps to the focused chapter.
+//! expanded, Enter jumps to the focused chapter. `a` fetches the full per-book
+//! chapter ranking (deeper drill-down) for the focused book.
 
-use crate::event_types::ChapterHit;
+use crate::event_types::{ChapterHit, SearchOutcome, ServerEvent};
 use crate::input::keybinds::*;
-use crate::state::modal::FilterRow;
+use crate::state::modal::{FilterRow, SearchStatus};
 use crate::state::{AppState, Modal, Page};
 use crossterm::event::KeyEvent;
 
@@ -23,6 +24,18 @@ pub fn handle_chapter_results(state: &mut AppState, key: KeyEvent) -> bool {
     };
 
     match key.code {
+        KEY_DRILLDOWN_ALL => {
+            // 'a': fetch the full per-book chapter ranking for the focused
+            // book (chapter mode + book_url) and replace the modal content.
+            let book_index = match expanded {
+                None => cursor,
+                Some(gi) => gi,
+            };
+            if let Some(book_url) = groups.get(book_index).map(|g| g.book_url.clone()) {
+                start_drill_down(state, &query, &book_url);
+            }
+            true
+        }
         KEY_ROW_NEXT => {
             // Tab: expand the focused group, or collapse back to books.
             if let Modal::ChapterResults {
@@ -143,6 +156,50 @@ pub fn handle_chapter_results(state: &mut AppState, key: KeyEvent) -> bool {
     }
 }
 
+/// Fetch the full per-book chapter ranking for the drill-down modal. Sets the
+/// modal to Loading, spawns a one-shot search thread (chapter mode + book_url),
+/// and delivers the result via `ServerEvent::DrillDownResults`.
+fn start_drill_down(state: &mut AppState, query: &str, book_url: &str) {
+    crate::settings::log(
+        crate::settings::LogLevel::Debug,
+        "AI",
+        &format!("Drill-down: all chapters for {} ({})", book_url, query),
+    );
+    if let Modal::ChapterResults { status: s, .. } = &mut state.ui.modal {
+        *s = SearchStatus::Loading;
+    }
+    let base = crate::storage::client::api_base(state);
+    let Some(tx) = crate::event_types::event_tx() else {
+        crate::settings::log(
+            crate::settings::LogLevel::Error,
+            "AI",
+            "No event channel — cannot run drill-down search",
+        );
+        return;
+    };
+    let thread_query = query.to_string();
+    let thread_book_url = book_url.to_string();
+    std::thread::spawn(move || {
+        let result = crate::storage::client::block_on(crate::storage::client::search(
+            &base,
+            &thread_query,
+            "chapter",
+            Some(&thread_book_url),
+            50,
+        ));
+        let outcome = match result {
+            Ok(SearchOutcome::ChapterMode { hits, .. }) => Ok(hits),
+            Ok(SearchOutcome::NoEmbeddings { .. }) => Ok(Vec::new()),
+            Ok(SearchOutcome::BookMode { .. }) => Err("unexpected book-mode response".to_string()),
+            Err(e) => Err(e),
+        };
+        let _ = tx.send(ServerEvent::DrillDownResults {
+            book_url: thread_book_url,
+            result: outcome,
+        });
+    });
+}
+
 /// Jump to the selected chapter: reuse the active/first session when the book
 /// is in the library, otherwise use a guest session. Enqueues a FetchChapter
 /// job and clears the reader spinner if the enqueue fails.
@@ -214,7 +271,7 @@ fn jump_to_chapter(state: &mut AppState, hit: &ChapterHit) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event_types::{ChapterGroup, ChapterHit};
+    use crate::event_types::{ChapterGroup, ChapterHit, ServerEvent};
     use crate::state::modal::SearchStatus;
     use crate::test_helpers::*;
     use crossterm::event::KeyCode;
@@ -228,11 +285,17 @@ mod tests {
             chapter_title: format!("Ch{}", idx),
             score,
             genres: vec![],
+            snippet: String::new(),
         }
     }
 
     fn results_state() -> AppState {
         let mut state = test_state();
+        set_results_modal(&mut state);
+        state
+    }
+
+    fn set_results_modal(state: &mut AppState) {
         state.ui.modal = Modal::ChapterResults {
             query: "dragon".into(),
             groups: vec![
@@ -240,15 +303,15 @@ mod tests {
                     book_url: "u1".into(),
                     book_title: "Book A".into(),
                     genres: vec!["Fantasy".into()],
-                    chapters: vec![hit("u1", "Book A", 0, 0.9), hit("u1", "Book A", 1, 0.8)],
-                    best_score: 0.9,
+                    chapters: vec![hit("u1", "Book A", 0, 90.0), hit("u1", "Book A", 1, 80.0)],
+                    best_score: 90.0,
                 },
                 ChapterGroup {
                     book_url: "u2".into(),
                     book_title: "Book B".into(),
                     genres: vec![],
-                    chapters: vec![hit("u2", "Book B", 0, 0.7)],
-                    best_score: 0.7,
+                    chapters: vec![hit("u2", "Book B", 0, 70.0)],
+                    best_score: 70.0,
                 },
             ],
             cursor: 0,
@@ -256,7 +319,6 @@ mod tests {
             status: SearchStatus::Ready,
             expanded: None,
         };
-        state
     }
 
     fn modal_state(state: &AppState) -> (usize, Option<usize>) {
@@ -463,8 +525,8 @@ mod tests {
                 book_url: "u1".into(),
                 book_title: "Book A".into(),
                 genres: vec![],
-                chapters: vec![hit("u1", "Book A", 2, 0.9)],
-                best_score: 0.9,
+                chapters: vec![hit("u1", "Book A", 2, 90.0)],
+                best_score: 90.0,
             }],
             cursor: 0,
             scroll_offset: 0,
@@ -498,8 +560,8 @@ mod tests {
                 book_url: "u-unknown".into(),
                 book_title: "Remote Book".into(),
                 genres: vec![],
-                chapters: vec![hit("u-unknown", "Remote Book", 5, 0.9)],
-                best_score: 0.9,
+                chapters: vec![hit("u-unknown", "Remote Book", 5, 90.0)],
+                best_score: 90.0,
             }],
             cursor: 0,
             scroll_offset: 0,
@@ -534,5 +596,42 @@ mod tests {
         let mut state = results_state();
         let result = handle_chapter_results(&mut state, key_event(KeyCode::Char('x')));
         assert!(result);
+    }
+
+    #[test]
+    fn test_a_fetches_full_drill_down() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        crate::event_types::set_event_tx(tx);
+        // Point the manager at a guaranteed-closed port so the search thread
+        // gets connection-refused regardless of whether a real server is
+        // running (the app's server listens on 127.0.0.1:8080).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let backend = MockBackend::with_url("closed", &format!("http://127.0.0.1:{port}"));
+        let mut state = test_state_with_backend(Box::new(backend));
+        set_results_modal(&mut state);
+        handle_chapter_results(&mut state, key_event(KEY_DRILLDOWN_ALL));
+        // Modal shows Loading while the fetch is in flight.
+        if let Modal::ChapterResults { status, .. } = &state.ui.modal {
+            assert_eq!(*status, SearchStatus::Loading);
+        } else {
+            panic!("expected ChapterResults");
+        }
+        // The search thread delivers a DrillDownResults event for the focused
+        // book (u1); it fails fast (connection refused on the closed port) but
+        // the event still arrives.
+        let event = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        match event {
+            ServerEvent::DrillDownResults { book_url, result } => {
+                assert_eq!(book_url, "u1");
+                assert!(
+                    result.is_err(),
+                    "expected Err in test env, got {:?}",
+                    result
+                );
+            }
+            _ => panic!("expected DrillDownResults"),
+        }
     }
 }

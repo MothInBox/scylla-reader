@@ -12,6 +12,17 @@ use crate::state::AppState;
 use crate::state::page::Page;
 use ratatui::prelude::*;
 
+/// Truncate a snippet to `width` visible characters, appending an ellipsis when
+/// it was cut. Multi-byte safe (counts chars, not bytes).
+pub(crate) fn truncate_snippet(s: &str, width: usize) -> String {
+    if width == 0 || s.chars().count() <= width {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(width.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
     match state.ui.page {
         Page::Library => {

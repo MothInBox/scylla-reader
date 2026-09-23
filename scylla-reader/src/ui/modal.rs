@@ -6,10 +6,11 @@ use crate::models::{BookStatus, Session};
 use crate::state::modal::{FilterRow, Modal, SearchStatus};
 use crate::state::{LibraryState, UiState};
 use crate::ui::palette::draw_palette;
+use crate::ui::truncate_snippet;
 use crate::ui::widgets::centered_rect;
 use ratatui::prelude::*;
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut LibraryState) {
     if matches!(ui.modal, Modal::CommandPalette { .. }) {
@@ -476,6 +477,22 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                     .alignment(Alignment::Center);
                     frame.render_widget(para, inner);
                 }
+                SearchStatus::NoEmbeddings { total } => {
+                    let para = Paragraph::new(format!(
+                        "0 of {} chapters embedded yet — press e on a book in the library,\nor enable auto-embed in Settings.\n\nf refine · Esc close",
+                        total
+                    ))
+                    .wrap(Wrap { trim: true })
+                    .alignment(Alignment::Center);
+                    frame.render_widget(para, inner);
+                }
+                SearchStatus::NoChapters => {
+                    let para = Paragraph::new(
+                        "No matching chapters in this book.\n\nf refine · Esc close",
+                    )
+                    .alignment(Alignment::Center);
+                    frame.render_widget(para, inner);
+                }
                 SearchStatus::Error(msg) => {
                     let para =
                         Paragraph::new(format!("Search failed: {}\n\nf retry · Esc close", msg))
@@ -483,7 +500,8 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                     frame.render_widget(para, inner);
                 }
                 SearchStatus::Ready => {
-                    let (items, selected) = build_chapter_rows(groups, *expanded, *cursor);
+                    let (items, selected) =
+                        build_chapter_rows(groups, *expanded, *cursor, inner.width as usize);
                     let visible_height = inner.height.saturating_sub(2) as usize;
                     if *cursor < *scroll_offset {
                         *scroll_offset = *cursor;
@@ -501,7 +519,7 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
             }
 
             frame.render_widget(
-                Paragraph::new(" ↑↓ move  Tab expand/collapse  Enter open  f refine  Esc close ")
+                Paragraph::new(" ↑↓ move  Tab expand  Enter open  a all  f refine  Esc close ")
                     .style(Style::default().fg(Color::DarkGray)),
                 footer_area,
             );
@@ -601,6 +619,7 @@ fn build_chapter_rows(
     groups: &[ChapterGroup],
     expanded: Option<usize>,
     cursor: usize,
+    width: usize,
 ) -> (Vec<ListItem<'_>>, Option<usize>) {
     let mut items: Vec<ListItem> = Vec::new();
     let mut selected: Option<usize> = None;
@@ -611,7 +630,7 @@ fn build_chapter_rows(
         if is_expanded {
             for (ci, hit) in group.chapters.iter().enumerate() {
                 let visual = items.len();
-                items.push(chapter_item(hit));
+                items.push(chapter_item(hit, width));
                 if ci == cursor {
                     selected = Some(visual);
                 }
@@ -641,18 +660,27 @@ fn header_item(group: &ChapterGroup) -> ListItem<'_> {
         ),
         Span::styled(genres, Style::default().fg(Color::DarkGray)),
         Span::styled(
-            format!("{:>8}", format!("{:.2}", group.best_score)),
+            format!("{:>8.0}", group.best_score),
             Style::default().fg(Color::DarkGray),
         ),
     ]))
 }
 
-fn chapter_item(hit: &ChapterHit) -> ListItem<'_> {
-    let score = format!("{:>5.2}", hit.score);
-    ListItem::new(Line::from(vec![
+fn chapter_item(hit: &ChapterHit, width: usize) -> ListItem<'_> {
+    let score = format!("{:>5.0}", hit.score);
+    let mut lines = vec![Line::from(vec![
         Span::raw(format!("  {}", hit.chapter_title)),
         Span::styled(format!("  {}", score), Style::default().fg(Color::DarkGray)),
-    ]))
+    ])];
+    // Phase 4 snippet: a dimmed line under the title when a matching span is
+    // present (old servers / missing span → no extra line).
+    if !hit.snippet.trim().is_empty() {
+        lines.push(Line::from(Span::styled(
+            truncate_snippet(hit.snippet.trim(), width.saturating_sub(4)),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    ListItem::new(lines)
 }
 
 fn status_summary(filter: &BookFilter) -> String {
@@ -994,10 +1022,11 @@ mod tests {
                     chapter_url: "c1".into(),
                     chapter_idx: 0,
                     chapter_title: "Ch1".into(),
-                    score: 0.9,
+                    score: 87.0,
                     genres: vec![],
+                    snippet: String::new(),
                 }],
-                best_score: 0.9,
+                best_score: 87.0,
             }],
             _ => vec![],
         };
@@ -1046,11 +1075,45 @@ mod tests {
     }
 
     #[test]
+    fn test_draw_modal_chapter_results_no_embeddings_hint() {
+        let content = draw_chapter_results(SearchStatus::NoEmbeddings { total: 12 });
+        // The hint wraps across lines in the popup, so check the fragments.
+        assert!(
+            content.contains("0 of 12 chapters embedded yet"),
+            "content: {}",
+            content
+        );
+        assert!(
+            content.contains("press e on a book"),
+            "content: {}",
+            content
+        );
+        assert!(content.contains("in the library"), "content: {}", content);
+        assert!(
+            content.contains("enable auto-embed in Settings"),
+            "content: {}",
+            content
+        );
+        // Not an error toast — no "Search failed".
+        assert!(!content.contains("Search failed"), "content: {}", content);
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_no_chapters_hint() {
+        let content = draw_chapter_results(SearchStatus::NoChapters);
+        assert!(
+            content.contains("No matching chapters in this book"),
+            "content: {}",
+            content
+        );
+    }
+
+    #[test]
     fn test_draw_modal_chapter_results_ready_collapsed() {
         let content = draw_chapter_results(SearchStatus::Ready);
         assert!(content.contains("Book A"), "content: {}", content);
         assert!(content.contains("Fantasy"), "content: {}", content);
-        assert!(content.contains("0.90"), "content: {}", content);
+        assert!(content.contains("87"), "content: {}", content);
         // Collapsed: only the book headers are shown, no chapters.
         assert!(!content.contains("Ch1"), "content: {}", content);
         assert!(content.contains("↑↓ move"), "content: {}", content);
@@ -1072,10 +1135,11 @@ mod tests {
                     chapter_url: "c1".into(),
                     chapter_idx: 0,
                     chapter_title: "Ch1".into(),
-                    score: 0.9,
+                    score: 87.0,
                     genres: vec![],
+                    snippet: String::new(),
                 }],
-                best_score: 0.9,
+                best_score: 87.0,
             }],
             cursor: 0,
             scroll_offset: 0,
@@ -1094,7 +1158,7 @@ mod tests {
         // Expanded: the book header AND its chapters are shown.
         assert!(content.contains("Book A"), "content: {}", content);
         assert!(content.contains("Ch1"), "content: {}", content);
-        assert!(content.contains("0.90"), "content: {}", content);
+        assert!(content.contains("87"), "content: {}", content);
     }
 
     fn draw_embed_chapters() -> String {
@@ -1159,5 +1223,69 @@ mod tests {
         assert!(content.contains("Ch 13"), "content: {}", content);
         assert!(content.contains("Space toggle"), "content: {}", content);
         assert!(content.contains("Enter embed"), "content: {}", content);
+    }
+
+    /// Render an expanded chapter-results modal with the given chapter snippet.
+    fn draw_expanded_chapter_results(snippet: &str) -> String {
+        let mut state = make_state();
+        state.ui.modal = Modal::ChapterResults {
+            query: "dragon".into(),
+            groups: vec![ChapterGroup {
+                book_url: "u1".into(),
+                book_title: "Book A".into(),
+                genres: vec!["Fantasy".into()],
+                chapters: vec![crate::event_types::ChapterHit {
+                    book_url: "u1".into(),
+                    book_title: "Book A".into(),
+                    chapter_url: "c1".into(),
+                    chapter_idx: 0,
+                    chapter_title: "Ch1".into(),
+                    score: 87.0,
+                    genres: vec![],
+                    snippet: snippet.into(),
+                }],
+                best_score: 87.0,
+            }],
+            cursor: 0,
+            scroll_offset: 0,
+            status: SearchStatus::Ready,
+            expanded: Some(0),
+        };
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_modal(f, f.area(), &mut state.ui, &mut state.lib);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        buf.content().iter().map(|c| c.symbol()).collect()
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_shows_snippet() {
+        let content = draw_expanded_chapter_results("the dragon circled the spire");
+        assert!(
+            content.contains("the dragon circled the spire"),
+            "content: {}",
+            content
+        );
+        assert!(content.contains("Ch1"), "content: {}", content);
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_omits_empty_snippet_line() {
+        let content = draw_expanded_chapter_results("");
+        assert!(content.contains("Ch1"), "content: {}", content);
+        assert!(!content.contains("…"), "content: {}", content);
+    }
+
+    #[test]
+    fn test_draw_modal_chapter_results_truncates_long_snippet() {
+        let long = "x".repeat(500);
+        let content = draw_expanded_chapter_results(&long);
+        // The snippet is truncated to the popup width with an ellipsis.
+        assert!(content.contains('…'), "content: {}", content);
+        assert!(content.matches('x').count() < 500, "content: {}", content);
     }
 }

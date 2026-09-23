@@ -17,16 +17,14 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: cachix/cachix-action@v15
-        with:
-          name: scylla-reader
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN || '' }}
-
       - name: Build
         run: nix build
 
       - name: Test
-        run: nix develop --command bash -c "cd scylla-reader && cargo test"
+        run: nix develop --command bash -c "cargo test"
 
       - name: Clippy
-        run: nix develop --command bash -c "cd scylla-reader && cargo clippy -- -D warnings"
+        run: nix develop --command bash -c "cargo clippy -- -D warnings"
+
+      - name: Format
+        run: nix develop --command bash -c "cargo fmt --all --check"
