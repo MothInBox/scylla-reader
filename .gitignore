@@ -5,11 +5,14 @@ target
 **/*.rs.bk
 
 *.pdb
-*superpowers*
-*opencode*
-*claude*
-*agents*
-*AGENTS*
+
+# Agent tooling state (local only, OpenCode-readable)
+.opencode/
+.claude/
+.superpowers/
+docs/superpowers/
+AGENTS.md
+CLAUDE.md
 
 **/mutants.out*/
 rustc-ice-*.txt
