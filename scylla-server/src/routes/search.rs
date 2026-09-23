@@ -439,24 +439,27 @@ fn rerank_books(
     let Some(rerank) = state.reranker.get() else {
         return ranked_books;
     };
-    let has_passage: Vec<bool> = ranked_books
-        .iter()
-        .map(|(url, _, _)| by_book.get(url).and_then(|g| g.first()).is_some())
-        .collect();
-    let texts: Vec<&str> = ranked_books
-        .iter()
-        .filter_map(|(url, _, _)| {
-            by_book
-                .get(url)
-                .and_then(|g| g.first())
-                .map(|h| h.7.as_str())
-        })
-        .collect();
+    // Partition into books with a reranker passage (a best chapter hit) and
+    // those without — the latter keep their original relative order at the end.
+    let mut with_passage: Vec<(RankedBook, &str)> = Vec::new();
+    let mut no_passage: Vec<RankedBook> = Vec::new();
+    for book in ranked_books {
+        match by_book.get(&book.0).and_then(|g| g.first()) {
+            Some(h) => with_passage.push((book, h.7.as_str())),
+            None => no_passage.push(book),
+        }
+    }
+    if with_passage.is_empty() {
+        return no_passage;
+    }
+    let texts: Vec<&str> = with_passage.iter().map(|(_, t)| *t).collect();
     let scores = match rerank(query, &texts) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("RERANK: cross-encoder failed: {e}");
-            return ranked_books;
+            let mut out: Vec<RankedBook> = with_passage.into_iter().map(|(b, _)| b).collect();
+            out.extend(no_passage);
+            return out;
         }
     };
     if scores.len() != texts.len() {
@@ -465,22 +468,15 @@ fn rerank_books(
             scores.len(),
             texts.len()
         );
-        return ranked_books;
+        let mut out: Vec<RankedBook> = with_passage.into_iter().map(|(b, _)| b).collect();
+        out.extend(no_passage);
+        return out;
     }
-    let mut scored: Vec<(f32, RankedBook)> = Vec::new();
-    let mut no_passage: Vec<RankedBook> = Vec::new();
-    let mut score_iter = scores.into_iter();
-    for (book, has) in ranked_books.into_iter().zip(has_passage) {
-        if has {
-            if let Some(s) = score_iter.next() {
-                scored.push((s, book));
-            } else {
-                no_passage.push(book);
-            }
-        } else {
-            no_passage.push(book);
-        }
-    }
+    let mut scored: Vec<(f32, RankedBook)> = with_passage
+        .into_iter()
+        .zip(scores)
+        .map(|((b, _), s)| (s, b))
+        .collect();
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     let mut out: Vec<RankedBook> = scored.into_iter().map(|(_, b)| b).collect();
     out.extend(no_passage);

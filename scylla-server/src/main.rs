@@ -337,8 +337,10 @@ fn recompute_aggregate(
     if agg.is_empty() {
         return;
     }
-    let genres = match genre_embeddings {
-        Some(g) => g.clone(),
+    // Borrow the cached genre embeddings (no clone — ~30KB per recompute) or
+    // compute + cache them on first use.
+    let genres: &[(String, Vec<f32>)] = match genre_embeddings {
+        Some(g) => g.as_slice(),
         None => {
             let mut g = Vec::new();
             for (name, desc_text) in embeddings::GENRES {
@@ -347,11 +349,11 @@ fn recompute_aggregate(
                     Err(e) => eprintln!("Failed to embed genre {name}: {e}"),
                 }
             }
-            *genre_embeddings = Some(g.clone());
-            g
+            *genre_embeddings = Some(g);
+            genre_embeddings.as_ref().expect("just set").as_slice()
         }
     };
-    let top = embeddings::classify(&agg, &genres, 3);
+    let top = embeddings::classify(&agg, genres, 3);
     let db = db.blocking_lock();
     if let Err(e) = db.upsert_book_embedding(book_url, desc.as_deref(), Some(&agg), Some(&top)) {
         eprintln!("Failed to store aggregate embedding: {e}");

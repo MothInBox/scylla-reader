@@ -248,13 +248,21 @@ impl Library {
     /// `genre` facet (only books carrying that genre are ranked).
     pub fn ai_search_order(&self) -> Option<Vec<usize>> {
         let ai = self.ai.as_ref()?;
+        // Map each library book URL to its index once (O(books)) instead of
+        // scanning the library per AI book (O(ai_books × books)) on every render.
+        let index_by_url: HashMap<&str, usize> = self
+            .books
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.url.as_str(), i))
+            .collect();
         Some(
             ai.visible_book_indices()
                 .into_iter()
                 .filter_map(|bi| {
-                    self.books
-                        .iter()
-                        .position(|lb| lb.url == ai.results.books[bi].book_url)
+                    index_by_url
+                        .get(ai.results.books[bi].book_url.as_str())
+                        .copied()
                 })
                 .collect(),
         )
