@@ -25,10 +25,17 @@ pub struct ChapterHit {
 
 /// The server's search response: normal chapter hits, or a distinct
 /// "no embeddings yet" signal (first-run UX — the searchable corpus is empty).
+/// `embedded`/`total` are library-level chapter-embedding coverage counts.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchOutcome {
-    Hits(Vec<ChapterHit>),
-    NoEmbeddings { total: usize },
+    Hits {
+        hits: Vec<ChapterHit>,
+        embedded: usize,
+        total: usize,
+    },
+    NoEmbeddings {
+        total: usize,
+    },
 }
 
 /// Chapters of one book, grouped for the AI results modal.
@@ -532,20 +539,20 @@ mod tests {
 
     #[test]
     fn test_chapter_hit_deserializes_from_response_json() {
-        let json = r#"{"book_url":"http://example.com/book","book_title":"Book","chapter_url":"http://example.com/book/ch1","chapter_idx":3,"chapter_title":"Ch3","score":0.87,"genres":["Fantasy","LitRPG"]}"#;
+        let json = r#"{"book_url":"http://example.com/book","book_title":"Book","chapter_url":"http://example.com/book/ch1","chapter_idx":3,"chapter_title":"Ch3","score":87.0,"genres":["Fantasy","LitRPG"]}"#;
         let hit: ChapterHit = serde_json::from_str(json).unwrap();
         assert_eq!(hit.book_url, "http://example.com/book");
         assert_eq!(hit.book_title, "Book");
         assert_eq!(hit.chapter_url, "http://example.com/book/ch1");
         assert_eq!(hit.chapter_idx, 3);
         assert_eq!(hit.chapter_title, "Ch3");
-        assert!((hit.score - 0.87).abs() < 1e-6);
+        assert!((hit.score - 87.0).abs() < 1e-6);
         assert_eq!(hit.genres, vec!["Fantasy", "LitRPG"]);
     }
 
     #[test]
     fn test_chapter_hit_genres_default_when_missing() {
-        let json = r#"{"book_url":"u","book_title":"B","chapter_url":"c","chapter_idx":0,"chapter_title":"C","score":0.5}"#;
+        let json = r#"{"book_url":"u","book_title":"B","chapter_url":"c","chapter_idx":0,"chapter_title":"C","score":50.0}"#;
         let hit: ChapterHit = serde_json::from_str(json).unwrap();
         assert!(hit.genres.is_empty());
     }
@@ -554,7 +561,11 @@ mod tests {
     fn test_ai_search_results_event_constructed_directly() {
         let event = ServerEvent::AiSearchResults {
             query: "dragon".into(),
-            result: Ok(SearchOutcome::Hits(vec![])),
+            result: Ok(SearchOutcome::Hits {
+                hits: vec![],
+                embedded: 0,
+                total: 0,
+            }),
         };
         match event {
             ServerEvent::AiSearchResults { query, result } => {

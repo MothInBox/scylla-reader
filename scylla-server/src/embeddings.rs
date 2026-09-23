@@ -414,8 +414,10 @@ pub fn rank_books(books: &[BookAggregate], query: &[f32], limit: usize) -> Vec<R
 ///
 /// Diversity: at most [`MAX_PER_BOOK`] chapters per book are taken from the
 /// ranked list first; remaining slots (up to `limit`) are backfilled from the
-/// rest. Results below [`SCORE_FLOOR`] are dropped, and the surviving scores
-/// are normalized to a 0–100 display scale over the final result set.
+/// rest. The cap is a no-op for single-book inputs (all of that book's hits
+/// backfill) — Phase 2's per-book drill-down relies on this. Results below
+/// [`SCORE_FLOOR`] are dropped, and the surviving scores are mapped to a 0–100
+/// display scale via a fixed mapping (see [`normalize_score`]).
 pub fn rank_chapters(
     chapters: &[ChapterHit],
     query: &[f32],
@@ -457,7 +459,12 @@ pub fn rank_chapters(
     }
     capped.extend(overflow);
     capped.truncate(limit);
-    normalize_scores(&mut capped);
+    // Backfill can interleave books, so restore descending order before the
+    // display mapping.
+    capped.sort_by(|a, b| b.6.partial_cmp(&a.6).unwrap_or(std::cmp::Ordering::Equal));
+    for hit in &mut capped {
+        hit.6 = normalize_score(hit.6);
+    }
     capped
 }
 
@@ -467,19 +474,11 @@ pub const SCORE_FLOOR: f32 = 0.25;
 /// Per-book cap for library-level chapter ranking (result diversity).
 pub const MAX_PER_BOOK: usize = 3;
 
-/// Normalizes cosine scores to a 0–100 display scale (min-max over the set).
-/// A degenerate set (single score or all equal) maps to 100.
-fn normalize_scores(hits: &mut [RankedChapterHit]) {
-    let min = hits.iter().map(|h| h.6).fold(f32::INFINITY, f32::min);
-    let max = hits.iter().map(|h| h.6).fold(f32::NEG_INFINITY, f32::max);
-    let range = max - min;
-    for hit in hits.iter_mut() {
-        hit.6 = if range <= f32::EPSILON {
-            100.0
-        } else {
-            ((hit.6 - min) / range) * 100.0
-        };
-    }
+/// Maps a cosine score to the 0–100 display scale with a fixed mapping from
+/// the [`SCORE_FLOOR`]..=1.0 range, clamped to [0, 100]. Unlike min-max, the
+/// result is comparable across result sets.
+fn normalize_score(cos: f32) -> f32 {
+    ((cos - SCORE_FLOOR) / (1.0 - SCORE_FLOOR) * 100.0).clamp(0.0, 100.0)
 }
 
 #[cfg(test)]
@@ -662,16 +661,17 @@ mod tests {
     }
 
     #[test]
-    fn test_rank_chapters_flat_sorted_by_score() {
+    fn test_rank_chapters_flat_sorted_desc() {
         let chapters = vec![
             chapter_hit("book1", "ch1", [1.0, 0.0]),
             // Orthogonal to the query — dropped by the score floor.
             chapter_hit("book2", "ch2", [0.0, 1.0]),
             chapter_hit("book1", "ch3", [0.9, 0.1]),
+            chapter_hit("book2", "ch4", [0.5, 0.5]),
         ];
         let query = vec![1.0, 0.0];
         let ranked = rank_chapters(&chapters, &query, 10);
-        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked.len(), 3);
         // Flat, sorted by score desc.
         assert_eq!(ranked[0].2, "ch1");
         assert_eq!(ranked[0].0, "book1");
@@ -680,9 +680,13 @@ mod tests {
         assert_eq!(ranked[0].4, 1);
         assert_eq!(ranked[0].5, None);
         assert_eq!(ranked[1].2, "ch3");
-        // Normalized: best hit maps to 100, worst surviving hit to 0.
+        assert_eq!(ranked[2].2, "ch4");
+        // Fixed mapping: cos 1.0 → 100, cos ~0.994 → ~99.18, cos ~0.707 → ~60.95.
         assert_eq!(ranked[0].6, 100.0);
-        assert_eq!(ranked[1].6, 0.0);
+        assert!((ranked[1].6 - 99.18).abs() < 0.01);
+        assert!((ranked[2].6 - 60.95).abs() < 0.01);
+        // Descending order holds across the whole result set.
+        assert!(ranked.windows(2).all(|w| w[0].6 >= w[1].6));
     }
 
     #[test]
@@ -756,15 +760,16 @@ mod tests {
         let ranked = rank_chapters(&chapters, &query, 10);
         assert_eq!(ranked.len(), 2);
         assert_eq!(ranked[0].6, 100.0);
-        assert_eq!(ranked[1].6, 0.0);
+        assert!((ranked[1].6 - 60.95).abs() < 0.01);
     }
 
     #[test]
-    fn test_rank_chapters_single_hit_normalizes_to_100() {
+    fn test_rank_chapters_single_hit_fixed_mapping() {
         let chapters = vec![chapter_hit("book1", "ch1", [0.5, 0.5])];
         let query = vec![1.0, 0.0];
         let ranked = rank_chapters(&chapters, &query, 10);
         assert_eq!(ranked.len(), 1);
-        assert_eq!(ranked[0].6, 100.0);
+        // Fixed mapping, not min-max: a lone ~0.707 cosine maps to ~61, not 100.
+        assert!((ranked[0].6 - 60.95).abs() < 0.01);
     }
 }

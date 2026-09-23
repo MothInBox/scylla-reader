@@ -180,13 +180,19 @@ pub async fn embedding_status(base: &str, book_url: &str) -> Result<EmbeddingSta
 }
 
 /// Parse a search response: a distinct `no_embeddings` body (empty corpus) or
-/// the flat `results` array.
+/// the flat `results` array plus library-level coverage counts.
 fn parse_search_outcome(json: &serde_json::Value) -> SearchOutcome {
     if json.get("error").and_then(|e| e.as_str()) == Some("no_embeddings") {
         let total = json.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         return SearchOutcome::NoEmbeddings { total };
     }
-    SearchOutcome::Hits(parse_search_response(json))
+    let embedded = json.get("embedded").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let total = json.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    SearchOutcome::Hits {
+        hits: parse_search_response(json),
+        embedded,
+        total,
+    }
 }
 
 /// Parse the `results` array of a search response into `ChapterHit`s, logging
@@ -255,14 +261,14 @@ mod tests {
         let json = serde_json::json!({
             "mode": "chapter",
             "results": [
-                {"book_url":"u1","book_title":"B1","chapter_url":"c1","chapter_idx":0,"chapter_title":"C1","score":0.9,"genres":["Fantasy"]},
-                {"book_url":"u2","book_title":"B2","chapter_url":"c2","chapter_idx":1,"chapter_title":"C2","score":0.5}
+                {"book_url":"u1","book_title":"B1","chapter_url":"c1","chapter_idx":0,"chapter_title":"C1","score":90.0,"genres":["Fantasy"]},
+                {"book_url":"u2","book_title":"B2","chapter_url":"c2","chapter_idx":1,"chapter_title":"C2","score":50.0}
             ]
         });
         let hits = parse_search_response(&json);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].book_title, "B1");
-        assert_eq!(hits[0].score, 0.9);
+        assert_eq!(hits[0].score, 90.0);
         assert_eq!(hits[0].genres, vec!["Fantasy"]);
         assert!(hits[1].genres.is_empty());
     }
@@ -277,7 +283,7 @@ mod tests {
     fn test_parse_search_response_drops_malformed() {
         let json = serde_json::json!({
             "results": [
-                {"book_url":"u1","book_title":"B1","chapter_url":"c1","chapter_idx":0,"chapter_title":"C1","score":0.9},
+                {"book_url":"u1","book_title":"B1","chapter_url":"c1","chapter_idx":0,"chapter_title":"C1","score":90.0},
                 {"book_url":"u2"}  // missing required fields
             ]
         });
@@ -299,14 +305,22 @@ mod tests {
     fn test_parse_search_outcome_hits() {
         let json = serde_json::json!({
             "mode": "chapter",
+            "embedded": 12,
+            "total": 15,
             "results": [
                 {"book_url":"u1","book_title":"B1","chapter_url":"c1","chapter_idx":0,"chapter_title":"C1","score":87.0}
             ]
         });
         match parse_search_outcome(&json) {
-            SearchOutcome::Hits(hits) => {
+            SearchOutcome::Hits {
+                hits,
+                embedded,
+                total,
+            } => {
                 assert_eq!(hits.len(), 1);
                 assert_eq!(hits[0].score, 87.0);
+                assert_eq!(embedded, 12);
+                assert_eq!(total, 15);
             }
             _ => panic!("expected Hits"),
         }

@@ -19,8 +19,11 @@ pub enum SearchStatus {
     Loading,
     Ready,
     Empty,
-    /// The searchable corpus is empty — first-run hint, not an error.
-    NoEmbeddings,
+    /// The searchable corpus is empty — first-run hint, not an error. `total`
+    /// is the library's chapter count (0 embedded).
+    NoEmbeddings {
+        total: usize,
+    },
     Error(String),
 }
 

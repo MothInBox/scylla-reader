@@ -1847,6 +1847,9 @@ mod tests {
         assert_eq!(results[1]["book_url"], "book-b");
         assert!(results[0]["score"].as_f64().unwrap() > results[1]["score"].as_f64().unwrap());
         assert_eq!(results[0]["genres"][0], "Fantasy");
+        // Coverage fields: no chapters in the library, so 0 of 0 embedded.
+        assert_eq!(json["embedded"], 0);
+        assert_eq!(json["total"], 0);
     }
 
     #[tokio::test]
@@ -1940,6 +1943,9 @@ mod tests {
         assert_eq!(results[1]["chapter_url"], "ch-a2");
         assert_eq!(results[2]["chapter_url"], "ch-b1");
         assert_eq!(results[2]["book_title"], "Book B");
+        // Coverage fields: all 3 seeded chapters are embedded.
+        assert_eq!(json["embedded"], 3);
+        assert_eq!(json["total"], 3);
     }
 
     #[tokio::test]

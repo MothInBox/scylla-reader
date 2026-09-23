@@ -476,10 +476,11 @@ pub fn draw_modal(frame: &mut Frame, area: Rect, ui: &mut UiState, lib: &mut Lib
                     .alignment(Alignment::Center);
                     frame.render_widget(para, inner);
                 }
-                SearchStatus::NoEmbeddings => {
-                    let para = Paragraph::new(
-                        "No chapters embedded yet — run EmbedBatch from the Jobs page\n(or enable auto-embed in Settings).\n\nf refine · Esc close",
-                    )
+                SearchStatus::NoEmbeddings { total } => {
+                    let para = Paragraph::new(format!(
+                        "0 of {} chapters embedded yet — press e on a book in the library,\nor enable auto-embed in Settings.\n\nf refine · Esc close",
+                        total
+                    ))
                     .wrap(Wrap { trim: true })
                     .alignment(Alignment::Center);
                     frame.render_widget(para, inner);
@@ -1055,19 +1056,19 @@ mod tests {
 
     #[test]
     fn test_draw_modal_chapter_results_no_embeddings_hint() {
-        let content = draw_chapter_results(SearchStatus::NoEmbeddings);
+        let content = draw_chapter_results(SearchStatus::NoEmbeddings { total: 12 });
         // The hint wraps across lines in the popup, so check the fragments.
         assert!(
-            content.contains("No chapters embedded yet"),
+            content.contains("0 of 12 chapters embedded yet"),
             "content: {}",
             content
         );
         assert!(
-            content.contains("run EmbedBatch from the"),
+            content.contains("press e on a book"),
             "content: {}",
             content
         );
-        assert!(content.contains("Jobs page"), "content: {}", content);
+        assert!(content.contains("in the library"), "content: {}", content);
         assert!(
             content.contains("enable auto-embed in Settings"),
             "content: {}",

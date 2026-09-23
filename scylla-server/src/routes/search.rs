@@ -5,14 +5,22 @@ use serde_json::json;
 
 use crate::state::AppState;
 
+/// Search route error: an HTTP status plus a JSON error body.
+type SearchError = (StatusCode, Json<serde_json::Value>);
+
 /// POST /api/search — body `{"query": "...", "mode": "book"|"chapter", "limit": N?}`.
 ///
 /// Embeds the query and returns the top matching books (by aggregate embedding)
 /// or chapters (grouped by book).
+///
+/// Score contract: every hit's `score` is a **display-only** normalized 0–100
+/// value (fixed mapping from the cosine range, see `embeddings::normalize_score`),
+/// not a raw similarity measure. Scores are comparable across result sets but
+/// must not be interpreted as probabilities or raw cosines.
 pub async fn search(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, SearchError> {
     let query = payload.get("query").and_then(|v| v.as_str()).unwrap_or("");
     if query.trim().is_empty() {
         return Err((
@@ -51,12 +59,18 @@ async fn search_chapters(
     state: &AppState,
     query: &str,
     limit: usize,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, SearchError> {
     let db = state.db.lock().await;
     let chapters = db.load_all_chapter_embeddings().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": "failed to load chapter embeddings" })),
+        )
+    })?;
+    let embedded = db.embedded_chapter_count().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to count chapter embeddings" })),
         )
     })?;
     let total = db.chapter_count().map_err(|_| {
@@ -93,7 +107,12 @@ async fn search_chapters(
             },
         )
         .collect();
-    Ok(Json(json!({ "mode": "chapter", "results": results })))
+    Ok(Json(json!({
+        "mode": "chapter",
+        "embedded": embedded,
+        "total": total,
+        "results": results,
+    })))
 }
 
 /// Book-mode search (unchanged behavior).
@@ -101,13 +120,25 @@ async fn search_books(
     state: &AppState,
     query: &str,
     limit: usize,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, SearchError> {
     let query_vec = embed_query(state, query)?;
     let db = state.db.lock().await;
     let books = db.load_all_book_embeddings().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": "failed to load book embeddings" })),
+        )
+    })?;
+    let embedded = db.embedded_chapter_count().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to count chapter embeddings" })),
+        )
+    })?;
+    let total = db.chapter_count().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to count chapters" })),
         )
     })?;
     drop(db);
@@ -123,15 +154,17 @@ async fn search_books(
             })
         })
         .collect();
-    Ok(Json(json!({ "mode": "book", "results": results })))
+    Ok(Json(json!({
+        "mode": "book",
+        "embedded": embedded,
+        "total": total,
+        "results": results,
+    })))
 }
 
 /// Embeds the query with the shared embedder, returning a 503 when the model
 /// isn't available (offline first run / post-failure cooldown).
-fn embed_query(
-    state: &AppState,
-    query: &str,
-) -> Result<Vec<f32>, (StatusCode, Json<serde_json::Value>)> {
+fn embed_query(state: &AppState, query: &str) -> Result<Vec<f32>, SearchError> {
     let Some(embed) = state.embedder.get() else {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,

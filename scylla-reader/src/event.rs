@@ -314,7 +314,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                     continue;
                 }
                 match result {
-                    Ok(SearchOutcome::Hits(hits)) => {
+                    Ok(SearchOutcome::Hits { hits, .. }) => {
                         let groups = build_groups(hits);
                         let status = if groups.is_empty() {
                             SearchStatus::Empty
@@ -355,7 +355,7 @@ pub fn drain_events(state: &mut AppState, event_rx: &mpsc::Receiver<ServerEvent>
                             *g = Vec::new();
                             *cursor = 0;
                             *scroll_offset = 0;
-                            *s = SearchStatus::NoEmbeddings;
+                            *s = SearchStatus::NoEmbeddings { total };
                             *expanded = None;
                         }
                     }
@@ -1126,15 +1126,19 @@ mod tests {
     fn test_ai_search_results_groups_by_book() {
         let mut state = chapter_results_state("dragon");
         let hits = vec![
-            sample_hit("u1", "Book A", 0, 0.5),
-            sample_hit("u2", "Book B", 0, 0.9),
-            sample_hit("u1", "Book A", 1, 0.8),
+            sample_hit("u1", "Book A", 0, 50.0),
+            sample_hit("u2", "Book B", 0, 90.0),
+            sample_hit("u1", "Book A", 1, 80.0),
         ];
         send(
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "dragon".into(),
-                result: Ok(SearchOutcome::Hits(hits)),
+                result: Ok(SearchOutcome::Hits {
+                    hits,
+                    embedded: 3,
+                    total: 3,
+                }),
             },
         );
         match &state.ui.modal {
@@ -1147,12 +1151,12 @@ mod tests {
                 assert_eq!(*status, SearchStatus::Ready);
                 assert_eq!(*cursor, 0);
                 assert_eq!(groups.len(), 2);
-                // Books ordered by best chapter score desc: Book B (0.9) first.
+                // Books ordered by best chapter score desc: Book B (90) first.
                 assert_eq!(groups[0].book_title, "Book B");
                 assert_eq!(groups[1].book_title, "Book A");
                 // best_score mirrors the best chapter's score.
-                assert_eq!(groups[0].best_score, 0.9);
-                assert_eq!(groups[1].best_score, 0.8);
+                assert_eq!(groups[0].best_score, 90.0);
+                assert_eq!(groups[1].best_score, 80.0);
                 // Chapters within a group sorted by score desc.
                 assert_eq!(groups[1].chapters[0].chapter_idx, 1);
                 assert_eq!(groups[1].chapters[1].chapter_idx, 0);
@@ -1168,7 +1172,11 @@ mod tests {
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "dragon".into(),
-                result: Ok(SearchOutcome::Hits(vec![])),
+                result: Ok(SearchOutcome::Hits {
+                    hits: vec![],
+                    embedded: 0,
+                    total: 0,
+                }),
             },
         );
         match &state.ui.modal {
@@ -1207,7 +1215,7 @@ mod tests {
         );
         match &state.ui.modal {
             Modal::ChapterResults { status, groups, .. } => {
-                assert_eq!(*status, SearchStatus::NoEmbeddings);
+                assert_eq!(*status, SearchStatus::NoEmbeddings { total: 12 });
                 assert!(groups.is_empty());
             }
             _ => panic!("expected ChapterResults"),
@@ -1221,9 +1229,11 @@ mod tests {
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "other".into(),
-                result: Ok(SearchOutcome::Hits(vec![sample_hit(
-                    "u1", "Book A", 0, 0.9,
-                )])),
+                result: Ok(SearchOutcome::Hits {
+                    hits: vec![sample_hit("u1", "Book A", 0, 90.0)],
+                    embedded: 1,
+                    total: 1,
+                }),
             },
         );
         match &state.ui.modal {
@@ -1242,9 +1252,11 @@ mod tests {
             &mut state,
             ServerEvent::AiSearchResults {
                 query: "dragon".into(),
-                result: Ok(SearchOutcome::Hits(vec![sample_hit(
-                    "u1", "Book A", 0, 0.9,
-                )])),
+                result: Ok(SearchOutcome::Hits {
+                    hits: vec![sample_hit("u1", "Book A", 0, 90.0)],
+                    embedded: 1,
+                    total: 1,
+                }),
             },
         );
         assert_eq!(state.ui.modal, Modal::None);
@@ -1253,15 +1265,15 @@ mod tests {
     #[test]
     fn test_build_groups_preserves_genres_and_sorts() {
         let mut hits = vec![
-            sample_hit("u1", "Book A", 0, 0.5),
-            sample_hit("u1", "Book A", 1, 0.9),
+            sample_hit("u1", "Book A", 0, 50.0),
+            sample_hit("u1", "Book A", 1, 90.0),
         ];
         hits[0].genres = vec!["Fantasy".into()];
         hits[1].genres = vec!["Fantasy".into()];
         let groups = build_groups(hits);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].genres, vec!["Fantasy"]);
-        assert_eq!(groups[0].best_score, 0.9);
+        assert_eq!(groups[0].best_score, 90.0);
         assert_eq!(groups[0].chapters[0].chapter_idx, 1);
         assert_eq!(groups[0].chapters[1].chapter_idx, 0);
     }

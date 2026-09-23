@@ -507,6 +507,19 @@ impl ServerDb {
         Ok(n as usize)
     }
 
+    /// Number of chapter embedding rows (search coverage reporting). A
+    /// dedicated count rather than `load_all_chapter_embeddings().len()`: the
+    /// loader's LEFT JOIN can include orphan rows, and Phase 3 makes the table
+    /// per-chunk.
+    pub fn embedded_chapter_count(&self) -> Result<usize> {
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM chapter_embeddings", [], |row| {
+                row.get(0)
+            })?;
+        Ok(n as usize)
+    }
+
     /// All book aggregate embeddings as (book_url, aggregate, genres) — for
     /// search. Rows without an aggregate embedding are excluded.
     pub fn load_all_book_embeddings(&self) -> Result<Vec<crate::embeddings::BookAggregate>> {
