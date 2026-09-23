@@ -4,10 +4,15 @@ use std::sync::Arc;
 use axum::{Json, extract::State, http::StatusCode};
 use serde_json::json;
 
+use crate::embeddings::{RankedBook, RankedChapterHit};
 use crate::state::AppState;
 
 /// Search route error: an HTTP status plus a JSON error body.
 type SearchError = (StatusCode, Json<serde_json::Value>);
+
+/// How many candidates the bi-encoder returns before the cross-encoder rerank
+/// (and before truncation to the requested `limit`).
+const RERANK_CANDIDATES: usize = 50;
 
 /// POST /api/search — body
 /// `{"query": "...", "mode": "book"|"chapter", "limit": N?, "book_url": "..."?}`.
@@ -19,7 +24,9 @@ type SearchError = (StatusCode, Json<serde_json::Value>);
 /// Score contract: every hit's `score` is a **display-only** normalized 0–100
 /// value (fixed mapping from the cosine range, see `embeddings::normalize_score`),
 /// not a raw similarity measure. Scores are comparable across result sets but
-/// must not be interpreted as probabilities or raw cosines.
+/// must not be interpreted as probabilities or raw cosines. When the
+/// cross-encoder reranker is available, the *order* is refined by relevance
+/// scores but the displayed values stay the bi-encoder's normalized cosines.
 pub async fn search(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
@@ -52,9 +59,9 @@ pub async fn search(
         .map(|s| s.to_string());
 
     if mode == "chapter" {
-        search_chapters(&state, query, limit, book_url.as_deref()).await
+        search_chapters(state, query, limit, book_url.as_deref()).await
     } else {
-        search_books(&state, query, limit).await
+        search_books(state, query, limit).await
     }
 }
 
@@ -72,20 +79,20 @@ pub async fn search(
 /// {"url","chapter_idx","title","score"}]}` — see the shared fixture in the
 /// server and TUI tests.
 async fn search_chapters(
-    state: &AppState,
+    state: Arc<AppState>,
     query: &str,
     limit: usize,
     book_url: Option<&str>,
 ) -> Result<Json<serde_json::Value>, SearchError> {
     let db = state.db.lock().await;
     let chapters = match book_url {
-        Some(url) => db.load_chapter_hits_for_book(url).map_err(|_| {
+        Some(url) => db.load_chunk_hits_for_book(url).map_err(|_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": "failed to load chapter embeddings" })),
             )
         })?,
-        None => db.load_all_chapter_embeddings().map_err(|_| {
+        None => db.load_all_chunk_hits().map_err(|_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": "failed to load chapter embeddings" })),
@@ -114,12 +121,26 @@ async fn search_chapters(
         })));
     }
 
-    let query_vec = embed_query(state, query)?;
-    let ranked = crate::embeddings::rank_chapters(&chapters, &query_vec, limit);
+    // Embed + rank + rerank are CPU-bound (model forward passes) — run them on
+    // the blocking pool so the tokio worker never stalls.
+    let query = query.to_string();
+    let ranked = tokio::task::spawn_blocking(move || {
+        let query_vec = embed_query(&state, &query)?;
+        Ok::<_, SearchError>(fuse_and_rerank(&state, &query, &chapters, &query_vec))
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("search task failed: {e}") })),
+        )
+    })??;
+
     let hits: Vec<serde_json::Value> = ranked
         .into_iter()
+        .take(limit)
         .map(
-            |(_, _, chapter_url, chapter_title, chapter_idx, _, score)| {
+            |(_, _, chapter_url, chapter_title, chapter_idx, _, score, _)| {
                 json!({
                     "url": chapter_url,
                     "chapter_idx": chapter_idx,
@@ -144,7 +165,7 @@ async fn search_chapters(
 /// chapter mode: it returns the distinct `no_embeddings` response, checked
 /// before the embedder so an offline first run gets the hint, not a 503.
 async fn search_books(
-    state: &AppState,
+    state: Arc<AppState>,
     query: &str,
     limit: usize,
 ) -> Result<Json<serde_json::Value>, SearchError> {
@@ -155,7 +176,7 @@ async fn search_books(
             Json(json!({ "error": "failed to load book embeddings" })),
         )
     })?;
-    let chapters = db.load_all_chapter_embeddings().map_err(|_| {
+    let chapters = db.load_all_chunk_hits().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": "failed to load chapter embeddings" })),
@@ -183,19 +204,35 @@ async fn search_books(
         })));
     }
 
-    let query_vec = embed_query(state, query)?;
+    // Embed + rank + rerank are CPU-bound — run them on the blocking pool.
+    let query = query.to_string();
+    let books_for_rank = books.clone();
+    let (ranked_books, by_book) = tokio::task::spawn_blocking(move || {
+        let query_vec = embed_query(&state, &query)?;
 
-    // Rank books by aggregate embedding.
-    let aggregates: Vec<crate::embeddings::BookAggregate> = books
-        .iter()
-        .map(|(url, _, agg, genres)| (url.clone(), agg.clone(), genres.clone()))
-        .collect();
-    let ranked_books = crate::embeddings::rank_books(&aggregates, &query_vec, limit);
+        // Rank books by aggregate embedding (top-50 candidates for rerank).
+        let aggregates: Vec<crate::embeddings::BookAggregate> = books_for_rank
+            .iter()
+            .map(|(url, _, agg, genres)| (url.clone(), agg.clone(), genres.clone()))
+            .collect();
+        let ranked_books =
+            crate::embeddings::rank_books(&aggregates, &query_vec, RERANK_CANDIDATES);
 
-    // Rank every chapter once (no truncation) so each book's best 3 are
-    // available, then group them per book.
-    let ranked_chapters = crate::embeddings::rank_chapters(&chapters, &query_vec, chapters.len());
-    let by_book = crate::embeddings::top_chapters_per_book(ranked_chapters, 3);
+        // Fuse the semantic + BM25 chapter lanes, rerank, then group per book
+        // so each book's inline chapters come from the hybrid ranking.
+        let fused = fuse_and_rerank(&state, &query, &chapters, &query_vec);
+        let by_book = crate::embeddings::top_chapters_per_book(fused, 3);
+
+        let ranked_books = rerank_books(&state, &query, ranked_books, &by_book);
+        Ok::<_, SearchError>((ranked_books, by_book))
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("search task failed: {e}") })),
+        )
+    })??;
 
     let titles: HashMap<String, String> = books
         .iter()
@@ -204,6 +241,7 @@ async fn search_books(
 
     let hits: Vec<serde_json::Value> = ranked_books
         .into_iter()
+        .take(limit)
         .map(|(book_url, score, genres)| {
             let chapters = by_book
                 .get(&book_url)
@@ -211,7 +249,7 @@ async fn search_books(
                     group
                         .iter()
                         .map(
-                            |(_, _, chapter_url, chapter_title, chapter_idx, _, score)| {
+                            |(_, _, chapter_url, chapter_title, chapter_idx, _, score, _)| {
                                 json!({
                                     "url": chapter_url,
                                     "chapter_idx": chapter_idx,
@@ -249,7 +287,7 @@ fn embed_query(state: &AppState, query: &str) -> Result<Vec<f32>, SearchError> {
             Json(json!({ "error": "embedding model not loaded (offline first run)" })),
         ));
     };
-    embed(&[query])
+    embed(&[query], crate::embeddings::EmbedMode::Query)
         .map_err(|_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -257,4 +295,115 @@ fn embed_query(state: &AppState, query: &str) -> Result<Vec<f32>, SearchError> {
             )
         })
         .map(|mut v| v.remove(0))
+}
+
+/// Cross-encoder rerank for chapter hits: scores each candidate's best chunk
+/// text against the query and re-sorts. Falls back to the bi-encoder order when
+/// the reranker isn't loaded (offline first run / cooldown) or fails. Display
+/// scores are left as the bi-encoder's normalized values (comparable across
+/// result sets); only the order changes.
+fn rerank_chapters(
+    state: &AppState,
+    query: &str,
+    ranked: Vec<RankedChapterHit>,
+) -> Vec<RankedChapterHit> {
+    let Some(rerank) = state.reranker.get() else {
+        return ranked;
+    };
+    let texts: Vec<&str> = ranked.iter().map(|h| h.7.as_str()).collect();
+    match rerank(query, &texts) {
+        Ok(scores) => {
+            let mut scored: Vec<(f32, RankedChapterHit)> = ranked
+                .into_iter()
+                .zip(scores)
+                .map(|(h, s)| (s, h))
+                .collect();
+            scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            scored.into_iter().map(|(_, h)| h).collect()
+        }
+        Err(e) => {
+            eprintln!("RERANK: cross-encoder failed: {e}");
+            ranked
+        }
+    }
+}
+
+/// Hybrid chapter ranking: fuses the semantic (bi-encoder) top-50 with the
+/// BM25 top-50 via Reciprocal Rank Fusion, then cross-encoder reranks the fused
+/// top-50. Keyword queries (exact names, rare terms) that cosine misses now
+/// surface through the BM25 lane; the rerank then refines the fused order.
+///
+/// The fused hits are mapped back through the *unfiltered* best-chunk list so
+/// BM25-only chapters below the semantic score floor still participate; their
+/// raw cosine scores are normalized to the display scale before reranking.
+fn fuse_and_rerank(
+    state: &AppState,
+    query: &str,
+    chapters: &[crate::embeddings::ChunkHit],
+    query_vec: &[f32],
+) -> Vec<RankedChapterHit> {
+    // Semantic lane: top-50 (floored, per-book capped, normalized).
+    let semantic = crate::embeddings::rank_chapters(chapters, query_vec, RERANK_CANDIDATES);
+    let semantic_urls: Vec<String> = semantic.iter().map(|h| h.2.clone()).collect();
+
+    // Keyword lane: BM25 top-50 over the same corpus.
+    let bm25 = crate::bm25::Bm25Index::build(chapters);
+    let bm25_urls: Vec<String> = bm25
+        .search(query, RERANK_CANDIDATES)
+        .into_iter()
+        .map(|(_, url)| url)
+        .collect();
+
+    // Fuse, then map URLs back to hits via the unfiltered best-chunk list.
+    let fused = crate::bm25::rrf_fuse(&[semantic_urls, bm25_urls], RERANK_CANDIDATES);
+    let all_best = crate::embeddings::best_chunks_per_chapter(chapters, query_vec);
+    let by_url: HashMap<String, RankedChapterHit> =
+        all_best.into_iter().map(|h| (h.2.clone(), h)).collect();
+    let mut fused_hits: Vec<RankedChapterHit> = fused
+        .into_iter()
+        .filter_map(|url| by_url.get(&url).cloned())
+        .collect();
+    for hit in &mut fused_hits {
+        hit.6 = crate::embeddings::normalize_score(hit.6);
+    }
+
+    rerank_chapters(state, query, fused_hits)
+}
+
+/// Cross-encoder rerank for books: each book's candidate text is its best
+/// chapter's best chunk ("" when the book has no chapter hits). Falls back to
+/// the bi-encoder order when the reranker isn't loaded or fails.
+fn rerank_books(
+    state: &AppState,
+    query: &str,
+    ranked_books: Vec<RankedBook>,
+    by_book: &HashMap<String, Vec<RankedChapterHit>>,
+) -> Vec<RankedBook> {
+    let Some(rerank) = state.reranker.get() else {
+        return ranked_books;
+    };
+    let texts: Vec<&str> = ranked_books
+        .iter()
+        .map(|(url, _, _)| {
+            by_book
+                .get(url)
+                .and_then(|g| g.first())
+                .map(|h| h.7.as_str())
+                .unwrap_or("")
+        })
+        .collect();
+    let scores = match rerank(query, &texts) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("RERANK: cross-encoder failed: {e}");
+            return ranked_books;
+        }
+    };
+    let mut scored: Vec<(f32, RankedBook)> = ranked_books
+        .into_iter()
+        .zip(scores)
+        .map(|(b, s)| (s, b))
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.into_iter().map(|(_, b)| b).collect()
 }

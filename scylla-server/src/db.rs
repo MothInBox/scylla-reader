@@ -2,6 +2,7 @@
 
 use rusqlite::{Connection, OptionalExtension, Result, params};
 use scylla_core::types::{Book, BookStatus, Chapter, Progress, Session};
+use std::collections::HashMap;
 
 /// Stored book embedding row: (description, aggregate, genres).
 pub type BookEmbedding = (Option<Vec<f32>>, Option<Vec<f32>>, Option<Vec<String>>);
@@ -77,14 +78,6 @@ impl ServerDb {
                 PRIMARY KEY (book_url, url)
             );
 
-            CREATE TABLE IF NOT EXISTS chapter_embeddings (
-                source_url   TEXT PRIMARY KEY,
-                book_url     TEXT,
-                embedding    BLOB NOT NULL,
-                embedded_at  INTEGER NOT NULL,
-                content_hash TEXT
-            );
-
             CREATE TABLE IF NOT EXISTS book_embeddings (
                 book_url              TEXT PRIMARY KEY,
                 description_embedding BLOB,
@@ -93,10 +86,23 @@ impl ServerDb {
                 genres                TEXT
             );
 
-            CREATE INDEX IF NOT EXISTS idx_chapter_embeddings_book_url
-                ON chapter_embeddings(book_url);
+            CREATE TABLE IF NOT EXISTS meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         ",
         )?;
+
+        // `chapter_embeddings` is per-chunk now. The legacy single-row schema
+        // (source_url PK, no chunk_idx/text) is dropped: its rows lack chunk
+        // text and were produced by the old model, so they must be re-embedded
+        // anyway. The no_embeddings hint surfaces the re-embed requirement.
+        self.migrate_chapter_embeddings()?;
+
+        // Model identity: if the stored embedding model differs from the
+        // configured one, every stored vector is in a different space — clear
+        // both embedding tables so the re-embed is explicit, never silent.
+        self.migrate_embedding_model()?;
 
         let _ = self
             .conn
@@ -118,6 +124,95 @@ impl ServerDb {
             [],
         );
 
+        Ok(())
+    }
+
+    /// Creates the per-chunk `chapter_embeddings` table, dropping the legacy
+    /// single-row schema first if present.
+    fn migrate_chapter_embeddings(&self) -> Result<()> {
+        if self.table_exists("chapter_embeddings")?
+            && !self.column_exists("chapter_embeddings", "chunk_idx")?
+        {
+            self.conn.execute_batch("DROP TABLE chapter_embeddings;")?;
+            eprintln!(
+                "MIGRATE: dropped legacy single-row chapter_embeddings \
+                 (pre-chunking schema); re-embedding required"
+            );
+        }
+        self.conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS chapter_embeddings (
+                chapter_url  TEXT NOT NULL,
+                chunk_idx    INTEGER NOT NULL,
+                book_url     TEXT,
+                embedding    BLOB NOT NULL,
+                text         TEXT NOT NULL,
+                embedded_at  INTEGER NOT NULL,
+                content_hash TEXT,
+                PRIMARY KEY (chapter_url, chunk_idx)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chapter_embeddings_chapter_url
+                ON chapter_embeddings(chapter_url);
+            CREATE INDEX IF NOT EXISTS idx_chapter_embeddings_book_url
+                ON chapter_embeddings(book_url);
+        ",
+        )?;
+        Ok(())
+    }
+
+    fn table_exists(&self, name: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [name],
+            |row| row.get(0),
+        )
+    }
+
+    fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
+        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            if name == column {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Clears all stored embeddings when the model that produced them differs
+    /// from the configured one. Vectors from different models live in different
+    /// spaces — cosine across models is garbage — so the swap must be explicit
+    /// and visible, never silent. The `meta` table records the model that
+    /// produced the current rows.
+    fn migrate_embedding_model(&self) -> Result<()> {
+        let stored: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'embedding_model'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if stored.as_deref() == Some(crate::embeddings::MODEL_VERSION) {
+            return Ok(());
+        }
+        self.conn.execute_batch(
+            "DELETE FROM chapter_embeddings;
+             DELETE FROM book_embeddings;",
+        )?;
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('embedding_model', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [crate::embeddings::MODEL_VERSION],
+        )?;
+        eprintln!(
+            "MIGRATE: embedding model changed ({} -> {}); cleared chapter and \
+             book embeddings — re-embedding required",
+            stored.as_deref().unwrap_or("none"),
+            crate::embeddings::MODEL_VERSION
+        );
         Ok(())
     }
 }
@@ -347,44 +442,61 @@ impl ServerDb {
 }
 
 impl ServerDb {
-    pub fn upsert_chapter_embedding(
+    /// Atomically replaces all chunks of a chapter. `chunks` is
+    /// `(chunk_idx, text, embedding)`; a failed chunk marks the whole chapter
+    /// failed (nothing is written).
+    pub fn upsert_chapter_chunks(
         &self,
-        source_url: &str,
+        chapter_url: &str,
         book_url: Option<&str>,
-        embedding: &[f32],
+        chunks: &[(usize, &str, &[f32])],
         content_hash: Option<&str>,
     ) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO chapter_embeddings (source_url, book_url, embedding, embedded_at, content_hash)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(source_url) DO UPDATE SET
-               book_url     = excluded.book_url,
-               embedding    = excluded.embedding,
-               embedded_at  = excluded.embedded_at,
-               content_hash = excluded.content_hash",
-            params![
-                source_url,
-                book_url,
-                encode_f32s(embedding),
-                now_unix_ms(),
-                content_hash,
-            ],
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM chapter_embeddings WHERE chapter_url = ?",
+            [chapter_url],
         )?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO chapter_embeddings
+                     (chapter_url, chunk_idx, book_url, embedding, text, embedded_at, content_hash)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            let now = now_unix_ms();
+            for (idx, text, emb) in chunks {
+                stmt.execute(params![
+                    chapter_url,
+                    *idx as i64,
+                    book_url,
+                    encode_f32s(emb),
+                    text,
+                    now,
+                    content_hash,
+                ])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
-    pub fn get_chapter_embedding(
-        &self,
-        source_url: &str,
-    ) -> Result<Option<(Vec<f32>, Option<String>)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT embedding, content_hash FROM chapter_embeddings WHERE source_url = ?",
+    /// (chunk_count, content_hash) for a chapter — used to skip re-embedding
+    /// unchanged chapters (all chunks share the chapter's content hash).
+    pub fn chapter_chunk_state(&self, chapter_url: &str) -> Result<(usize, Option<String>)> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM chapter_embeddings WHERE chapter_url = ?",
+            [chapter_url],
+            |row| row.get(0),
         )?;
-        let mut rows = stmt.query_map([source_url], |row| {
-            let blob: Vec<u8> = row.get(0)?;
-            Ok((decode_f32s(&blob), row.get(1)?))
-        })?;
-        rows.next().transpose()
+        let hash: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT content_hash FROM chapter_embeddings WHERE chapter_url = ? LIMIT 1",
+                [chapter_url],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok((count as usize, hash.flatten()))
     }
 
     pub fn upsert_book_embedding(
@@ -434,15 +546,46 @@ impl ServerDb {
         rows.next().transpose()
     }
 
+    /// One embedding per chapter for a book (chunk embeddings averaged per
+    /// chapter — chapter-equal weighting for the book aggregate). Used by the
+    /// aggregate recomputation.
     pub fn load_chapter_embeddings_for_book(&self, book_url: &str) -> Result<Vec<Vec<f32>>> {
         let mut stmt = self.conn.prepare(
-            "SELECT embedding FROM chapter_embeddings WHERE book_url = ? ORDER BY rowid",
+            "SELECT chapter_url, embedding FROM chapter_embeddings
+             WHERE book_url = ? ORDER BY chapter_url, chunk_idx",
         )?;
         let rows = stmt.query_map([book_url], |row| {
-            let blob: Vec<u8> = row.get(0)?;
-            Ok(decode_f32s(&blob))
+            let url: String = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            Ok((url, decode_f32s(&blob)))
         })?;
-        rows.collect()
+        let mut order: Vec<String> = Vec::new();
+        let mut sums: HashMap<String, (Vec<f32>, usize)> = HashMap::new();
+        for row in rows {
+            let (url, emb) = row?;
+            let entry = sums.entry(url.clone()).or_insert_with(|| {
+                order.push(url.clone());
+                (vec![0.0; emb.len()], 0)
+            });
+            if entry.0.len() == emb.len() {
+                for (s, v) in entry.0.iter_mut().zip(&emb) {
+                    *s += v;
+                }
+                entry.1 += 1;
+            }
+        }
+        Ok(order
+            .into_iter()
+            .filter_map(|url| {
+                sums.remove(&url).map(|(sum, n)| {
+                    if n == 0 {
+                        sum
+                    } else {
+                        sum.into_iter().map(|s| s / n as f32).collect()
+                    }
+                })
+            })
+            .collect())
     }
 
     pub fn find_book_url_for_chapter(&self, chapter_url: &str) -> Result<Option<String>> {
@@ -465,38 +608,39 @@ impl ServerDb {
         rows.collect()
     }
 
-    /// All chapter embeddings enriched for search as `ChapterHit` tuples
-    /// (book_url, book_title, chapter_url, chapter_title, chapter_idx, genres,
-    /// embedding). Chapters without a book_url map to empty strings / 0.
-    pub fn load_all_chapter_embeddings(&self) -> Result<Vec<crate::embeddings::ChapterHit>> {
+    /// All chunk embeddings enriched for search as `ChunkHit` rows. Chapters
+    /// without a book_url map to empty strings / 0.
+    pub fn load_all_chunk_hits(&self) -> Result<Vec<crate::embeddings::ChunkHit>> {
         let mut stmt = self.conn.prepare(
-            "SELECT ce.book_url, b.title, ce.source_url, ch.title, ch.ord, be.genres, ce.embedding
+            "SELECT ce.book_url, b.title, ce.chapter_url, ch.title, ch.ord, be.genres,
+                    ce.chunk_idx, ce.text, ce.embedding
              FROM chapter_embeddings ce
-             LEFT JOIN chapters ch ON ch.book_url = ce.book_url AND ch.url = ce.source_url
+             LEFT JOIN chapters ch ON ch.book_url = ce.book_url AND ch.url = ce.chapter_url
              LEFT JOIN books b ON b.url = ce.book_url
              LEFT JOIN book_embeddings be ON be.book_url = ce.book_url
              ORDER BY ce.rowid",
         )?;
-        let rows = stmt.query_map([], chapter_hit_from_row)?;
+        let rows = stmt.query_map([], chunk_hit_from_row)?;
         rows.collect()
     }
 
-    /// Chapter embeddings for one book, enriched for search (the per-book
+    /// Chunk embeddings for one book, enriched for search (the per-book
     /// drill-down window).
-    pub fn load_chapter_hits_for_book(
+    pub fn load_chunk_hits_for_book(
         &self,
         book_url: &str,
-    ) -> Result<Vec<crate::embeddings::ChapterHit>> {
+    ) -> Result<Vec<crate::embeddings::ChunkHit>> {
         let mut stmt = self.conn.prepare(
-            "SELECT ce.book_url, b.title, ce.source_url, ch.title, ch.ord, be.genres, ce.embedding
+            "SELECT ce.book_url, b.title, ce.chapter_url, ch.title, ch.ord, be.genres,
+                    ce.chunk_idx, ce.text, ce.embedding
              FROM chapter_embeddings ce
-             LEFT JOIN chapters ch ON ch.book_url = ce.book_url AND ch.url = ce.source_url
+             LEFT JOIN chapters ch ON ch.book_url = ce.book_url AND ch.url = ce.chapter_url
              LEFT JOIN books b ON b.url = ce.book_url
              LEFT JOIN book_embeddings be ON be.book_url = ce.book_url
              WHERE ce.book_url = ?1
              ORDER BY ce.rowid",
         )?;
-        let rows = stmt.query_map([book_url], chapter_hit_from_row)?;
+        let rows = stmt.query_map([book_url], chunk_hit_from_row)?;
         rows.collect()
     }
 
@@ -508,16 +652,14 @@ impl ServerDb {
         Ok(n as usize)
     }
 
-    /// Number of chapter embedding rows (search coverage reporting). A
-    /// dedicated count rather than `load_all_chapter_embeddings().len()`: the
-    /// loader's LEFT JOIN can include orphan rows, and Phase 3 makes the table
-    /// per-chunk.
+    /// Number of chapters with at least one embedded chunk (search coverage
+    /// reporting). Counts DISTINCT chapters, not chunks.
     pub fn embedded_chapter_count(&self) -> Result<usize> {
-        let n: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM chapter_embeddings", [], |row| {
-                row.get(0)
-            })?;
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(DISTINCT chapter_url) FROM chapter_embeddings",
+            [],
+            |row| row.get(0),
+        )?;
         Ok(n as usize)
     }
 
@@ -580,7 +722,7 @@ impl ServerDb {
             return Ok(None);
         }
         let embedded_chapters: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM chapter_embeddings WHERE book_url = ?",
+            "SELECT COUNT(DISTINCT chapter_url) FROM chapter_embeddings WHERE book_url = ?",
             [book_url],
             |row| row.get(0),
         )?;
@@ -602,7 +744,8 @@ impl ServerDb {
         let genres = genres.and_then(|g| serde_json::from_str(&g).ok());
         let embedded_chapter_urls: Vec<String> = {
             let mut stmt = self.conn.prepare(
-                "SELECT source_url FROM chapter_embeddings WHERE book_url = ? ORDER BY rowid",
+                "SELECT DISTINCT chapter_url FROM chapter_embeddings
+                 WHERE book_url = ? ORDER BY chapter_url",
             )?;
             let rows = stmt.query_map([book_url], |row| row.get(0))?;
             rows.collect::<Result<_>>()?
@@ -626,29 +769,31 @@ fn status_str(s: &BookStatus) -> &'static str {
     }
 }
 
-/// Maps a chapter-embeddings search row (book_url, book_title, source_url,
-/// chapter_title, chapter_idx, genres, embedding) into a `ChapterHit` tuple.
-/// Shared by the all-chapters and per-book loaders.
-fn chapter_hit_from_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<crate::embeddings::ChapterHit> {
+/// Maps a chunk-embeddings search row (book_url, book_title, chapter_url,
+/// chapter_title, chapter_idx, genres, chunk_idx, text, embedding) into a
+/// `ChunkHit`. Shared by the all-chunks and per-book loaders.
+fn chunk_hit_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<crate::embeddings::ChunkHit> {
     let book_url: Option<String> = row.get(0)?;
     let book_title: Option<String> = row.get(1)?;
-    let source_url: String = row.get(2)?;
+    let chapter_url: String = row.get(2)?;
     let chapter_title: Option<String> = row.get(3)?;
     let chapter_idx: Option<i64> = row.get(4)?;
     let genres: Option<String> = row.get(5)?;
-    let blob: Vec<u8> = row.get(6)?;
+    let chunk_idx: i64 = row.get(6)?;
+    let text: String = row.get(7)?;
+    let blob: Vec<u8> = row.get(8)?;
     let genres = genres.and_then(|g| serde_json::from_str(&g).ok());
-    Ok((
-        book_url.unwrap_or_default(),
-        book_title.unwrap_or_default(),
-        source_url,
-        chapter_title.unwrap_or_default(),
-        chapter_idx.unwrap_or(0) as u32,
+    Ok(crate::embeddings::ChunkHit {
+        book_url: book_url.unwrap_or_default(),
+        book_title: book_title.unwrap_or_default(),
+        chapter_url,
+        chapter_title: chapter_title.unwrap_or_default(),
+        chapter_idx: chapter_idx.unwrap_or(0) as u32,
         genres,
-        decode_f32s(&blob),
-    ))
+        chunk_idx: chunk_idx as u32,
+        text,
+        embedding: decode_f32s(&blob),
+    })
 }
 
 /// Encodes an `f32` vector as raw little-endian bytes (BLOB storage).
@@ -724,6 +869,51 @@ mod tests {
         let db = test_db();
         let books = db.load_books().unwrap();
         assert!(books.is_empty());
+    }
+
+    #[test]
+    fn test_migrate_embedding_model_clears_on_change() {
+        let db = test_db();
+        // Seed embeddings as if produced by an older model.
+        db.upsert_chapter_chunks(
+            "ch1",
+            Some("book1"),
+            &[(0, "text", &[1.0, 2.0])],
+            Some("h1"),
+        )
+        .unwrap();
+        db.upsert_book_embedding("book1", Some(&[1.0, 2.0]), Some(&[1.0, 2.0]), None)
+            .unwrap();
+        assert_eq!(db.load_all_chunk_hits().unwrap().len(), 1);
+
+        // Same model → no-op.
+        db.migrate_embedding_model().unwrap();
+        assert_eq!(db.load_all_chunk_hits().unwrap().len(), 1);
+
+        // Different stored model → both embedding tables cleared + meta updated.
+        db.conn
+            .execute(
+                "INSERT INTO meta (key, value) VALUES ('embedding_model', 'all-MiniLM-L6-v2')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )
+            .unwrap();
+        db.migrate_embedding_model().unwrap();
+        assert!(db.load_all_chunk_hits().unwrap().is_empty());
+        assert!(
+            db.load_all_book_embeddings_with_titles()
+                .unwrap()
+                .is_empty()
+        );
+        let stored: String = db
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'embedding_model'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, crate::embeddings::MODEL_VERSION);
     }
 
     #[test]
@@ -911,9 +1101,9 @@ mod tests {
     fn test_delete_book_removes_embeddings() {
         let db = test_db();
         db.upsert_book(&sample_book("book1")).unwrap();
-        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+        db.upsert_chapter_chunks("ch1", Some("book1"), &[(0, "text", &[1.0, 2.0])], None)
             .unwrap();
-        db.upsert_chapter_embedding("ch2", Some("book1"), &[3.0, 4.0], None)
+        db.upsert_chapter_chunks("ch2", Some("book1"), &[(0, "text", &[3.0, 4.0])], None)
             .unwrap();
         db.upsert_book_embedding(
             "book1",
@@ -925,10 +1115,10 @@ mod tests {
 
         db.delete_book("book1").unwrap();
 
-        assert!(db.get_chapter_embedding("ch1").unwrap().is_none());
-        assert!(db.get_chapter_embedding("ch2").unwrap().is_none());
+        assert!(db.chapter_chunk_state("ch1").unwrap().0 == 0);
+        assert!(db.chapter_chunk_state("ch2").unwrap().0 == 0);
         assert!(db.get_book_embedding("book1").unwrap().is_none());
-        assert!(db.load_all_chapter_embeddings().unwrap().is_empty());
+        assert!(db.load_all_chunk_hits().unwrap().is_empty());
         assert!(db.load_all_book_embeddings().unwrap().is_empty());
     }
 
@@ -937,9 +1127,9 @@ mod tests {
         let db = test_db();
         db.upsert_book(&sample_book("book1")).unwrap();
         db.upsert_book(&sample_book("book2")).unwrap();
-        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+        db.upsert_chapter_chunks("ch1", Some("book1"), &[(0, "text", &[1.0, 2.0])], None)
             .unwrap();
-        db.upsert_chapter_embedding("ch2", Some("book2"), &[3.0, 4.0], None)
+        db.upsert_chapter_chunks("ch2", Some("book2"), &[(0, "text", &[3.0, 4.0])], None)
             .unwrap();
         db.upsert_book_embedding("book1", None, Some(&[1.0, 2.0]), None)
             .unwrap();
@@ -949,10 +1139,10 @@ mod tests {
         db.delete_book("book1").unwrap();
 
         // book1's embeddings are gone.
-        assert!(db.get_chapter_embedding("ch1").unwrap().is_none());
+        assert!(db.chapter_chunk_state("ch1").unwrap().0 == 0);
         assert!(db.get_book_embedding("book1").unwrap().is_none());
         // book2's embeddings are untouched.
-        assert!(db.get_chapter_embedding("ch2").unwrap().is_some());
+        assert!(db.chapter_chunk_state("ch2").unwrap().0 == 1);
         assert!(db.get_book_embedding("book2").unwrap().is_some());
     }
 
@@ -1101,34 +1291,45 @@ mod tests {
     }
 
     #[test]
-    fn test_upsert_and_get_chapter_embedding() {
+    fn test_upsert_chapter_chunks_and_state() {
         let db = test_db();
         let emb = vec![0.1f32, 0.2, 0.3];
-        db.upsert_chapter_embedding("ch1", Some("book1"), &emb, Some("hash1"))
+        db.upsert_chapter_chunks("ch1", Some("book1"), &[(0, "text", &emb)], Some("hash1"))
             .unwrap();
 
-        let (got, hash) = db.get_chapter_embedding("ch1").unwrap().unwrap();
-        assert_eq!(got, emb);
+        let (count, hash) = db.chapter_chunk_state("ch1").unwrap();
+        assert_eq!(count, 1);
         assert_eq!(hash.as_deref(), Some("hash1"));
     }
 
     #[test]
-    fn test_upsert_chapter_embedding_overwrites() {
+    fn test_upsert_chapter_chunks_replaces_atomically() {
         let db = test_db();
-        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], Some("h1"))
+        db.upsert_chapter_chunks("ch1", Some("book1"), &[(0, "a", &[1.0, 2.0])], Some("h1"))
             .unwrap();
-        db.upsert_chapter_embedding("ch1", Some("book2"), &[3.0, 4.0], Some("h2"))
-            .unwrap();
+        // Re-embed with two chunks — the old single chunk must be replaced.
+        db.upsert_chapter_chunks(
+            "ch1",
+            Some("book2"),
+            &[(0, "a", &[3.0, 4.0]), (1, "b", &[5.0, 6.0])],
+            Some("h2"),
+        )
+        .unwrap();
 
-        let (got, hash) = db.get_chapter_embedding("ch1").unwrap().unwrap();
-        assert_eq!(got, vec![3.0, 4.0]);
+        let (count, hash) = db.chapter_chunk_state("ch1").unwrap();
+        assert_eq!(count, 2);
         assert_eq!(hash.as_deref(), Some("h2"));
+        let hits = db.load_all_chunk_hits().unwrap();
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().all(|h| h.book_url == "book2"));
     }
 
     #[test]
-    fn test_get_missing_chapter_embedding_returns_none() {
+    fn test_chapter_chunk_state_missing() {
         let db = test_db();
-        assert!(db.get_chapter_embedding("nope").unwrap().is_none());
+        let (count, hash) = db.chapter_chunk_state("nope").unwrap();
+        assert_eq!(count, 0);
+        assert!(hash.is_none());
     }
 
     #[test]
@@ -1173,15 +1374,31 @@ mod tests {
     #[test]
     fn test_load_chapter_embeddings_for_book() {
         let db = test_db();
-        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+        db.upsert_chapter_chunks("ch1", Some("book1"), &[(0, "text", &[1.0, 2.0])], None)
             .unwrap();
-        db.upsert_chapter_embedding("ch2", Some("book1"), &[3.0, 4.0], None)
+        db.upsert_chapter_chunks("ch2", Some("book1"), &[(0, "text", &[3.0, 4.0])], None)
             .unwrap();
-        db.upsert_chapter_embedding("other", Some("book2"), &[9.0, 9.0], None)
+        db.upsert_chapter_chunks("other", Some("book2"), &[(0, "text", &[9.0, 9.0])], None)
             .unwrap();
 
         let embs = db.load_chapter_embeddings_for_book("book1").unwrap();
         assert_eq!(embs, vec![vec![1.0, 2.0], vec![3.0, 4.0]]);
+    }
+
+    #[test]
+    fn test_load_chapter_embeddings_for_book_averages_chunks() {
+        let db = test_db();
+        // ch1 has two chunks; the aggregate gets one averaged vector per chapter.
+        db.upsert_chapter_chunks(
+            "ch1",
+            Some("book1"),
+            &[(0, "a", &[1.0, 0.0]), (1, "b", &[3.0, 0.0])],
+            None,
+        )
+        .unwrap();
+
+        let embs = db.load_chapter_embeddings_for_book("book1").unwrap();
+        assert_eq!(embs, vec![vec![2.0, 0.0]]);
     }
 
     #[test]
@@ -1229,7 +1446,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_all_chapter_embeddings() {
+    fn test_load_all_chunk_hits() {
         let db = test_db();
         // Seed a book with chapters + genres so the join enriches the rows.
         db.upsert_book(&sample_book("book1")).unwrap();
@@ -1240,43 +1457,49 @@ mod tests {
             Some(&["Fantasy".to_string()]),
         )
         .unwrap();
-        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+        db.upsert_chapter_chunks("ch1", Some("book1"), &[(0, "text", &[1.0, 2.0])], None)
             .unwrap();
-        db.upsert_chapter_embedding("ch2", Some("book1"), &[3.0, 4.0], None)
+        db.upsert_chapter_chunks("ch2", Some("book1"), &[(0, "text", &[3.0, 4.0])], None)
             .unwrap();
-        db.upsert_chapter_embedding("orphan", None, &[9.0, 9.0], None)
+        db.upsert_chapter_chunks("orphan", None, &[(0, "text", &[9.0, 9.0])], None)
             .unwrap();
 
-        let all = db.load_all_chapter_embeddings().unwrap();
+        let all = db.load_all_chunk_hits().unwrap();
         assert_eq!(all.len(), 3);
-        assert!(all.contains(&(
-            "book1".to_string(),
-            "Book book1".to_string(),
-            "ch1".to_string(),
-            "Chapter 1".to_string(),
-            1u32,
-            Some(vec!["Fantasy".to_string()]),
-            vec![1.0, 2.0],
-        )));
-        assert!(all.contains(&(
-            "book1".to_string(),
-            "Book book1".to_string(),
-            "ch2".to_string(),
-            "Chapter 2".to_string(),
-            2u32,
-            Some(vec!["Fantasy".to_string()]),
-            vec![3.0, 4.0],
-        )));
+        assert!(all.contains(&crate::embeddings::ChunkHit {
+            book_url: "book1".to_string(),
+            book_title: "Book book1".to_string(),
+            chapter_url: "ch1".to_string(),
+            chapter_title: "Chapter 1".to_string(),
+            chapter_idx: 1,
+            genres: Some(vec!["Fantasy".to_string()]),
+            chunk_idx: 0,
+            text: "text".to_string(),
+            embedding: vec![1.0, 2.0],
+        }));
+        assert!(all.contains(&crate::embeddings::ChunkHit {
+            book_url: "book1".to_string(),
+            book_title: "Book book1".to_string(),
+            chapter_url: "ch2".to_string(),
+            chapter_title: "Chapter 2".to_string(),
+            chapter_idx: 2,
+            genres: Some(vec!["Fantasy".to_string()]),
+            chunk_idx: 0,
+            text: "text".to_string(),
+            embedding: vec![3.0, 4.0],
+        }));
         // Orphan chapter: no book/chapter/genre enrichment.
-        assert!(all.contains(&(
-            "".to_string(),
-            "".to_string(),
-            "orphan".to_string(),
-            "".to_string(),
-            0u32,
-            None,
-            vec![9.0, 9.0],
-        )));
+        assert!(all.contains(&crate::embeddings::ChunkHit {
+            book_url: String::new(),
+            book_title: String::new(),
+            chapter_url: "orphan".to_string(),
+            chapter_title: String::new(),
+            chapter_idx: 0,
+            genres: None,
+            chunk_idx: 0,
+            text: "text".to_string(),
+            embedding: vec![9.0, 9.0],
+        }));
     }
 
     #[test]
@@ -1319,9 +1542,9 @@ mod tests {
     fn test_embedding_status_full() {
         let db = test_db();
         db.upsert_book(&sample_book("book1")).unwrap();
-        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+        db.upsert_chapter_chunks("ch1", Some("book1"), &[(0, "text", &[1.0, 2.0])], None)
             .unwrap();
-        db.upsert_chapter_embedding("ch2", Some("book1"), &[3.0, 4.0], None)
+        db.upsert_chapter_chunks("ch2", Some("book1"), &[(0, "text", &[3.0, 4.0])], None)
             .unwrap();
         db.upsert_book_embedding(
             "book1",
@@ -1347,7 +1570,7 @@ mod tests {
     fn test_embedding_status_no_aggregate() {
         let db = test_db();
         db.upsert_book(&sample_book("book1")).unwrap();
-        db.upsert_chapter_embedding("ch1", Some("book1"), &[1.0, 2.0], None)
+        db.upsert_chapter_chunks("ch1", Some("book1"), &[(0, "text", &[1.0, 2.0])], None)
             .unwrap();
         // No book_embeddings row at all.
         let (embedded, total, has_agg, genres, urls) =

@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Book-mode AI search: the library re-ranks with an explicit AI indicator (filter-bar segment, "AI ranked" title, mode-aware footer hints) and per-row scores
 - AI drill-down: Enter on a ranked book opens its inline chapters (local, no network); `g` toggles book-mode ↔ grouped-chapter mode; Esc clears the AI ranking
 - AI state is explicit and survives filter commits and deletes — clearing is always intentional (Esc)
+- Chapter embeddings are stored per 512-token chunk (with text) and search uses each chapter's best chunk; coverage counts are distinct chapters, not chunks
+- Hybrid search: BM25 keyword lane fused with the semantic lane via Reciprocal Rank Fusion, then refined by a cross-encoder reranker (ms-marco-MiniLM-L-6-v2)
+- Embedding model upgraded to bge-small-en-v1.5 with a query/passage instruction split; a model change clears stored embeddings and re-embeds explicitly (never silent)
 
 ### Changed
 
@@ -31,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - plugin-template moved to the separate `scylla-plugin-base` repo
 - Embeddings are cascade-deleted when a book is deleted
 - AI search chapter scores are normalized to a 0–100 display scale
+- Content hashes are stable FNV-1a and include the embedding model version, so a model swap re-embeds unchanged chapters exactly once
+- Search embed + rank + rerank run on the blocking pool (`spawn_blocking`) so the tokio worker never stalls
 
 ### Fixed
 

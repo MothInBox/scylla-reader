@@ -4461,6 +4461,7 @@ dependencies = [
  "futures-util",
  "hf-hub",
  "http-body-util",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "scylla-core",

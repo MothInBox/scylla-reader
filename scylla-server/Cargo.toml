@@ -23,6 +23,7 @@ candle-nn = "0.11"
 candle-transformers = "0.11"
 tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 hf-hub = { version = "1.0", features = ["blocking"] }
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"

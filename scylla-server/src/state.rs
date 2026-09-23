@@ -22,6 +22,8 @@ pub struct AppState {
     /// clone of the same `Arc`.
     #[allow(dead_code)]
     pub embedder: Arc<crate::embeddings::SharedEmbedder>,
+    /// Shared, lazily-loaded cross-encoder reranker (search only).
+    pub reranker: Arc<crate::embeddings::SharedCrossEncoder>,
     /// Whether scraped chapters/descriptions are embedded automatically.
     pub autoembed: Arc<std::sync::Mutex<bool>>,
 }
