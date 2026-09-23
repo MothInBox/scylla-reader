@@ -212,4 +212,5 @@ See the [scylla-plugin-base](https://github.com/MothInBox/scylla-plugin-base) re
 - **Manual plugin selection** — when adding a book, if multiple plugins match the domain, show a warning and block submission until the conflict is resolved; also lets the user choose which plugin/source to use.
 - **Generic modals for data entry & prompts** — a shared modal system for future text entry and prompts 
 - **Design unification** — a pass to unify the visual language across pages and modals (consistent spacing, hierarchy, and component styles).
+- **README demo media** — update the demo gifs and images to showcase the new features (AI search, drill-down, genre facet, snippets).
 - **Per-plugin scraping delay** — move the scraping rate limit from a single global setting to a per-plugin (per-domain) delay, adjustable via settings.
