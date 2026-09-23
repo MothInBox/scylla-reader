@@ -5,9 +5,13 @@
     reader_mode = "Paged";
   }
 }:
+let
+  # Single source of truth: version comes from [workspace.package] in the root Cargo.toml
+  workspace = builtins.fromTOML (builtins.readFile ../Cargo.toml);
+in
 rustPlatform.buildRustPackage {
   pname = "scylla-reader";
-  version = "0.2.0";
+  version = workspace.workspace.package.version;
   src = ../.;
   cargoRoot = "scylla-reader";
   buildAndTestSubdir = "scylla-reader";
