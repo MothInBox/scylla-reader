@@ -532,16 +532,26 @@ impl Library {
     /// Group flat chapter-mode hits into ranked books (by mapping each chapter
     /// URL to its library book), sorted by score descending.
     fn group_chapter_hits(&self, hits: &[AiChapter]) -> Vec<AiBook> {
+        // Map each chapter URL to its library book once (O(books × chapters))
+        // instead of scanning the whole library per hit (O(hits × books ×
+        // chapters)).
+        let mut chapter_to_book: HashMap<&str, (&str, &str)> = HashMap::new();
+        for book in &self.books {
+            for chapter in &book.chapters {
+                chapter_to_book
+                    .entry(chapter.url.as_str())
+                    .or_insert((book.url.as_str(), book.title.as_str()));
+            }
+        }
         let mut books: Vec<AiBook> = Vec::new();
+        // book_url → index into `books`, so appending a chapter is O(1) rather
+        // than a linear scan per hit.
+        let mut book_index: HashMap<String, usize> = HashMap::new();
         for hit in hits {
-            let book = self
-                .books
-                .iter()
-                .find(|b| b.chapters.iter().any(|c| c.url == hit.chapter_url));
-            let book_url = book.map(|b| b.url.clone()).unwrap_or_default();
-            let book_title = book
-                .map(|b| b.title.clone())
-                .unwrap_or_else(|| "Unknown".to_string());
+            let (book_url, book_title) = chapter_to_book
+                .get(hit.chapter_url.as_str())
+                .map(|(u, t)| ((*u).to_string(), (*t).to_string()))
+                .unwrap_or_else(|| (String::new(), "Unknown".to_string()));
             let chapter = AiChapter {
                 chapter_url: hit.chapter_url.clone(),
                 chapter_idx: hit.chapter_idx,
@@ -549,12 +559,14 @@ impl Library {
                 score: hit.score,
                 snippet: hit.snippet.clone(),
             };
-            if let Some(existing) = books.iter_mut().find(|b| b.book_url == book_url) {
+            if let Some(&idx) = book_index.get(&book_url) {
+                let existing = &mut books[idx];
                 existing.chapters.push(chapter);
                 if hit.score > existing.score {
                     existing.score = hit.score;
                 }
             } else {
+                book_index.insert(book_url.clone(), books.len());
                 books.push(AiBook {
                     book_url,
                     book_title,

@@ -209,14 +209,20 @@ async fn search_books(
     // Embed + rank + rerank are CPU-bound — run them on the blocking pool.
     let query = query.to_string();
     let query_for_snippet = query.clone();
-    let books_for_rank = books.clone();
+    // Titles are needed after the closure; build them first so `books` (with
+    // its ~4.6MB of aggregate embeddings at 3000 books) can be moved into the
+    // closure and consumed without cloning.
+    let titles: HashMap<String, String> = books
+        .iter()
+        .map(|(url, title, _, _)| (url.clone(), title.clone()))
+        .collect();
     let (ranked_books, by_book) = tokio::task::spawn_blocking(move || {
         let query_vec = embed_query(&state, &query)?;
 
         // Rank books by aggregate embedding (top-50 candidates for rerank).
-        let aggregates: Vec<crate::embeddings::BookAggregate> = books_for_rank
-            .iter()
-            .map(|(url, _, agg, genres)| (url.clone(), agg.clone(), genres.clone()))
+        let aggregates: Vec<crate::embeddings::BookAggregate> = books
+            .into_iter()
+            .map(|(url, _, agg, genres)| (url, agg, genres))
             .collect();
         let ranked_books =
             crate::embeddings::rank_books(&aggregates, &query_vec, RERANK_CANDIDATES);
@@ -236,11 +242,6 @@ async fn search_books(
             Json(json!({ "error": format!("search task failed: {e}") })),
         )
     })??;
-
-    let titles: HashMap<String, String> = books
-        .iter()
-        .map(|(url, title, _, _)| (url.clone(), title.clone()))
-        .collect();
 
     let hits: Vec<serde_json::Value> = ranked_books
         .into_iter()
@@ -307,10 +308,14 @@ fn embed_query(state: &AppState, query: &str) -> Result<Vec<f32>, SearchError> {
 /// span; for semantic hits the same rule is a bonus (centers on a query term if
 /// one happens to appear) and otherwise falls back to the start of the text.
 fn make_snippet(text: &str, query: &str) -> String {
+    // Lowercase the text once (not once per query token) and find the first
+    // query token present in it.
+    let lower = text.to_lowercase();
     let center = query
         .split_whitespace()
-        .find(|t| text.to_lowercase().contains(&t.to_lowercase()));
-    crate::snippet::snippet(text, center, crate::snippet::SNIPPET_LEN)
+        .map(str::to_lowercase)
+        .find(|t| lower.contains(t.as_str()));
+    crate::snippet::snippet(text, center.as_deref(), crate::snippet::SNIPPET_LEN)
 }
 
 /// Cross-encoder rerank for chapter hits: scores each candidate's best chunk
