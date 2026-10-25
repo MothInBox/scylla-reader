@@ -26,6 +26,8 @@ pub const KEY_AI_TOGGLE: KeyCode = KeyCode::Char('g');
 pub const KEY_AI_GENRE_NEXT: KeyCode = KeyCode::Char('.');
 /// Cycle the AI genre facet backward (`,`).
 pub const KEY_AI_GENRE_PREV: KeyCode = KeyCode::Char(',');
+/// Clear active AI ranking in Library.
+pub const KEY_AI_CLEAR: KeyCode = KeyCode::Char('c');
 
 // ── Reader Page ──
 pub const KEY_NEXT_CHAPTER: KeyCode = KeyCode::Char('>');

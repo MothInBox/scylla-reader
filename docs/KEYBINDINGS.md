@@ -24,6 +24,7 @@
 | `e` | Embed Chapters (pick chapters to embed) |
 | `g` | Toggle AI book/grouped mode |
 | `.` / `,` | Cycle AI genre |
+| `c` | Clear AI ranking |
 | `Space` | Cycle Status |
 | `Enter` | Session Picker / AI chapter list |
 | `↑/↓` | Navigate |
