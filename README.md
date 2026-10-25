@@ -1,53 +1,55 @@
-
 # Scylla Reader
 
-A TUI reader that interfaces with WebAssembly plugins to let you scrape, manage, and read web novels from the terminal. Progress is stored persistently in a local database.
+[![CI](https://img.shields.io/github/actions/workflow/status/MothInBox/scylla-reader/ci.yml?branch=dev&label=CI)](https://github.com/MothInBox/scylla-reader/actions/workflows/ci.yml)
+[![License: GPL-3.0](https://img.shields.io/github/license/MothInBox/scylla-reader)](https://github.com/MothInBox/scylla-reader/blob/main/LICENSE)
 
-![App Screenshot](extra/demo1.gif)
+Read web novels in your terminal. Scylla scrapes sites through WebAssembly plugins, stores your library in a local database, and keeps reading progress across sessions.
 
-Multiple reading modes:
-![App Screenshot](extra/demo2.gif)
+![Reading a chapter](extra/demo1.gif)
 
-## Layout
+Scylla is in active development. Reading a site requires a plugin for that site; [PLUGINS.md](docs/PLUGINS.md) explains where to get one.
 
-The project contains multiple crates:
+## Contents
 
-- **`scylla-reader/`**: The TUI application.
-- **`scylla-core/`**: Shared library — common types, job worker, and messenger.
-- **`scylla-server/`**: REST API server backed by the SQLite database — owns all jobs (scraping, chapter fetch, covers, embedding) and AI search, streaming events to the TUI over SSE.
-- **`scylla-plugin-api/`**: Type definitions for plugin developers.
+- [Quickstart](#quickstart)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Documentation](#documentation)
+- [FAQ](#faq)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
 
-Plugins live in the separate [scylla-plugin-base](https://github.com/MothInBox/scylla-plugin-base) repository.
+## Quickstart
 
-## AI Search
+```sh
+nix run github:MothInBox/scylla-reader
+```
 
-Press `f` in the library and enter a query to run an AI search. Books are ranked semantically using bge-small-en-v1.5 embeddings (chunked chapter indexing), cross-encoder reranking, and a BM25 hybrid — with a per-book diversity cap and 0–100 scores.
+1. Press `i`, paste a book URL, and submit with `Ctrl+S`.
+2. The server scrapes the book in the background. Job progress shows in the Jobs screen (`8`).
+3. Press `Enter` on the book, pick a reading session, and move through chapters with `>` and `<`. From anywhere, `2` opens the most recent session directly.
 
-- `Enter` on a ranked book drills into its top chapters instantly (no round-trip); `a` fetches the full per-book ranking
-- `g` toggles between ranked books and grouped chapters
-- `.` / `,` cycle the genre facet; `Esc` clears the AI ranking
-- The filter bar shows the active query, result count, and embedding coverage
-- The first search downloads the models (~224MB) and may take a moment; a fresh library shows a hint instead of an error
+The reader starts its own server when one is not already running, so one command runs the whole program.
 
 ## Installation
 
-### Option A: Using Nix (Recommended)
+### Nix (recommended)
 
-#### Temporary
+Run once without installing:
 
-Run once:
-```bash
+```sh
 nix run github:MothInBox/scylla-reader
 ```
 
 Add to your shell temporarily:
-```bash
+
+```sh
 nix shell github:MothInBox/scylla-reader
 ```
 
-#### Declarative (flake.nix + home.nix)
+Declaratively, add the flake input:
 
-In your flake inputs:
 ```nix
 scylla-reader = {
     url = "github:MothInBox/scylla-reader";
@@ -55,16 +57,13 @@ scylla-reader = {
 };
 ```
 
-Pass `scylla-reader` as a special arg to home-manager, then add to `home.packages`:
-```nix
-scylla-reader.packages.${pkgs.system}.default
-```
+Pass `scylla-reader` as a special arg to home-manager and add `scylla-reader.packages.${pkgs.system}.default` to `home.packages`.
 
-### Option B: Using Cargo
+### Cargo
 
-**Prerequisites:** Rust stable toolchain, development headers for SSL and curl.
+You need a Rust stable toolchain (rustup is the simplest way to install one) plus development headers for SSL and curl:
 
-```bash
+```sh
 # Ubuntu/Debian
 sudo apt install build-essential pkg-config libssl-dev libcurl4-openssl-dev
 
@@ -78,139 +77,62 @@ sudo pacman -S base-devel pkg-config openssl curl
 brew install openssl curl pkg-config
 ```
 
-**Compile:**
-```bash
+Then build:
+
+```sh
 git clone https://github.com/MothInBox/scylla-reader.git
-cd scylla-reader/scylla-reader
-cargo install --path .
+cd scylla-reader
+cargo install --path scylla-reader --path scylla-server
 ```
 
-## Keybindings
+Both binaries are required; the reader launches the server itself.
 
-### Global
-| Key | Action |
-|-----|--------|
-| `1` | Library |
-| `2` | Reader (skip session picker, open most recent) |
-| `8` | Jobs |
-| `9` | Settings |
-| `:` | Command Palette |
-| `?` | Toggle Hints |
-| `Esc` | Back / Quit / Close Modal |
+The first build takes several minutes. Scylla targets Linux and macOS; Windows is untested. The maintainer develops on Nix and does not exercise the Cargo path regularly, so treat these steps as best-effort and open an issue when they drift.
 
-### Library
-| Key | Action |
-|-----|--------|
-| `i` | Add Book |
-| `j` | Jump Chapter |
-| `u` | Update All |
-| `d` | Delete Book |
-| `f` | Filter modal (name, tags, status, library, AI search) |
-| `e` | Embed Chapters (pick chapters to embed) |
-| `g` | Toggle AI book/grouped mode |
-| `.` / `,` | Cycle AI genre facet |
-| `Space` | Cycle Status |
-| `Enter` | Session Picker / AI drill-down |
-| `↑/↓` | Navigate |
+## Usage
 
-### Reader
-| Key | Action |
-|-----|--------|
-| `>` | Next Chapter |
-| `<` | Prev Chapter |
-| `→` | Next Page (Paged mode) |
-| `←` | Prev Page (Paged mode) |
-| `↓` | Scroll Down (Scrollable mode) |
-| `↑` | Scroll Up (Scrollable mode) |
-| `s` | Session Picker |
-| `Esc` | Back to Library |
+![Reading modes](extra/demo2.gif)
 
-### Settings
-| Key | Action |
-|-----|--------|
-| `↑/↓` | Navigate |
-| `Enter` | Select / Edit |
-| `Esc` | Back |
+### Reading
 
-### Modals
-| Key | Action |
-|-----|--------|
-| `Esc` | Cancel |
-| `Enter` | Confirm / Save |
-| `↑/↓` | Navigate |
-| `Ctrl+S` | Submit (Add Book) |
-| `t` | Toggle Title/URL (Jump Chapter) |
-| `n` | New Session |
-| `r` | Rename Session |
-| `d` | Delete Session |
-| `Tab` | Switch filter facet / expand AI results |
-| `Space` | Toggle tag / select (filter modal) |
-| `c` | Clear filter facets |
-| `a` | Fetch all chapters (AI drill-down modal) |
+Two reader modes: page through text with `→` and `←`, or scroll continuously with `↑` and `↓`. Named sessions keep separate positions in the same book, and progress saves as you go.
+
+### Search
+
+Open the command palette with `:` and choose AI Search, then type a query. Results blend keyword and semantic matching and score 0 to 100. `Enter` on a ranked book lists its top chapters without a round trip, `g` switches between ranked books and grouped chapters, and `.` / `,` cycle the genre. The first search downloads the models (~224MB), so it takes a moment; a fresh library shows a hint instead of an error.
 
 ### Jobs
-| Key | Action |
-|-----|--------|
-| `c` / `C` | Cancel / Cancel All |
-| `r` / `R` | Retry / Retry All Failed |
-| `f` / `F` | Flush Completed / Flush All |
-| `+` / `-` | Increase / Decrease Workers |
+
+The Jobs screen (`8`) shows scraping, chapter fetch, cover, embedding, and plugin work. Cancel or retry anything with `c` and `r`, and size the worker pool with `+` and `-`.
+
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): crates, the client-server split, data flow
+- [docs/KEYBINDINGS.md](docs/KEYBINDINGS.md): every key by screen
+- [docs/PLUGINS.md](docs/PLUGINS.md): install, configure, and write plugins
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md): settings, storage paths, config files
 
 ## FAQ
 
-### Where can I get plugins?
+### Where is my data stored?
 
-Develop your own or find one someone else has written.
+The database, settings, and plugins all live under the standard config and data directories on your system (`~/.config/…` and `~/.local/share/…`). [CONFIGURATION.md](docs/CONFIGURATION.md) lists every path.
 
-See the [scylla-plugin-base](https://github.com/MothInBox/scylla-plugin-base) repository for the reference template and existing plugins.
+### How do I add a site that is not supported yet?
 
-> [!WARNING]
-> Plugins run arbitrary wasm on your machine. Verify the plugin yourself or only use trusted sources.
-
-### How do I install a plugin from GitHub?
-
-Open the command palette (`:`), select "Install Plugin from GitHub", and enter a GitHub repo URL like `https://github.com/owner/repo`.
-
-Scylla fetches the latest release from GitHub, scans it for `.wasm` files named `plugin-<domain>.wasm`, and installs them. The domain is extracted from the filename — e.g., `plugin-example.com.wasm` registers for `example.com`.
-
-### How do I make a plugin repo?
-
-See the [scylla-plugin-base](https://github.com/MothInBox/scylla-plugin-base) repository — it contains the reference template, the shared plugin API, and a full guide on writing, building, and releasing plugins.
-
-### Where is data stored?
-
-| Directory | Contents |
-|-----------|----------|
-| `~/.local/share/scylla-reader/` | `library.db` (database), `server.log`, `models/` (embedding model cache) |
-| `~/.config/scylla-reader/` | `settings.json`, `libraries.json`, `plugin-*.json` (config) |
-| `~/.config/scylla-reader/plugins/` | `plugin-*.wasm` (plugin binaries) |
+Install a plugin for the site. The command palette (`:`) installs from a GitHub release, or drop a `plugin-<domain>.wasm` file into the plugins directory yourself.
 
 ## Roadmap
 
-### Recently Completed
-- Multiple reading sessions with names
-- Persistent settings (rate limit, debug logging, reader mode)
-- Word-wrap extracted to separate module
-- Plugin config files now use `plugin-` prefix (no collision with `settings.json`)
-- Domain matching fixed to use host segments instead of naive substring match
-- Plugin cache uses `Mutex` (thread-safe across async boundaries)
-- Curl requests have a 30s timeout
-- Shared cookie-parsing helper
-- Test setup deduplicated across 10 modules
-- **HTTPS server** — `scylla-server` crate exposes a REST API for books, chapters, sessions, and settings, backed by SQLite.
-- **Scylla as server client** — the TUI runs as a client of the server API through the `StorageBackend` abstraction.
-- **Server-owned jobs** — the server owns scraping, chapter fetch, covers, embedding, and plugins; the TUI is a thin client fed by SSE.
-- **AI search** — semantic search across books and chapters with bge-small-en-v1.5 embeddings, chunked chapter indexing, cross-encoder reranking, and BM25 hybrid retrieval.
-- **Book-mode AI search** — AI-ranked library with a visible indicator, instant per-book drill-down, genre facet, and result snippets.
-- **Plugin download from GitHub** — install plugins from a GitHub repo's latest release via the command palette.
-- **Customizable file paths** — `data_dir`, `config_dir`, `plugin_dir` overrides in settings.
-- **Code simplification pass** — deduplicated test helpers, job command handling, and loaders; linear-time AI ranking and grouping.
+- **Plugin explore feed**: browse and discover books in-app. Plugins expose a `search(query)` function; the TUI renders results and runs `scrape_book` on the one you pick.
+- **Manual plugin selection**: a conflict warning when several plugins match a domain, and a picker for choosing the source.
+- **Design unification**: consistent spacing, hierarchy, and component styles across pages and modals.
+- **Per-plugin scraping delay**: move the rate limit from one global setting to a per-domain delay.
 
-### Planned
+## Contributing
 
-- **Plugin explore feed** — in-app browser for discovering books. Plugins expose a `search(query) -> SearchResults` function. TUI renders results, user picks one, then `scrape_book` runs. Start with search input + paginated results.
-- **Manual plugin selection** — when adding a book, if multiple plugins match the domain, show a warning and block submission until the conflict is resolved; also lets the user choose which plugin/source to use.
-- **Generic modals for data entry & prompts** — a shared modal system for future text entry and prompts 
-- **Design unification** — a pass to unify the visual language across pages and modals (consistent spacing, hierarchy, and component styles).
-- **README demo media** — update the demo gifs and images to showcase the new features (AI search, drill-down, genre facet, snippets).
-- **Per-plugin scraping delay** — move the scraping rate limit from a single global setting to a per-plugin (per-domain) delay, adjustable via settings.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev shell, the git flow, and the checks a change must pass.
+
+## License
+
+GPL-3.0. See [LICENSE](LICENSE).
