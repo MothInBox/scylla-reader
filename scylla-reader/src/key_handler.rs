@@ -121,6 +121,11 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent, size: Rect) -> bool {
                 }
                 return true;
             }
+            if state.ui.page == Page::Library && state.lib.library.ai.is_some() {
+                let handled = input::handle_input(state, key, size);
+                sync_after_input(state, selected_before);
+                return handled;
+            }
             return false;
         }
         _ => {}
@@ -284,5 +289,18 @@ mod tests {
 
         handle_key(&mut state, key_event(KEY_LIBRARY), rect());
         assert_eq!(state.ui.page, Page::Library);
+    }
+
+    #[test]
+    fn test_esc_with_active_ai_clears_ai_instead_of_quit() {
+        let mut state = test_state();
+        state.ui.page = Page::Library;
+        state.lib.library.set_ai_searching("dragon".into());
+        assert!(state.lib.library.ai.is_some());
+
+        let result = handle_key(&mut state, key_event(KEY_ESCAPE), rect());
+
+        assert!(result);
+        assert!(state.lib.library.ai.is_none());
     }
 }
