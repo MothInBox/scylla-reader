@@ -83,7 +83,7 @@ pub struct Library {
     pub filter: BookFilter,
     /// Explicit AI session — the source of truth for AI-ranked display. When
     /// `Some`, the library is ranked by the AI results; clearing is explicit
-    /// (Esc / clear-AI), never a silent side effect of filter commit or delete.
+    /// (clear-AI key), never a silent side effect of filter commit or delete.
     pub ai: Option<AiSession>,
     pub cover_cache: HashMap<String, StatefulProtocol>,
     pub embedding_status_cache: HashMap<String, EmbeddingStatus>,

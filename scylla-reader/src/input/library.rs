@@ -92,9 +92,9 @@ pub fn handle_library(ui: &mut UiState, lib: &mut LibraryState, key: KeyEvent) -
             }
             true
         }
-        KEY_ESCAPE => {
-            // Esc with an active AI session clears it and restores normal
-            // ranking. Without AI, Esc is a no-op (unchanged).
+        KEY_AI_CLEAR => {
+            // `c` with an active AI session clears it and restores normal
+            // ranking. Without AI, it's a no-op.
             if lib.library.ai.is_some() {
                 lib.library.clear_ai();
             }
@@ -673,9 +673,9 @@ mod tests {
     }
 
     #[test]
-    fn test_esc_with_ai_clears_ai() {
+    fn test_c_with_ai_clears_ai() {
         let mut state = ai_state();
-        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_ESCAPE));
+        let result = handle_library(&mut state.ui, &mut state.lib, key_event(KEY_AI_CLEAR));
         assert!(result);
         assert!(state.lib.library.ai.is_none());
         assert_eq!(state.lib.library.visible_indices(), vec![0, 1]);

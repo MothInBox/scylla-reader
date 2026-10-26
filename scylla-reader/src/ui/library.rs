@@ -73,7 +73,7 @@ pub fn draw(frame: &mut Frame, area: Rect, lib: &mut LibraryState, ui: &UiState)
                     ("g", "Chapters"),
                     (",.", "Genre"),
                     ("f", "Refine"),
-                    ("Esc", "Clear AI"),
+                    ("c", "Clear AI"),
                 ]
             } else {
                 &[
@@ -81,7 +81,7 @@ pub fn draw(frame: &mut Frame, area: Rect, lib: &mut LibraryState, ui: &UiState)
                     ("g", "Books"),
                     (",.", "Genre"),
                     ("f", "Refine"),
-                    ("Esc", "Clear AI"),
+                    ("c", "Clear AI"),
                 ]
             }
         } else {
